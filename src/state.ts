@@ -48,14 +48,16 @@ export class DayState {
     if (!this.io.exists(path)) {
       return [];
     }
-    const lines = this.io.read(path).split('\n').filter((line) => line.trim() !== '');
+    let raw: string;
+    try {
+      raw = this.io.read(path);
+    } catch {
+      throw new CorruptStateError();
+    }
+    const lines = raw.split('\n').filter((line) => line.trim() !== '');
     const rows: StateRow[] = [];
     for (const line of lines) {
-      try {
-        rows.push(JSON.parse(line) as StateRow);
-      } catch {
-        throw new CorruptStateError();
-      }
+      rows.push(parseStateRow(line));
     }
     return rows;
   }
@@ -74,6 +76,37 @@ export class DayState {
   private path(): string {
     return join(this.dir, `${this.day}.jsonl`);
   }
+}
+
+const STATUSES = new Set<StateRow['status']>(['dry-run', 'paid', 'failed', 'uncertain']);
+
+function parseStateRow(line: string): StateRow {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    throw new CorruptStateError();
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    throw new CorruptStateError();
+  }
+  const rec = parsed as Record<string, unknown>;
+  const ts = rec['ts'];
+  const address = rec['address'];
+  const invoiceId = rec['invoiceId'];
+  const paymentHash = rec['paymentHash'];
+  const status = rec['status'];
+  if (
+    typeof ts !== 'string' ||
+    typeof address !== 'string' ||
+    typeof invoiceId !== 'string' ||
+    typeof paymentHash !== 'string' ||
+    typeof status !== 'string' ||
+    !STATUSES.has(status as StateRow['status'])
+  ) {
+    throw new CorruptStateError();
+  }
+  return { ts, address, invoiceId, paymentHash, status: status as StateRow['status'] };
 }
 
 /**

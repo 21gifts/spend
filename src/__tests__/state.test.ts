@@ -23,6 +23,16 @@ describe('DayState', () => {
     expect(() => state.load()).toThrow(CorruptStateError);
   });
 
+  it('throws CorruptStateError on a JSON object with an invalid status', () => {
+    const state = new DayState('/tmp', '2026-08-23', {
+      exists: () => true,
+      read: () => `${JSON.stringify({ ts: 't', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paif' })}\n`,
+      append: () => undefined,
+      mkdir: () => undefined,
+    });
+    expect(() => state.load()).toThrow(CorruptStateError);
+  });
+
   it('appends a row after mkdir', () => {
     const writes: string[] = [];
     const state = new DayState('/tmp', '2026-08-23', {
