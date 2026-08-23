@@ -92,3 +92,20 @@ export function latestStatus(rows: StateRow[], address: string): StateRow['statu
   }
   return found;
 }
+
+/**
+ * Last `paid` or `uncertain` status for an address, ignoring later `dry-run` rows.
+ *
+ * @param rows - Loaded log.
+ * @param address - Recipient or halt sentinel.
+ * @returns Blocking status, if any.
+ */
+export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain' | undefined {
+  let found: 'paid' | 'uncertain' | undefined;
+  for (const row of rows) {
+    if (row.address === address && (row.status === 'paid' || row.status === 'uncertain')) {
+      found = row.status;
+    }
+  }
+  return found;
+}

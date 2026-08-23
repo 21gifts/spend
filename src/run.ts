@@ -3,7 +3,7 @@ import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, latestStatus, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
 
 const HALT_ADDRESS = '*halt*';
 
@@ -63,7 +63,7 @@ export async function runDay(
   const now = deps?.now ?? (() => new Date());
 
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
-  if (options.live && !lock.tryAcquire()) {
+  if (!lock.tryAcquire()) {
     log('spend.done', { ok: false, reason: 'locked' });
     return { exitCode: 3 };
   }
@@ -71,9 +71,7 @@ export async function runDay(
   try {
     return await runDayLocked(config, options, gifts, lndhub, state, now);
   } finally {
-    if (options.live) {
-      lock.release();
-    }
+    lock.release();
   }
 }
 
@@ -99,9 +97,9 @@ async function runDayLocked(
 
   if (options.live) {
     const recipientUncertain = config.recipients.some(
-      (recipient) => latestStatus(rows, recipient.address) === 'uncertain',
+      (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
     );
-    if (recipientUncertain || latestStatus(rows, HALT_ADDRESS) === 'uncertain') {
+    if (recipientUncertain || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       log('spend.done', { ok: false, reason: 'halted' });
       return { exitCode: 4 };
     }
@@ -109,10 +107,7 @@ async function runDayLocked(
 
   let token = '';
   if (options.live) {
-    const pending = config.recipients.filter((r) => {
-      const status = latestStatus(rows, r.address);
-      return status !== 'paid' && status !== 'uncertain';
-    });
+    const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
     const needed = pending.reduce((sum, r) => sum + r.amountSats, 0);
     let available: number;
     try {
@@ -138,7 +133,7 @@ async function runDayLocked(
   let stopLive = false;
 
   const haltDay = (): void => {
-    if (!options.live || latestStatus(rows, HALT_ADDRESS) === 'uncertain') {
+    if (!options.live || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       return;
     }
     const halt: StateRow = {
@@ -153,8 +148,8 @@ async function runDayLocked(
   };
 
   for (const recipient of config.recipients) {
-    const prior = latestStatus(rows, recipient.address);
-    if (prior === 'paid' || prior === 'uncertain') {
+    const prior = dayBlock(rows, recipient.address);
+    if (prior !== undefined) {
       log('spend.skip', { address: recipient.address, reason: prior });
       continue;
     }

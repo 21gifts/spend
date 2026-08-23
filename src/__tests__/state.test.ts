@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CorruptStateError, DayState, latestStatus } from '../state';
+import { CorruptStateError, DayState, dayBlock, latestStatus } from '../state';
 
 describe('DayState', () => {
   it('returns no rows when the file is missing', () => {
@@ -51,6 +51,20 @@ describe('latestStatus', () => {
         [
           { ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'dry-run' },
           { ts: '2', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' },
+        ],
+        'a@b.com',
+      ),
+    ).toBe('paid');
+  });
+});
+
+describe('dayBlock', () => {
+  it('ignores a later dry-run after paid', () => {
+    expect(
+      dayBlock(
+        [
+          { ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' },
+          { ts: '2', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'dry-run' },
         ],
         'a@b.com',
       ),

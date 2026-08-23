@@ -119,6 +119,7 @@ describe('runDay', () => {
       gifts,
       lndhub,
       state: memoryState(),
+      lock: openLock,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
