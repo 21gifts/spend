@@ -1,0 +1,6 @@
+{
+  "comment": "21gifts daily",
+  "recipients": [
+    { "address": "alice@walletofsatoshi.com", "amountSats": 1000 }
+  ]
+}

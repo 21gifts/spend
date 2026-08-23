@@ -1,0 +1,22 @@
+{
+  "name": "@21gifts/spend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Daily Lightning gift payouts: invoices from 21.gifts api, pay via lightning.space",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "bun": ">=1.3"
+  }
+}

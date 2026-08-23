@@ -1,0 +1,6 @@
+node_modules/
+.env
+state/
+recipients.json
+recipients.local.json
+coverage/
