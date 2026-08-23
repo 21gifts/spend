@@ -285,6 +285,18 @@ describe('runDay', () => {
     expect(proofs).toBe(0);
   });
 
+  it('aborts live when the day JSONL is corrupt', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+      lndhub: new LndhubClient(target),
+      state: memoryState('not-json\n'),
+      lock: openLock,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(4);
+  });
+
   it('exits 3 when the live day lock is held', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {

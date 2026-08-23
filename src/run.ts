@@ -3,7 +3,7 @@ import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { DayState, latestStatus, type StateRow } from './state';
+import { CorruptStateError, DayState, latestStatus, type StateRow } from './state';
 
 const HALT_ADDRESS = '*halt*';
 
@@ -85,7 +85,16 @@ async function runDayLocked(
   state: DayState,
   now: () => Date,
 ): Promise<RunResult> {
-  const rows = state.load();
+  let rows: StateRow[];
+  try {
+    rows = state.load();
+  } catch (err) {
+    if (err instanceof CorruptStateError) {
+      log('spend.done', { ok: false, reason: 'corrupt_state' });
+      return { exitCode: 4 };
+    }
+    throw err;
+  }
   log('spend.start', { live: options.live, day: options.day, recipients: config.recipients.length });
 
   if (options.live) {

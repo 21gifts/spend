@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DayState, latestStatus } from '../state';
+import { CorruptStateError, DayState, latestStatus } from '../state';
 
 describe('DayState', () => {
   it('returns no rows when the file is missing', () => {
@@ -12,7 +12,7 @@ describe('DayState', () => {
     expect(state.load()).toEqual([]);
   });
 
-  it('loads JSONL and skips bad lines', () => {
+  it('throws CorruptStateError on an unreadable JSONL line', () => {
     const state = new DayState('/tmp', '2026-08-23', {
       exists: () => true,
       read: () =>
@@ -20,7 +20,7 @@ describe('DayState', () => {
       append: () => undefined,
       mkdir: () => undefined,
     });
-    expect(state.load()).toHaveLength(1);
+    expect(() => state.load()).toThrow(CorruptStateError);
   });
 
   it('appends a row after mkdir', () => {

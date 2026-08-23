@@ -35,6 +35,7 @@ Cron (UTC midnight):
 - `uncertain` (network/5xx, missing preimage, proof failure, amount mismatch) is logged and **not** retried the same UTC day
 - After `uncertain`, later recipients in a `--live` run are skipped and a `*halt*` JSONL row is appended so later runs that UTC day exit `4` without paying
 - If a live process crashes, the lock file remains. Remove it only after checking that no spend is running and inspecting `STATE_DIR/YYYY-MM-DD.jsonl`
+- Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
 - State: `STATE_DIR/YYYY-MM-DD.jsonl`
 
 Exit codes: `0` ok, `2` config, `3` preflight/balance/lock, `4` failed, uncertain, or halted.

@@ -1,6 +1,14 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+/** Unreadable or truncated day JSONL. */
+export class CorruptStateError extends Error {
+  constructor() {
+    super('corrupt payout state');
+    this.name = 'CorruptStateError';
+  }
+}
+
 /** One JSONL row for a UTC day. */
 export interface StateRow {
   ts: string;
@@ -46,7 +54,7 @@ export class DayState {
       try {
         rows.push(JSON.parse(line) as StateRow);
       } catch {
-        continue;
+        throw new CorruptStateError();
       }
     }
     return rows;
