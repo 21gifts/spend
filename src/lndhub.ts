@@ -68,7 +68,7 @@ export class LndhubClient {
     }
     const balance = json['balance'];
     if (typeof balance === 'number') {
-      return Math.trunc(balance > 1000 ? balance / 1000 : balance);
+      return Math.trunc(balance);
     }
     return null;
   }

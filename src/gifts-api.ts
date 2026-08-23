@@ -46,11 +46,11 @@ export class GiftsApi {
     const paymentHash = json['paymentHash'];
     const amt = json['amountMsat'];
     if (typeof id !== 'string' || typeof pr !== 'string' || typeof paymentHash !== 'string' || typeof amt !== 'number') {
-      throw new GiftsApiError(200, 'malformed invoice response');
+      throw new GiftsApiError(0, 'malformed invoice response');
     }
     const hash = paymentHash.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(hash)) {
-      throw new GiftsApiError(200, 'malformed paymentHash');
+      throw new GiftsApiError(0, 'malformed paymentHash');
     }
     return { id, pr, paymentHash: hash, amountMsat: amt };
   }

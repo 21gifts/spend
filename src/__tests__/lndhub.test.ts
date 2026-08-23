@@ -37,6 +37,20 @@ describe('LndhubClient', () => {
     expect(await client.balance(token)).toBe(5000);
   });
 
+  it('reads a sats balance field without scaling', async () => {
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ balance: 1500 }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const token = await client.auth();
+    expect(await client.balance(token)).toBe(1500);
+  });
+
   it('returns the payment preimage', async () => {
     const client = new LndhubClient(target, async () =>
       new Response(JSON.stringify({ payment_preimage: '11'.repeat(32) }), { status: 200 }),

@@ -2,7 +2,10 @@ import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { hashPreimage } from './proof';
+import { fileDayLock, type DayLock } from './lock';
 import { DayState, latestStatus, type StateRow } from './state';
+
+const HALT_ADDRESS = '*halt*';
 
 /** CLI options for one run. */
 export interface RunOptions {
@@ -46,6 +49,7 @@ export async function runDay(
     lndhub?: LndhubClient;
     state?: DayState;
     now?: () => Date;
+    lock?: DayLock;
   },
 ): Promise<RunResult> {
   const gifts = deps?.gifts ?? new GiftsApi(config.giftsApiUrl, config.giftsApiToken);
@@ -58,8 +62,41 @@ export async function runDay(
   const state = deps?.state ?? new DayState(config.stateDir, options.day);
   const now = deps?.now ?? (() => new Date());
 
+  const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
+  if (options.live && !lock.tryAcquire()) {
+    log('spend.done', { ok: false, reason: 'locked' });
+    return { exitCode: 3 };
+  }
+
+  try {
+    return await runDayLocked(config, options, gifts, lndhub, state, now);
+  } finally {
+    if (options.live) {
+      lock.release();
+    }
+  }
+}
+
+async function runDayLocked(
+  config: SpendConfig,
+  options: RunOptions,
+  gifts: GiftsApi,
+  lndhub: LndhubClient,
+  state: DayState,
+  now: () => Date,
+): Promise<RunResult> {
   const rows = state.load();
   log('spend.start', { live: options.live, day: options.day, recipients: config.recipients.length });
+
+  if (options.live) {
+    const recipientUncertain = config.recipients.some(
+      (recipient) => latestStatus(rows, recipient.address) === 'uncertain',
+    );
+    if (recipientUncertain || latestStatus(rows, HALT_ADDRESS) === 'uncertain') {
+      log('spend.done', { ok: false, reason: 'halted' });
+      return { exitCode: 4 };
+    }
+  }
 
   let token = '';
   if (options.live) {
@@ -91,6 +128,21 @@ export async function runDay(
   let sawProblem = false;
   let stopLive = false;
 
+  const haltDay = (): void => {
+    if (!options.live || latestStatus(rows, HALT_ADDRESS) === 'uncertain') {
+      return;
+    }
+    const halt: StateRow = {
+      ts: now().toISOString(),
+      address: HALT_ADDRESS,
+      invoiceId: '',
+      paymentHash: '',
+      status: 'uncertain',
+    };
+    state.append(halt);
+    rows.push(halt);
+  };
+
   for (const recipient of config.recipients) {
     const prior = latestStatus(rows, recipient.address);
     if (prior === 'paid' || prior === 'uncertain') {
@@ -113,11 +165,16 @@ export async function runDay(
       sawProblem = true;
       if (retryable) {
         stopLive = true;
+        haltDay();
       }
       log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
         address: recipient.address,
+        amountSats: recipient.amountSats,
         error: err instanceof Error ? err.message : 'invoice',
       });
+      if (!options.live) {
+        continue;
+      }
       const failRow: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
@@ -134,11 +191,17 @@ export async function runDay(
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
       stopLive = true;
+      haltDay();
       log('spend.uncertain', {
         address: recipient.address,
         invoiceId: invoice.id,
+        paymentHash: invoice.paymentHash,
+        amountSats: recipient.amountSats,
         reason: 'amount_mismatch',
       });
+      if (!options.live) {
+        continue;
+      }
       const mismatch: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
@@ -189,9 +252,12 @@ export async function runDay(
     } catch (err) {
       sawProblem = true;
       stopLive = true;
+      haltDay();
       log('spend.uncertain', {
         address: recipient.address,
         invoiceId: invoice.id,
+        paymentHash: invoice.paymentHash,
+        amountSats: recipient.amountSats,
         error: err instanceof Error ? err.message : 'pay',
       });
       continue;
@@ -201,7 +267,14 @@ export async function runDay(
     if (preimage === null || digest === null || digest !== invoice.paymentHash) {
       sawProblem = true;
       stopLive = true;
-      log('spend.uncertain', { address: recipient.address, invoiceId: invoice.id, reason: 'preimage' });
+      haltDay();
+      log('spend.uncertain', {
+        address: recipient.address,
+        invoiceId: invoice.id,
+        paymentHash: invoice.paymentHash,
+        amountSats: recipient.amountSats,
+        reason: 'preimage',
+      });
       const preFail: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
@@ -229,9 +302,12 @@ export async function runDay(
     } catch (err) {
       sawProblem = true;
       stopLive = true;
+      haltDay();
       log('spend.uncertain', {
         address: recipient.address,
         invoiceId: invoice.id,
+        paymentHash: invoice.paymentHash,
+        amountSats: recipient.amountSats,
         error: err instanceof Error ? err.message : 'proof',
       });
       continue;

@@ -45,6 +45,16 @@ describe('GiftsApi', () => {
 
   it('rejects a malformed 200 body', async () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () => new Response('{}', { status: 200 }));
-    await expect(api.createInvoice('a@b.com', 1000)).rejects.toBeInstanceOf(GiftsApiError);
+    await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('rejects a malformed paymentHash as status 0', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({ id: '1', pr: 'lnbc1', paymentHash: 'zz', amountMsat: 1000 }),
+        { status: 200 },
+      ),
+    );
+    await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
   });
 });
