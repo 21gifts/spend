@@ -13,6 +13,22 @@ describe('GiftsApi', () => {
     expect(inv.id).toBe('1');
   });
 
+  it('normalises an uppercase paymentHash', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({
+          id: '1',
+          pr: 'lnbc1',
+          paymentHash: 'AA'.repeat(32),
+          amountMsat: 1000,
+        }),
+        { status: 200 },
+      ),
+    );
+    const inv = await api.createInvoice('a@b.com', 1000);
+    expect(inv.paymentHash).toBe('aa'.repeat(32));
+  });
+
   it('throws GiftsApiError on 401', async () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
       new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }),

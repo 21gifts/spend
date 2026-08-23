@@ -6,7 +6,9 @@ Daily Lightning gift payouts. This process **does not generate invoices**.
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
-Default is dry-run (fetch + log, no pay). `--live` actually pays.
+Default is dry-run: fetch invoices from the API and log them, **no LNDHub
+auth and no pay**. `--live` authenticates to lightning.space, checks balance,
+then pays.
 
 ## Setup
 

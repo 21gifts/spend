@@ -61,30 +61,31 @@ export async function runDay(
   const rows = state.load();
   log('spend.start', { live: options.live, day: options.day, recipients: config.recipients.length });
 
-  let token: string;
-  let available: number;
-  try {
-    token = await lndhub.auth();
-    const bal = await lndhub.balance(token);
-    if (bal === null) {
-      log('spend.done', { ok: false, reason: 'balance_unreadable' });
+  let token = '';
+  if (options.live) {
+    const pending = config.recipients.filter((r) => {
+      const status = latestStatus(rows, r.address);
+      return status !== 'paid' && status !== 'uncertain';
+    });
+    const needed = pending.reduce((sum, r) => sum + r.amountSats, 0);
+    let available: number;
+    try {
+      token = await lndhub.auth();
+      const bal = await lndhub.balance(token);
+      if (bal === null) {
+        log('spend.done', { ok: false, reason: 'balance_unreadable' });
+        return { exitCode: 3 };
+      }
+      available = bal;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'lndhub';
+      log('spend.done', { ok: false, reason: 'lndhub_preflight', error: message });
       return { exitCode: 3 };
     }
-    available = bal;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'lndhub';
-    log('spend.done', { ok: false, reason: 'lndhub_preflight', error: message });
-    return { exitCode: 3 };
-  }
-
-  const pending = config.recipients.filter((r) => {
-    const status = latestStatus(rows, r.address);
-    return status !== 'paid' && status !== 'uncertain';
-  });
-  const needed = pending.reduce((sum, r) => sum + r.amountSats, 0);
-  if (needed + feeMargin(available) > available) {
-    log('spend.done', { ok: false, reason: 'insufficient_balance', needed, available });
-    return { exitCode: 3 };
+    if (needed > 0 && needed + feeMargin(available) > available) {
+      log('spend.done', { ok: false, reason: 'insufficient_balance', needed, available });
+      return { exitCode: 3 };
+    }
   }
 
   let sawProblem = false;
@@ -113,14 +114,40 @@ export async function runDay(
       if (retryable) {
         stopLive = true;
       }
-      log('spend.uncertain', { address: recipient.address, error: err instanceof Error ? err.message : 'invoice' });
-      state.append({
+      log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
+        address: recipient.address,
+        error: err instanceof Error ? err.message : 'invoice',
+      });
+      const failRow: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
         invoiceId: '',
         paymentHash: '',
         status: rowStatus,
+      };
+      state.append(failRow);
+      rows.push(failRow);
+      continue;
+    }
+
+    const expectedMsat = recipient.amountSats * 1000;
+    if (invoice.amountMsat !== expectedMsat) {
+      sawProblem = true;
+      stopLive = true;
+      log('spend.uncertain', {
+        address: recipient.address,
+        invoiceId: invoice.id,
+        reason: 'amount_mismatch',
       });
+      const mismatch: StateRow = {
+        ts: now().toISOString(),
+        address: recipient.address,
+        invoiceId: invoice.id,
+        paymentHash: invoice.paymentHash,
+        status: 'uncertain',
+      };
+      state.append(mismatch);
+      rows.push(mismatch);
       continue;
     }
 
@@ -133,13 +160,15 @@ export async function runDay(
     });
 
     if (!options.live) {
-      state.append({
+      const dry: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         status: 'dry-run',
-      });
+      };
+      state.append(dry);
+      rows.push(dry);
       continue;
     }
 
@@ -155,13 +184,15 @@ export async function runDay(
         invoiceId: invoice.id,
         error: err instanceof Error ? err.message : 'pay',
       });
-      state.append({
+      const payFail: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         status: 'uncertain',
-      });
+      };
+      state.append(payFail);
+      rows.push(payFail);
       continue;
     }
 
@@ -170,15 +201,27 @@ export async function runDay(
       sawProblem = true;
       stopLive = true;
       log('spend.uncertain', { address: recipient.address, invoiceId: invoice.id, reason: 'preimage' });
-      state.append({
+      const preFail: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         status: 'uncertain',
-      });
+      };
+      state.append(preFail);
+      rows.push(preFail);
       continue;
     }
+
+    const paidUnproven: StateRow = {
+      ts: now().toISOString(),
+      address: recipient.address,
+      invoiceId: invoice.id,
+      paymentHash: invoice.paymentHash,
+      status: 'uncertain',
+    };
+    state.append(paidUnproven);
+    rows.push(paidUnproven);
 
     try {
       await gifts.submitProof(invoice.id, preimage);
@@ -190,13 +233,6 @@ export async function runDay(
         invoiceId: invoice.id,
         error: err instanceof Error ? err.message : 'proof',
       });
-      state.append({
-        ts: now().toISOString(),
-        address: recipient.address,
-        invoiceId: invoice.id,
-        paymentHash: invoice.paymentHash,
-        status: 'uncertain',
-      });
       continue;
     }
 
@@ -206,13 +242,15 @@ export async function runDay(
       paymentHash: invoice.paymentHash,
       amountSats: recipient.amountSats,
     });
-    state.append({
+    const paidRow: StateRow = {
       ts: now().toISOString(),
       address: recipient.address,
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
       status: 'paid',
-    });
+    };
+    state.append(paidRow);
+    rows.push(paidRow);
   }
 
   log('spend.done', { ok: !sawProblem });

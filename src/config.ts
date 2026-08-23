@@ -88,6 +88,9 @@ export function loadConfig(
     if (typeof rec.comment === 'string') {
       row.comment = rec.comment;
     }
+    if (recipients.some((existing) => existing.address === row.address)) {
+      return { ok: false, error: `duplicate recipient address ${row.address}` };
+    }
     recipients.push(row);
   }
 

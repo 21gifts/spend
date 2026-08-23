@@ -56,4 +56,19 @@ describe('loadConfig', () => {
       loadConfig(env, () => JSON.stringify({ recipients: [{ address: 'a@b.com', amountSats: 0 }] })).ok,
     ).toBe(false);
   });
+
+  it('rejects duplicate addresses', () => {
+    expect(
+      loadConfig(
+        env,
+        () =>
+          JSON.stringify({
+            recipients: [
+              { address: 'a@b.com', amountSats: 1 },
+              { address: 'a@b.com', amountSats: 2 },
+            ],
+          }),
+      ).ok,
+    ).toBe(false);
+  });
 });

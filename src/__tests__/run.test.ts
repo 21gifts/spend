@@ -42,12 +42,18 @@ function memoryState(existing = ''): DayState {
 describe('runDay', () => {
   it('dry-run fetches invoices and does not pay', async () => {
     let paid = 0;
-    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(
-        JSON.stringify({ id: 'id1', pr: 'lnbc1abcdefghijklmnop', paymentHash: HASH, amountMsat: 1_000_000 }),
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { amountMsat?: number };
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: body.amountMsat ?? 1_000_000,
+        }),
         { status: 200 },
-      ),
-    );
+      );
+    });
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
