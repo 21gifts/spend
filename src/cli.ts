@@ -7,7 +7,9 @@ import { runDay } from './run';
  * @param argv - Process arguments including argv0.
  * @returns Flags.
  */
-export function parseArgs(argv: string[]): { live: boolean; day: string } {
+export function parseArgs(
+  argv: string[],
+): { ok: true; live: boolean; day: string } | { ok: false; error: string } {
   let live = false;
   let day = new Date().toISOString().slice(0, 10);
   for (let i = 0; i < argv.length; i += 1) {
@@ -16,12 +18,13 @@ export function parseArgs(argv: string[]): { live: boolean; day: string } {
     }
     if (argv[i] === '--date') {
       const value = argv[i + 1];
-      if (value !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        day = value;
+      if (value === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return { ok: false, error: '--date requires YYYY-MM-DD' };
       }
+      day = value;
     }
   }
-  return { live, day };
+  return { ok: true, live, day };
 }
 
 /**
@@ -36,7 +39,11 @@ export async function main(env = process.env, argv = process.argv): Promise<numb
     return 2;
   }
   const flags = parseArgs(argv);
-  const result = await runDay(loaded.config, flags);
+  if (!flags.ok) {
+    console.error(JSON.stringify({ event: 'spend.config', error: flags.error }));
+    return 2;
+  }
+  const result = await runDay(loaded.config, { live: flags.live, day: flags.day });
   return result.exitCode;
 }
 

@@ -172,6 +172,16 @@ export async function runDay(
       continue;
     }
 
+    const attempting: StateRow = {
+      ts: now().toISOString(),
+      address: recipient.address,
+      invoiceId: invoice.id,
+      paymentHash: invoice.paymentHash,
+      status: 'uncertain',
+    };
+    state.append(attempting);
+    rows.push(attempting);
+
     let preimage: string | null;
     try {
       const paid = await lndhub.payInvoice(token, invoice.pr);
@@ -184,15 +194,6 @@ export async function runDay(
         invoiceId: invoice.id,
         error: err instanceof Error ? err.message : 'pay',
       });
-      const payFail: StateRow = {
-        ts: now().toISOString(),
-        address: recipient.address,
-        invoiceId: invoice.id,
-        paymentHash: invoice.paymentHash,
-        status: 'uncertain',
-      };
-      state.append(payFail);
-      rows.push(payFail);
       continue;
     }
 
