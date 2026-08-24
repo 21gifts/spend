@@ -62,6 +62,13 @@ describe('main --at-utc-midnight', () => {
     expect(code).toBe(0);
   });
 
+  it('still loads config when --at-utc-midnight is omitted', async () => {
+    const code = await main({}, ['bun', 'cli', '--live'], () =>
+      new Date('2026-08-24T22:00:00.000Z'),
+    );
+    expect(code).toBe(2);
+  });
+
   it('loads config after the window opens', async () => {
     const code = await main({}, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
       new Date('2026-08-25T00:00:00.000Z'),
