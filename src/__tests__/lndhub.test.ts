@@ -59,7 +59,40 @@ describe('LndhubClient', () => {
   });
 
   it('returns null preimage when missing', async () => {
-    const client = new LndhubClient(target, async () => new Response('{}', { status: 200 }));
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/payinvoice')) {
+        return new Response('{}', { status: 200 });
+      }
+      if (String(url).endsWith('/gettxs')) {
+        return new Response('[]', { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
     expect(await client.payInvoice('tok', 'lnbc1')).toEqual({ preimage: null });
+  });
+
+  it('looks up a non-zero preimage on gettxs when payinvoice returns zeros', async () => {
+    const real = 'ab'.repeat(32);
+    const hash = 'cd'.repeat(32);
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/payinvoice')) {
+        return new Response(
+          JSON.stringify({
+            payment_preimage: '0'.repeat(64),
+            payment_hash: hash,
+            type: 'paid_invoice',
+          }),
+          { status: 201 },
+        );
+      }
+      if (String(url).endsWith('/gettxs')) {
+        return new Response(
+          JSON.stringify([{ payment_hash: hash.toUpperCase(), payment_preimage: real, value: -23 }]),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+    expect(await client.payInvoice('tok', 'lnbc1')).toEqual({ preimage: real });
   });
 });

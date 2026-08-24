@@ -76,17 +76,49 @@ export class LndhubClient {
   /**
    * Pay a BOLT11 invoice.
    *
+   * lightning.space `/payinvoice` often returns a 64-zero `payment_preimage`
+   * on success. The real preimage is on `/gettxs` for the same `payment_hash`.
+   *
    * @param token - Access token.
    * @param invoice - BOLT11 `pr`.
    * @returns Preimage hex when present.
    */
   async payInvoice(token: string, invoice: string): Promise<{ preimage: string | null }> {
     const json = await this.request('POST', '/payinvoice', { invoice }, token);
-    const preimage = json['payment_preimage'] ?? json['preimage'];
-    if (typeof preimage === 'string' && preimage !== '') {
-      return { preimage };
+    const fromPay = usablePreimage(json['payment_preimage'] ?? json['preimage']);
+    if (fromPay !== null) {
+      return { preimage: fromPay };
     }
-    return { preimage: null };
+    const hash = typeof json['payment_hash'] === 'string' ? json['payment_hash'] : '';
+    const fromTxs = await this.preimageFromTxs(token, hash);
+    return { preimage: fromTxs };
+  }
+
+  /**
+   * Look up a non-zero preimage on LNDHub `/gettxs`.
+   *
+   * @param token - Access token.
+   * @param paymentHash - Hex payment hash from `/payinvoice`.
+   * @returns Preimage hex, or `null`.
+   */
+  private async preimageFromTxs(token: string, paymentHash: string): Promise<string | null> {
+    const want = paymentHash.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(want)) {
+      return null;
+    }
+    const txs = await this.requestArray('GET', '/gettxs', token);
+    for (const tx of txs) {
+      if (tx === null || typeof tx !== 'object') {
+        continue;
+      }
+      const rec = tx as Record<string, unknown>;
+      const hash = typeof rec['payment_hash'] === 'string' ? rec['payment_hash'].trim().toLowerCase() : '';
+      if (hash !== want) {
+        continue;
+      }
+      return usablePreimage(rec['payment_preimage'] ?? rec['preimage']);
+    }
+    return null;
   }
 
   private async request(
@@ -103,6 +135,20 @@ export class LndhubClient {
     if (body !== undefined) {
       init.body = JSON.stringify(body);
     }
+    const json = await this.fetchJson(method, path, init);
+    if (json !== null && typeof json === 'object' && !Array.isArray(json)) {
+      return json as Record<string, unknown>;
+    }
+    return {};
+  }
+
+  private async requestArray(method: string, path: string, token: string): Promise<unknown[]> {
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    const json = await this.fetchJson(method, path, { method, headers });
+    return Array.isArray(json) ? json : [];
+  }
+
+  private async fetchJson(method: string, path: string, init: RequestInit): Promise<unknown> {
     const response = await this.fetchImpl(`${this.target.baseUrl}${path}`, init);
     let json: unknown = {};
     try {
@@ -110,11 +156,23 @@ export class LndhubClient {
     } catch {
       json = {};
     }
-    const record = json !== null && typeof json === 'object' ? (json as Record<string, unknown>) : {};
     if (!response.ok) {
+      const record = json !== null && typeof json === 'object' && !Array.isArray(json) ? (json as Record<string, unknown>) : {};
       const error = typeof record['error'] === 'string' ? record['error'] : `HTTP ${response.status}`;
       throw new Error(error);
     }
-    return record;
+    return json;
   }
+}
+
+/** 32-byte hex preimage that is not the LNDHub all-zero placeholder. */
+function usablePreimage(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const hex = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hex) || /^0+$/.test(hex)) {
+    return null;
+  }
+  return hex;
 }
