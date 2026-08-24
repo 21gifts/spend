@@ -1,0 +1,96 @@
+/** Invoice issued by 21.gifts api. */
+export interface IssuedInvoice {
+  id: string;
+  pr: string;
+  paymentHash: string;
+  amountMsat: number;
+}
+
+/** HTTP error from 21.gifts. */
+export class GiftsApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'GiftsApiError';
+    this.status = status;
+  }
+}
+
+/**
+ * Client for `POST /invoices` and `POST /invoices/proof`.
+ */
+export class GiftsApi {
+  constructor(
+    private readonly baseUrl: string,
+    private readonly token: string,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  /**
+   * Fetch a BOLT11 from 21.gifts for one recipient.
+   *
+   * @param address - LUD-16 address.
+   * @param amountMsat - Amount in millisatoshis.
+   * @param comment - Optional LUD-12 comment.
+   * @returns Issued invoice.
+   */
+  async createInvoice(address: string, amountMsat: number, comment?: string): Promise<IssuedInvoice> {
+    const body: { address: string; amountMsat: number; comment?: string } = { address, amountMsat };
+    if (comment !== undefined) {
+      body.comment = comment;
+    }
+    const json = await this.postJson('/invoices', body);
+    const id = json['id'];
+    const pr = json['pr'];
+    const paymentHash = json['paymentHash'];
+    const amt = json['amountMsat'];
+    if (typeof id !== 'string' || typeof pr !== 'string' || typeof paymentHash !== 'string' || typeof amt !== 'number') {
+      throw new GiftsApiError(0, 'malformed invoice response');
+    }
+    const hash = paymentHash.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
+      throw new GiftsApiError(0, 'malformed paymentHash');
+    }
+    return { id, pr, paymentHash: hash, amountMsat: amt };
+  }
+
+  /**
+   * Submit the payment preimage as proof.
+   *
+   * @param id - Invoice id from {@link createInvoice}.
+   * @param preimage - 32-byte preimage hex.
+   */
+  async submitProof(id: string, preimage: string): Promise<void> {
+    await this.postJson('/invoices/proof', { id, preimage });
+  }
+
+  private async postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'network error';
+      throw new GiftsApiError(0, message);
+    }
+    let json: unknown = {};
+    try {
+      json = await response.json();
+    } catch {
+      json = {};
+    }
+    const record = json !== null && typeof json === 'object' ? (json as Record<string, unknown>) : {};
+    if (!response.ok) {
+      const error = typeof record['error'] === 'string' ? record['error'] : `HTTP ${response.status}`;
+      throw new GiftsApiError(response.status, error);
+    }
+    return record;
+  }
+}
