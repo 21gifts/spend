@@ -20,16 +20,18 @@ export function isUtcMidnightWindow(now: Date): boolean {
  * Parse argv for `--live`, `--date YYYY-MM-DD`, and `--at-utc-midnight`.
  *
  * @param argv - Process arguments including argv0.
+ * @param now - Instant used for the default UTC day (must match the window clock).
  * @returns Flags.
  */
 export function parseArgs(
   argv: string[],
+  now: Date = new Date(),
 ):
   | { ok: true; live: boolean; day: string; atUtcMidnight: boolean }
   | { ok: false; error: string } {
   let live = false;
   let atUtcMidnight = false;
-  let day = new Date().toISOString().slice(0, 10);
+  let day = now.toISOString().slice(0, 10);
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--live') {
       live = true;
@@ -49,8 +51,11 @@ export function parseArgs(
 }
 
 /**
- * CLI entry. Loads env, runs one day, exits with the run code.
+ * CLI entry. Optionally no-ops outside UTC midnight, then loads env and runs one day.
  *
+ * @param env - Process env.
+ * @param argv - Process arguments.
+ * @param now - Clock (default: `Date`).
  * @returns Promise of the exit code (tests); production calls `process.exit`.
  */
 export async function main(
@@ -58,28 +63,27 @@ export async function main(
   argv = process.argv,
   now: () => Date = () => new Date(),
 ): Promise<number> {
-  const loaded = loadConfig(env);
-  if (!loaded.ok) {
-    console.error(JSON.stringify({ event: 'spend.config', error: loaded.error }));
-    return 2;
-  }
-  const flags = parseArgs(argv);
+  const instant = now();
+  const flags = parseArgs(argv, instant);
   if (!flags.ok) {
     console.error(JSON.stringify({ event: 'spend.config', error: flags.error }));
     return 2;
   }
-  if (flags.atUtcMidnight) {
-    const instant = now();
-    if (!isUtcMidnightWindow(instant)) {
-      console.warn(
-        JSON.stringify({
-          event: 'spend.skip_window',
-          utcHour: instant.getUTCHours(),
-          utcMinute: instant.getUTCMinutes(),
-        }),
-      );
-      return 0;
-    }
+  if (flags.atUtcMidnight && !isUtcMidnightWindow(instant)) {
+    console.warn(
+      JSON.stringify({
+        ts: instant.toISOString(),
+        event: 'spend.skip_window',
+        utcHour: instant.getUTCHours(),
+        utcMinute: instant.getUTCMinutes(),
+      }),
+    );
+    return 0;
+  }
+  const loaded = loadConfig(env);
+  if (!loaded.ok) {
+    console.error(JSON.stringify({ event: 'spend.config', error: loaded.error }));
+    return 2;
   }
   const result = await runDay(loaded.config, { live: flags.live, day: flags.day });
   return result.exitCode;

@@ -30,8 +30,10 @@ process no-op unless it is UTC hour 0:
 0 * * * * cd /path/to/spend && set -a && . ./.env && set +a && bun src/cli.ts --live --at-utc-midnight
 ```
 
-`--at-utc-midnight` exits `0` without paying unless UTC hour is 0 and the
-minute is 0–5. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`).
+`--at-utc-midnight` checks the UTC window **before** loading env: it exits `0`
+without paying unless UTC hour is 0 and the minute is 0–5. Same-day re-entry
+is still gated by JSONL (`paid` / `uncertain`). The default state day is the
+UTC day of that same clock sample (override with `--date`).
 
 ## Fail-closed
 

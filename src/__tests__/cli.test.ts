@@ -13,14 +13,26 @@ describe('parseArgs', () => {
   });
 
   it('reads --live, --date, and --at-utc-midnight', () => {
-    expect(parseArgs(['bun', 'cli', '--live', '--at-utc-midnight', '--date', '2026-08-23'])).toEqual(
-      {
-        ok: true,
-        live: true,
-        day: '2026-08-23',
-        atUtcMidnight: true,
-      },
-    );
+    expect(
+      parseArgs(
+        ['bun', 'cli', '--live', '--at-utc-midnight', '--date', '2026-08-23'],
+        new Date('2026-08-25T00:00:00.000Z'),
+      ),
+    ).toEqual({
+      ok: true,
+      live: true,
+      day: '2026-08-23',
+      atUtcMidnight: true,
+    });
+  });
+
+  it('defaults the day from the injected clock', () => {
+    expect(parseArgs(['bun', 'cli'], new Date('2026-08-25T00:00:00.000Z'))).toEqual({
+      ok: true,
+      live: false,
+      day: '2026-08-25',
+      atUtcMidnight: false,
+    });
   });
 
   it('rejects a missing or malformed --date', () => {
@@ -43,17 +55,17 @@ describe('isUtcMidnightWindow', () => {
 });
 
 describe('main --at-utc-midnight', () => {
-  const env = {
-    GIFTS_API_URL: 'https://api.21.gifts',
-    GIFTS_API_TOKEN: 'x',
-    LNDHUB_URI: 'lndhub://a:b@https://example/lndhub',
-    RECIPIENTS_FILE: 'recipients.example.json',
-  };
-
-  it('exits 0 without paying outside the UTC midnight window', async () => {
-    const code = await main(env, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
+  it('exits 0 outside the window without loading config', async () => {
+    const code = await main({}, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
       new Date('2026-08-24T22:00:00.000Z'),
     );
     expect(code).toBe(0);
+  });
+
+  it('loads config after the window opens', async () => {
+    const code = await main({}, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
+      new Date('2026-08-25T00:00:00.000Z'),
+    );
+    expect(code).toBe(2);
   });
 });
