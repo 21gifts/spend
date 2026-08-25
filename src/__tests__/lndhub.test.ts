@@ -95,4 +95,41 @@ describe('LndhubClient', () => {
     });
     expect(await client.payInvoice('tok', 'lnbc1')).toEqual({ preimage: real });
   });
+
+  it('returns the first getbtc address', async () => {
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/getbtc')) {
+        return new Response(JSON.stringify([{ address: 'bc1qtestaddress0001' }]), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    expect(await client.getDepositAddress('tok')).toBe('bc1qtestaddress0001');
+  });
+
+  it('creates an address via newbtc when getbtc is empty', async () => {
+    const client = new LndhubClient(target, async (url, init) => {
+      if (String(url).endsWith('/getbtc')) {
+        return new Response('[]', { status: 200 });
+      }
+      if (String(url).endsWith('/newbtc')) {
+        expect(init?.method).toBe('POST');
+        return new Response(JSON.stringify({ address: 'bc1qnewfromhub' }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    expect(await client.getDepositAddress('tok')).toBe('bc1qnewfromhub');
+  });
+
+  it('returns null when no deposit address exists', async () => {
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/getbtc')) {
+        return new Response('[]', { status: 200 });
+      }
+      if (String(url).endsWith('/newbtc')) {
+        return new Response('{}', { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    expect(await client.getDepositAddress('tok')).toBeNull();
+  });
 });

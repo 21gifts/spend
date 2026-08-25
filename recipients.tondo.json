@@ -1,0 +1,21 @@
+{
+  "comment": "21gifts daily; amounts from Tondo USD list, converted at Coinbase BTC-USD 78883.06 (2026-08-24T19:32:36Z)",
+  "btcUsd": "78883.06",
+  "recipients": [
+    { "address": "mentalnic63@walletofsatoshi.com", "amountSats": 3803, "amountUsd": 3.0 },
+    { "address": "periodzoo31@walletofsatoshi.com", "amountSats": 5705, "amountUsd": 4.5 },
+    { "address": "hugebubble78@walletofsatoshi.com", "amountSats": 2535, "amountUsd": 2.0 },
+    { "address": "grossslate27@walletofsatoshi.com", "amountSats": 10142, "amountUsd": 8.0 },
+    { "address": "economynut11@walletofsatoshi.com", "amountSats": 3803, "amountUsd": 3.0 },
+    { "address": "azurecarbon28@walletofsatoshi.com", "amountSats": 5071, "amountUsd": 4.0 },
+    { "address": "phobicsyrup82@walletofsatoshi.com", "amountSats": 1268, "amountUsd": 1.0 },
+    { "address": "unrulyrange32@walletofsatoshi.com", "amountSats": 1268, "amountUsd": 1.0 },
+    { "address": "rudegraphic97@walletofsatoshi.com", "amountSats": 3803, "amountUsd": 3.0 },
+    { "address": "spikyrabbit17@walletofsatoshi.com", "amountSats": 5705, "amountUsd": 4.5 },
+    { "address": "frailbengal17@walletofsatoshi.com", "amountSats": 5071, "amountUsd": 4.0 },
+    { "address": "livemary87@walletofsatoshi.com", "amountSats": 3803, "amountUsd": 3.0 },
+    { "address": "sunnymarina58@walletofsatoshi.com", "amountSats": 3803, "amountUsd": 3.0 },
+    { "address": "signedrange48@walletofsatoshi.com", "amountSats": 5071, "amountUsd": 4.0 },
+    { "address": "piousmenu95@walletofsatoshi.com", "amountSats": 2535, "amountUsd": 2.0 }
+  ]
+}

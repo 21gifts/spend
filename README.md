@@ -1,14 +1,21 @@
 # 21gifts/spend
 
-Daily Lightning gift payouts. This process **does not generate invoices**.
+Daily Lightning gift payouts plus a tiny HTTP dashboard. This process **does not generate invoices**.
 
 1. `POST {GIFTS_API_URL}/invoices` — 21.gifts api fetches the recipient BOLT11
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
-Default is dry-run: fetch invoices from the API and log them, **no LNDHub
-auth and no pay**. `--live` authenticates to lightning.space, checks balance,
-then pays.
+The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run.
+
+The dashboard at `GET /` shows only:
+
+- current LNDHub balance in sats
+- the same balance in USD (Coinbase BTC-USD spot)
+- on-chain deposit address (text)
+- the same address as a QR code
+
+`GET /healthz` is the liveness probe. Nothing else is on the page.
 
 ## Setup
 
@@ -17,26 +24,15 @@ cp .env.example .env
 cp recipients.example.json recipients.json
 # fill GIFTS_API_TOKEN and LNDHUB_URI (lndhub://admin:<key>@https://lightning.space/lndhub)
 bun install
-bun src/cli.ts            # dry-run
+bun src/server.ts         # dashboard + in-process UTC midnight scheduler
+bun src/cli.ts            # one-shot dry-run
 bun src/cli.ts --date 2026-08-23  # dry-run for that UTC state day
-bun src/cli.ts --live     # real payments
+bun src/cli.ts --live     # one-shot real payments
 ```
 
-Cron (UTC midnight). macOS cron ignores `CRON_TZ`, so do **not** use `0 0 * * *`
-with `CRON_TZ=UTC` — that fires at local midnight. Run hourly at local minute 0
-on a host whose UTC offset is a whole number of hours (e.g. Europe/Zurich:
-02:00 CEST = 00:00 UTC) and let the process no-op unless it is UTC hour 0:
+Production image: `21gifts/spend:latest`. `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`).
 
-```
-0 * * * * cd /path/to/spend && set -a && . ./.env && set +a && bun src/cli.ts --live --at-utc-midnight
-```
-
-The shell still sources `.env` (fail-closed if it is missing). Inside the
-process, `--at-utc-midnight` checks the UTC window **before** validating
-config / reading the recipients file: it exits `0` without paying unless UTC
-hour is 0 and the minute is 0–5. Same-day re-entry is still gated by JSONL
-(`paid` / `uncertain`). The default state day is the UTC day of that same
-clock sample (override with `--date`).
+UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
 
 ## Fail-closed
 
