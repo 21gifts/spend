@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createServer, parseBindAddr } from '../server';
 
 const env = {
@@ -53,7 +53,25 @@ describe('createServer', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('3803 sats');
+    expect(html).toContain(`${((3803 / 1e8) * 78883.06).toFixed(2)} USD`);
     expect(html).toContain('bc1qdashboardaddr');
     expect(html).toContain('<svg');
+  });
+
+  it('passes SPEND_LIVE to the midnight run', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const handle = app.startScheduler();
+    await Promise.resolve();
+    expect(runDay).toHaveBeenCalledWith(
+      expect.anything(),
+      { live: true, day: '2026-08-25' },
+    );
+    handle.stop();
   });
 });

@@ -29,8 +29,8 @@ export function parseLndhubUri(uri: string): LndhubTarget | null {
  * LNDHub client (lightning.space / LNbits).
  */
 export class LndhubClient {
-  /** Memoized deposit address; `undefined` until the first lookup. */
-  private depositCache: string | null | undefined = undefined;
+  /** In-flight deposit lookup so parallel GET / share one `/newbtc`. */
+  private depositLookup: Promise<string | null> | undefined = undefined;
 
   constructor(
     private readonly target: LndhubTarget,
@@ -64,17 +64,19 @@ export class LndhubClient {
    * @returns First existing address, a newly created one, or `null`.
    */
   async getDepositAddress(token: string): Promise<string | null> {
-    if (this.depositCache !== undefined) {
-      return this.depositCache;
+    if (this.depositLookup === undefined) {
+      this.depositLookup = this.lookupDepositAddress(token);
     }
+    return this.depositLookup;
+  }
+
+  private async lookupDepositAddress(token: string): Promise<string | null> {
     const existing = firstAddress(await this.requestArray('GET', '/getbtc', token));
     if (existing !== null) {
-      this.depositCache = existing;
       return existing;
     }
     const created = await this.request('POST', '/newbtc', {}, token);
-    this.depositCache = usableAddress(created['address']);
-    return this.depositCache;
+    return usableAddress(created['address']);
   }
 
   /**

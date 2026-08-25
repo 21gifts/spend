@@ -4,12 +4,14 @@
 #   docker build -t 21gifts/spend:beta .
 #   docker build -t 21gifts/spend:latest .
 #
-# Run:
-#   docker run -p 3000:3000 21gifts/spend:latest
+# Run (required: GIFTS_API_URL, GIFTS_API_TOKEN, LNDHUB_URI):
+#   docker run -p 3000:3000 -v spend-state:/data \
+#     -e GIFTS_API_URL -e GIFTS_API_TOKEN -e LNDHUB_URI -e SPEND_LIVE=true \
+#     21gifts/spend:latest
 
 FROM oven/bun:1.3-alpine AS deps
 WORKDIR /app
-COPY package.json bun.lock* bun.lockb* ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 FROM oven/bun:1.3-alpine AS builder

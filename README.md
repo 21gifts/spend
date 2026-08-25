@@ -30,7 +30,16 @@ bun src/cli.ts --date 2026-08-23  # dry-run for that UTC state day
 bun src/cli.ts --live     # one-shot real payments
 ```
 
-Production image: `21gifts/spend:latest`. `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`).
+Production image: `21gifts/spend:latest`. `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`). Required env: `GIFTS_API_URL`, `GIFTS_API_TOKEN`, `LNDHUB_URI`. Set `SPEND_LIVE=true` to pay.
+
+```bash
+docker run -p 3000:3000 -v spend-state:/data \
+  -e GIFTS_API_URL=https://api.21.gifts \
+  -e GIFTS_API_TOKEN \
+  -e LNDHUB_URI \
+  -e SPEND_LIVE=true \
+  21gifts/spend:latest
+```
 
 UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
 

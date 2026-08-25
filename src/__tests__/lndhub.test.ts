@@ -149,4 +149,23 @@ describe('LndhubClient', () => {
     expect(await client.getDepositAddress('tok')).toBe('bc1qonce');
     expect(newbtc).toBe(1);
   });
+
+  it('shares one newbtc across parallel lookups', async () => {
+    let newbtc = 0;
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/getbtc')) {
+        return new Response('[]', { status: 200 });
+      }
+      if (String(url).endsWith('/newbtc')) {
+        newbtc += 1;
+        await new Promise((r) => setTimeout(r, 20));
+        return new Response(JSON.stringify({ address: 'bc1qparallel' }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const [a, b] = await Promise.all([client.getDepositAddress('tok'), client.getDepositAddress('tok')]);
+    expect(a).toBe('bc1qparallel');
+    expect(b).toBe('bc1qparallel');
+    expect(newbtc).toBe(1);
+  });
 });

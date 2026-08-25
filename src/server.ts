@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { loadConfig } from './config';
+import { loadConfig, type SpendConfig } from './config';
 import { loadDashboard, renderDashboardHtml } from './dashboard';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot } from './price';
@@ -48,6 +48,10 @@ export function createServer(opts: {
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  runDay?: (
+    config: SpendConfig,
+    options: { live: boolean; day: string },
+  ) => Promise<{ exitCode: number }>;
 }): { fetch: (req: Request) => Promise<Response>; startScheduler: () => { stop: () => void } } {
   const loaded = loadConfig(opts.env);
   if (!loaded.ok) {
@@ -86,7 +90,7 @@ export function createServer(opts: {
     startScheduler: () => {
       const scheduler = {
         live,
-        run: (day: string) => runDay(config, { live, day }),
+        run: (day: string) => (opts.runDay ?? runDay)(config, { live, day }),
       };
       if (opts.now === undefined) {
         return startMidnightScheduler(scheduler);
