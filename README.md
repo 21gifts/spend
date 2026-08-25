@@ -22,11 +22,21 @@ bun src/cli.ts --date 2026-08-23  # dry-run for that UTC state day
 bun src/cli.ts --live     # real payments
 ```
 
-Cron (UTC midnight):
+Cron (UTC midnight). macOS cron ignores `CRON_TZ`, so do **not** use `0 0 * * *`
+with `CRON_TZ=UTC` — that fires at local midnight. Run hourly at local minute 0
+on a host whose UTC offset is a whole number of hours (e.g. Europe/Zurich:
+02:00 CEST = 00:00 UTC) and let the process no-op unless it is UTC hour 0:
 
 ```
-0 0 * * * cd /path/to/spend && set -a && . ./.env && set +a && bun src/cli.ts --live
+0 * * * * cd /path/to/spend && set -a && . ./.env && set +a && bun src/cli.ts --live --at-utc-midnight
 ```
+
+The shell still sources `.env` (fail-closed if it is missing). Inside the
+process, `--at-utc-midnight` checks the UTC window **before** validating
+config / reading the recipients file: it exits `0` without paying unless UTC
+hour is 0 and the minute is 0–5. Same-day re-entry is still gated by JSONL
+(`paid` / `uncertain`). The default state day is the UTC day of that same
+clock sample (override with `--date`).
 
 ## Fail-closed
 
