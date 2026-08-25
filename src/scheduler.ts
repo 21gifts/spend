@@ -30,7 +30,11 @@ export function startMidnightScheduler(opts: {
     void opts
       .run(day)
       .then((result) => {
-        lastDay = day;
+        // Retry inside the window on preflight/lock/balance (exit 3).
+        // Success (0), config (2), and halt/failed (4) must not re-enter.
+        if (result.exitCode !== 3) {
+          lastDay = day;
+        }
         console.warn(
           JSON.stringify({
             ts: instant.toISOString(),

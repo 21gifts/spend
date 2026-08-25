@@ -29,6 +29,9 @@ export function parseLndhubUri(uri: string): LndhubTarget | null {
  * LNDHub client (lightning.space / LNbits).
  */
 export class LndhubClient {
+  /** Memoized deposit address; `undefined` until the first lookup. */
+  private depositCache: string | null | undefined = undefined;
+
   constructor(
     private readonly target: LndhubTarget,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -52,24 +55,26 @@ export class LndhubClient {
   }
 
   /**
-   * Available balance in sats.
-   *
-   * @param token - Access token from {@link auth}.
-   * @returns Integer sats, or `null` when the shape is unknown.
-   */
-  /**
    * On-chain deposit address for topping up this LNDHub account.
+   *
+   * Looks up `/getbtc` first. `POST /newbtc` runs at most once per process
+   * so a public dashboard refresh cannot mint unbounded addresses.
    *
    * @param token - Access token from {@link auth}.
    * @returns First existing address, a newly created one, or `null`.
    */
   async getDepositAddress(token: string): Promise<string | null> {
+    if (this.depositCache !== undefined) {
+      return this.depositCache;
+    }
     const existing = firstAddress(await this.requestArray('GET', '/getbtc', token));
     if (existing !== null) {
+      this.depositCache = existing;
       return existing;
     }
     const created = await this.request('POST', '/newbtc', {}, token);
-    return usableAddress(created['address']);
+    this.depositCache = usableAddress(created['address']);
+    return this.depositCache;
   }
 
   /**

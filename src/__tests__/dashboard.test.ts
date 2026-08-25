@@ -26,6 +26,22 @@ describe('loadDashboard', () => {
     expect(data.usd).toBeNull();
     expect(data.sats).toBe(1000);
   });
+
+  it('keeps sats when the deposit address lookup throws', async () => {
+    const data = await loadDashboard({
+      lndhub: {
+        auth: async () => 'tok',
+        balance: async () => 3803,
+        getDepositAddress: async () => {
+          throw new Error('newbtc failed');
+        },
+      },
+      btcUsd: async () => 78883.06,
+    });
+    expect(data.sats).toBe(3803);
+    expect(data.address).toBeNull();
+    expect(data.usd).not.toBeNull();
+  });
 });
 
 describe('renderDashboardHtml', () => {
@@ -47,5 +63,15 @@ describe('renderDashboardHtml', () => {
     const html = renderDashboardHtml({ sats: null, usd: null, address: null });
     expect(html).toContain('unavailable');
     expect(html).not.toContain('<svg');
+  });
+
+  it('escapes a hostile address in HTML text', () => {
+    const html = renderDashboardHtml({
+      sats: 1,
+      usd: 1,
+      address: '<script>alert(1)</script>',
+    });
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('<script>alert(1)</script>');
   });
 });

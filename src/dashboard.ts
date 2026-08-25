@@ -23,13 +23,20 @@ export async function loadDashboard(deps: {
 }): Promise<DashboardData> {
   let sats: number | null = null;
   let address: string | null = null;
+  let token: string | null = null;
   try {
-    const token = await deps.lndhub.auth();
+    token = await deps.lndhub.auth();
     sats = await deps.lndhub.balance(token);
-    address = await deps.lndhub.getDepositAddress(token);
   } catch {
+    token = null;
     sats = null;
-    address = null;
+  }
+  if (token !== null) {
+    try {
+      address = await deps.lndhub.getDepositAddress(token);
+    } catch {
+      address = null;
+    }
   }
   let usd: number | null = null;
   if (sats !== null) {
