@@ -184,4 +184,21 @@ describe('LndhubClient', () => {
     await expect(client.getDepositAddress('tok')).rejects.toThrow();
     expect(await client.getDepositAddress('tok')).toBe('bc1qafterfail');
   });
+
+  it('does not retry newbtc after a failed create', async () => {
+    let newbtc = 0;
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/getbtc')) {
+        return new Response('[]', { status: 200 });
+      }
+      if (String(url).endsWith('/newbtc')) {
+        newbtc += 1;
+        return new Response('{}', { status: 500 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    expect(await client.getDepositAddress('tok')).toBeNull();
+    expect(await client.getDepositAddress('tok')).toBeNull();
+    expect(newbtc).toBe(1);
+  });
 });

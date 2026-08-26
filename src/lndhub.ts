@@ -31,6 +31,8 @@ export function parseLndhubUri(uri: string): LndhubTarget | null {
 export class LndhubClient {
   /** In-flight deposit lookup so parallel GET / share one `/newbtc`. */
   private depositLookup: Promise<string | null> | undefined = undefined;
+  /** `/newbtc` at most once per process, even when it fails. */
+  private newbtcAttempted = false;
 
   constructor(
     private readonly target: LndhubTarget,
@@ -81,8 +83,16 @@ export class LndhubClient {
     if (existing !== null) {
       return existing;
     }
-    const created = await this.request('POST', '/newbtc', {}, token);
-    return usableAddress(created['address']);
+    if (this.newbtcAttempted) {
+      return null;
+    }
+    this.newbtcAttempted = true;
+    try {
+      const created = await this.request('POST', '/newbtc', {}, token);
+      return usableAddress(created['address']);
+    } catch {
+      return null;
+    }
   }
 
   /**

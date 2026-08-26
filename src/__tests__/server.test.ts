@@ -15,6 +15,17 @@ describe('parseBindAddr', () => {
 });
 
 describe('createServer', () => {
+  it('returns 404 for other paths without LNDHub I/O', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/nope'));
+    expect(res.status).toBe(404);
+  });
+
   it('serves healthz without LNDHub I/O', async () => {
     const app = createServer({
       env,
