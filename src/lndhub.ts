@@ -29,6 +29,11 @@ export function parseLndhubUri(uri: string): LndhubTarget | null {
  * LNDHub client (lightning.space / LNbits).
  */
 export class LndhubClient {
+  /** In-flight deposit lookup so parallel GET / share one `/newbtc`. */
+  private depositLookup: Promise<string | null> | undefined = undefined;
+  /** `/newbtc` at most once per process, even when it fails. */
+  private newbtcAttempted = false;
+
   constructor(
     private readonly target: LndhubTarget,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -49,6 +54,52 @@ export class LndhubClient {
       throw new Error('LNDHub auth did not return access_token');
     }
     return token;
+  }
+
+  /**
+   * On-chain deposit address for topping up this LNDHub account.
+   *
+   * Looks up `/getbtc` first. `POST /newbtc` runs at most once per process
+   * so a public dashboard refresh cannot mint unbounded addresses.
+   * A `null` result is not memoized: later calls retry `/getbtc` in case an
+   * address appears, but they do not call `/newbtc` again.
+   *
+   * @param token - Access token from {@link auth}.
+   * @returns First existing address, a newly created one, or `null`.
+   */
+  async getDepositAddress(token: string): Promise<string | null> {
+    if (this.depositLookup === undefined) {
+      this.depositLookup = this.lookupDepositAddress(token).then(
+        (address) => {
+          if (address === null) {
+            this.depositLookup = undefined;
+          }
+          return address;
+        },
+        (err: unknown) => {
+          this.depositLookup = undefined;
+          throw err;
+        },
+      );
+    }
+    return this.depositLookup;
+  }
+
+  private async lookupDepositAddress(token: string): Promise<string | null> {
+    const existing = firstAddress(await this.requestArray('GET', '/getbtc', token));
+    if (existing !== null) {
+      return existing;
+    }
+    if (this.newbtcAttempted) {
+      return null;
+    }
+    this.newbtcAttempted = true;
+    try {
+      const created = await this.request('POST', '/newbtc', {}, token);
+      return usableAddress(created['address']);
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -163,6 +214,27 @@ export class LndhubClient {
     }
     return json;
   }
+}
+
+function firstAddress(rows: unknown[]): string | null {
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') {
+      continue;
+    }
+    const address = usableAddress((row as Record<string, unknown>)['address']);
+    if (address !== null) {
+      return address;
+    }
+  }
+  return null;
+}
+
+function usableAddress(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const address = value.trim();
+  return address === '' ? null : address;
 }
 
 /** 32-byte hex preimage that is not the LNDHub all-zero placeholder. */
