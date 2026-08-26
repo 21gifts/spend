@@ -79,8 +79,9 @@ describe('loadConfig', () => {
     const loaded = loadConfig({ ...env, RECIPIENTS_FILE: path }, (file) => readFileSync(file, 'utf8'));
     expect(loaded.ok).toBe(true);
     if (loaded.ok) {
-      expect(loaded.config.recipients).toHaveLength(15);
+      expect(loaded.config.recipients).toHaveLength(16);
       expect(loaded.config.recipients[0]?.address).toBe('mentalnic63@walletofsatoshi.com');
+      expect(loaded.config.recipients[15]?.address).toBe('bentfresh52@walletofsatoshi.com');
     }
   });
 });
