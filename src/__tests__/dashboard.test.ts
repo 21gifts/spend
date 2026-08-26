@@ -55,6 +55,7 @@ describe('renderDashboardHtml', () => {
     expect(html).toContain('3.00 USD');
     expect(html).toContain('bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh');
     expect(html).toContain('<svg');
+    expect(html).not.toContain('<h1');
     expect(html).not.toContain('recipient');
     expect(html).not.toContain('payout');
   });

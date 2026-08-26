@@ -84,7 +84,6 @@ export function renderDashboardHtml(data: DashboardData): string {
 <title>21.gifts spend</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}
-h1{font-size:1.25rem;font-weight:600}
 dt{font-weight:600;margin-top:1.25rem}
 dd{margin:0.35rem 0 0}
 .addr{word-break:break-all;font-family:ui-monospace,monospace}
@@ -92,7 +91,6 @@ dd{margin:0.35rem 0 0}
 </style>
 </head>
 <body>
-<h1>21.gifts spend</h1>
 <dl>
 <dt>Balance</dt>
 <dd>${slot(formatSats(data.sats))}</dd>
