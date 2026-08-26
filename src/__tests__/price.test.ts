@@ -13,4 +13,9 @@ describe('fetchBtcUsdSpot', () => {
     const n = await fetchBtcUsdSpot(async () => new Response('{}', { status: 200 }));
     expect(n).toBeNull();
   });
+
+  it('returns null on a non-OK HTTP status', async () => {
+    const n = await fetchBtcUsdSpot(async () => new Response('{}', { status: 502 }));
+    expect(n).toBeNull();
+  });
 });

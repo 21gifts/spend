@@ -65,7 +65,13 @@ export class LndhubClient {
    */
   async getDepositAddress(token: string): Promise<string | null> {
     if (this.depositLookup === undefined) {
-      this.depositLookup = this.lookupDepositAddress(token);
+      this.depositLookup = this.lookupDepositAddress(token).then(
+        (address) => address,
+        (err: unknown) => {
+          this.depositLookup = undefined;
+          throw err;
+        },
+      );
     }
     return this.depositLookup;
   }

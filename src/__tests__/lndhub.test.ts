@@ -168,4 +168,20 @@ describe('LndhubClient', () => {
     expect(b).toBe('bc1qparallel');
     expect(newbtc).toBe(1);
   });
+
+  it('retries getbtc after a failed lookup', async () => {
+    let gets = 0;
+    const client = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/getbtc')) {
+        gets += 1;
+        if (gets === 1) {
+          return new Response('{}', { status: 500 });
+        }
+        return new Response(JSON.stringify([{ address: 'bc1qafterfail' }]), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    await expect(client.getDepositAddress('tok')).rejects.toThrow();
+    expect(await client.getDepositAddress('tok')).toBe('bc1qafterfail');
+  });
 });
