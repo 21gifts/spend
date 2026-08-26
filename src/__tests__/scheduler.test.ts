@@ -38,6 +38,40 @@ describe('startMidnightScheduler', () => {
     handle.stop();
   });
 
+  it('ends the UTC day after exit 2', async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => ({ exitCode: 2 }));
+    const handle = startMidnightScheduler({
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      live: true,
+      run,
+      intervalMs: 10_000,
+    });
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    handle.stop();
+  });
+
+  it('ends the UTC day after exit 4', async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => ({ exitCode: 4 }));
+    const handle = startMidnightScheduler({
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      live: true,
+      run,
+      intervalMs: 10_000,
+    });
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    handle.stop();
+  });
+
   it('retries inside the window after exit 3', async () => {
     vi.useFakeTimers();
     const run = vi

@@ -1,4 +1,4 @@
-import { isUtcMidnightWindow } from './cli';
+import { isUtcMidnightWindow } from './utc-window';
 
 /**
  * Poll UTC midnight and run one payout per UTC day.
