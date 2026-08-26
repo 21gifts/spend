@@ -41,7 +41,7 @@ docker run -p 3000:3000 -v spend-state:/data \
   21gifts/spend:latest
 ```
 
-UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
+UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Exit `3` (lock/balance) is retried on the next tick inside that window; exit `0`, `2`, or `4` ends the UTC day for this process. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
 
 ## Fail-closed
 

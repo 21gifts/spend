@@ -74,4 +74,21 @@ describe('createServer', () => {
     );
     handle.stop();
   });
+
+  it('defaults the midnight run to dry-run without SPEND_LIVE', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const handle = app.startScheduler();
+    await Promise.resolve();
+    expect(runDay).toHaveBeenCalledWith(
+      expect.anything(),
+      { live: false, day: '2026-08-25' },
+    );
+    handle.stop();
+  });
 });
