@@ -61,6 +61,8 @@ export class LndhubClient {
    *
    * Looks up `/getbtc` first. `POST /newbtc` runs at most once per process
    * so a public dashboard refresh cannot mint unbounded addresses.
+   * A `null` result is not memoized: later calls retry `/getbtc` in case an
+   * address appears, but they do not call `/newbtc` again.
    *
    * @param token - Access token from {@link auth}.
    * @returns First existing address, a newly created one, or `null`.
@@ -68,7 +70,12 @@ export class LndhubClient {
   async getDepositAddress(token: string): Promise<string | null> {
     if (this.depositLookup === undefined) {
       this.depositLookup = this.lookupDepositAddress(token).then(
-        (address) => address,
+        (address) => {
+          if (address === null) {
+            this.depositLookup = undefined;
+          }
+          return address;
+        },
         (err: unknown) => {
           this.depositLookup = undefined;
           throw err;
