@@ -105,7 +105,6 @@ if (meta.main === true) {
   try {
     const app = createServer({ env: process.env });
     const bind = parseBindAddr(process.env['BIND_ADDR']);
-    app.startScheduler();
     const bun = (globalThis as { Bun?: { serve: (opts: { hostname: string; port: number; fetch: (req: Request) => Promise<Response> }) => unknown } }).Bun;
     if (bun === undefined) {
       console.error(JSON.stringify({ event: 'spend.config', error: 'Bun.serve is required' }));
@@ -116,6 +115,7 @@ if (meta.main === true) {
       port: bind.port,
       fetch: app.fetch,
     });
+    app.startScheduler();
     console.warn(
       JSON.stringify({
         ts: new Date().toISOString(),

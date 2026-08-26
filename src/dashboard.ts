@@ -26,12 +26,15 @@ export async function loadDashboard(deps: {
   let token: string | null = null;
   try {
     token = await deps.lndhub.auth();
-    sats = await deps.lndhub.balance(token);
   } catch {
     token = null;
-    sats = null;
   }
   if (token !== null) {
+    try {
+      sats = await deps.lndhub.balance(token);
+    } catch {
+      sats = null;
+    }
     try {
       address = await deps.lndhub.getDepositAddress(token);
     } catch {

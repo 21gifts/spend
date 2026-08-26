@@ -27,6 +27,22 @@ describe('loadDashboard', () => {
     expect(data.sats).toBe(1000);
   });
 
+  it('keeps the deposit address when balance throws', async () => {
+    const data = await loadDashboard({
+      lndhub: {
+        auth: async () => 'tok',
+        balance: async () => {
+          throw new Error('balance failed');
+        },
+        getDepositAddress: async () => 'bc1qstillthere',
+      },
+      btcUsd: async () => 50_000,
+    });
+    expect(data.sats).toBeNull();
+    expect(data.usd).toBeNull();
+    expect(data.address).toBe('bc1qstillthere');
+  });
+
   it('keeps sats when the deposit address lookup throws', async () => {
     const data = await loadDashboard({
       lndhub: {
