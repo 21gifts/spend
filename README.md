@@ -57,7 +57,7 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 - After `uncertain`, later recipients in a live run (`--live` or `SPEND_LIVE=true`) are skipped and a `*halt*` JSONL row is appended so later runs that UTC day exit `4` without paying
 - If a live process crashes, the next run steals the leftover lock once the owner pid is gone, or when this process reused the pid but the lock timestamp predates this incarnation. A lock whose pid belongs to a different live process is never stolen. Remove a lock file by hand only after checking that no spend is running and inspecting `STATE_DIR/YYYY-MM-DD.jsonl`
 - Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
-- State: `STATE_DIR/YYYY-MM-DD.jsonl`, `STATE_DIR/YYYY-MM-DD.finished`, and `STATE_DIR/YYYY-MM-DD.lock` while a run is in progress
+- State: `STATE_DIR/YYYY-MM-DD.jsonl`, `STATE_DIR/YYYY-MM-DD.finished`, `STATE_DIR/YYYY-MM-DD.lock` while a run is in progress, and `STATE_DIR/YYYY-MM-DD.taking` briefly while a leftover lock is stolen (owner pid in `taking/owner`)
 
 Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
 

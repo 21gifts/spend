@@ -5,9 +5,10 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  rmdirSync,
+  rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -24,29 +25,47 @@ export interface DayLock {
  */
 export const LOCK_STALE_MS = 10 * 60 * 1000;
 
-/** Age after which a leftover `{day}.taking` directory may be replaced. */
-const TAKING_STALE_MS = 5_000;
-
-function withStealMutex(dir: string, day: string, now: () => number, fn: () => boolean): boolean {
-  const taking = join(dir, `${day}.taking`);
+function claimTaking(taking: string): boolean {
+  const marker = join(taking, 'owner');
   try {
     mkdirSync(taking);
+    writeFileSync(marker, `${process.pid}\n`);
+    return true;
   } catch {
+    let owner: number | null = null;
     try {
-      if (now() - statSync(taking).mtimeMs < TAKING_STALE_MS) {
-        return false;
+      const raw = readFileSync(marker, 'utf8').trim();
+      const pid = Number(raw);
+      if (Number.isInteger(pid) && pid > 0) {
+        owner = pid;
       }
-      rmdirSync(taking);
+    } catch {
+      owner = null;
+    }
+    if (owner !== null && owner !== process.pid && pidAlive(owner)) {
+      return false;
+    }
+    try {
+      rmSync(taking, { recursive: true, force: true });
       mkdirSync(taking);
+      writeFileSync(marker, `${process.pid}\n`);
+      return true;
     } catch {
       return false;
     }
+  }
+}
+
+function withStealMutex(dir: string, day: string, fn: () => boolean): boolean {
+  const taking = join(dir, `${day}.taking`);
+  if (!claimTaking(taking)) {
+    return false;
   }
   try {
     return fn();
   } finally {
     try {
-      rmdirSync(taking);
+      rmSync(taking, { recursive: true, force: true });
     } catch {
       // already gone
     }
@@ -112,9 +131,9 @@ function contentsStealable(raw: string, path: string, now: () => number): boolea
  * Steal when the owner pid is dead, or when the pid is this process but the
  * lock was written before this incarnation started (PID reuse after restart).
  * Never unlink a file whose pid is a different live process. Steal of a leftover
- * is serialized with an exclusive `{day}.taking` directory so two recoveries
- * cannot both unlink. `release` unlinks only if the path still holds this
- * process's token.
+ * is serialized with `{day}.taking` (owner pid in `taking/owner`); a live
+ * different owner is never replaced. `release` unlinks only if the path still
+ * holds this process's token.
  *
  * @param dir - State directory.
  * @param day - UTC date `YYYY-MM-DD`.
@@ -176,7 +195,7 @@ export function fileDayLock(dir: string, day: string, now: () => number = Date.n
       if (first === 'mismatch') {
         return false;
       }
-      return withStealMutex(dir, day, now, () => {
+      return withStealMutex(dir, day, () => {
         let raw: string;
         try {
           raw = readFileSync(path, 'utf8');
