@@ -21,7 +21,17 @@ describe('loadConfig', () => {
     if (loaded.ok) {
       expect(loaded.config.giftsApiUrl).toBe('https://api.21.gifts');
       expect(loaded.config.recipients[0]?.comment).toBe('x');
+      expect(loaded.config.lightningAddress).toBeNull();
     }
+  });
+
+  it('accepts SPEND_LIGHTNING_ADDRESS and rejects a value without @', () => {
+    const ok = loadConfig({ ...env, SPEND_LIGHTNING_ADDRESS: ' 9643e3@lightning.space ' }, () => file);
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.config.lightningAddress).toBe('9643e3@lightning.space');
+    }
+    expect(loadConfig({ ...env, SPEND_LIGHTNING_ADDRESS: 'not-an-address' }, () => file).ok).toBe(false);
   });
 
   it('requires GIFTS_API_URL', () => {

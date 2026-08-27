@@ -16,6 +16,7 @@ export interface SpendConfig {
   stateDir: string;
   comment: string;
   recipients: Recipient[];
+  lightningAddress: string | null;
 }
 
 interface RecipientsFile {
@@ -52,6 +53,11 @@ export function loadConfig(
   if (!lndhubUri.startsWith('lndhub://')) {
     return { ok: false, error: 'LNDHUB_URI must be an lndhub:// URI' };
   }
+  const lightningRaw = trimOrEmpty(env['SPEND_LIGHTNING_ADDRESS']);
+  if (lightningRaw !== '' && !lightningRaw.includes('@')) {
+    return { ok: false, error: 'SPEND_LIGHTNING_ADDRESS must be a Lightning Address' };
+  }
+  const lightningAddress = lightningRaw === '' ? null : lightningRaw;
 
   let raw: string;
   try {
@@ -104,6 +110,7 @@ export function loadConfig(
       stateDir,
       comment: fileComment,
       recipients,
+      lightningAddress,
     },
   };
 }

@@ -40,9 +40,21 @@ describe('createServer', () => {
     expect(body.service).toBe('spend');
   });
 
-  it('renders sats on GET /', async () => {
+  it('HEAD /healthz is 200 with empty body and no fetch', async () => {
     const app = createServer({
       env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/healthz', { method: 'HEAD' }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
+  });
+
+  it('renders sats on GET /', async () => {
+    const app = createServer({
+      env: { ...env, SPEND_LIGHTNING_ADDRESS: '9643e3@lightning.space' },
       fetchImpl: async (url) => {
         const path = String(url);
         if (path.endsWith('/auth')) {
@@ -50,9 +62,6 @@ describe('createServer', () => {
         }
         if (path.endsWith('/balance')) {
           return new Response(JSON.stringify({ BTC: { AvailableBalance: 3803 } }), { status: 200 });
-        }
-        if (path.endsWith('/getbtc')) {
-          return new Response(JSON.stringify([{ address: 'bc1qdashboardaddr' }]), { status: 200 });
         }
         if (path.includes('coinbase.com')) {
           return new Response(JSON.stringify({ data: { amount: '78883.06' } }), { status: 200 });
@@ -65,8 +74,24 @@ describe('createServer', () => {
     const html = await res.text();
     expect(html).toContain('3803 sats');
     expect(html).toContain(`${((3803 / 1e8) * 78883.06).toFixed(2)} USD`);
-    expect(html).toContain('bc1qdashboardaddr');
+    expect(html).toContain('9643e3@lightning.space');
+    expect(html).toContain('Lightning address');
     expect(html).toContain('<svg');
+    expect(html).not.toContain('bc1q');
+    expect(html).not.toContain('Deposit address');
+    expect(html).not.toContain('/getbtc');
+  });
+
+  it('HEAD / is 200 with empty body and does not load the dashboard', async () => {
+    const app = createServer({
+      env: { ...env, SPEND_LIGHTNING_ADDRESS: '9643e3@lightning.space' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/', { method: 'HEAD' }));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
   });
 
   it('passes SPEND_LIVE to the midnight run', async () => {
