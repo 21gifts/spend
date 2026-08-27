@@ -96,7 +96,7 @@ function contentsStealable(raw: string, path: string, now: () => number): boolea
     if (pid === process.pid) {
       const written = lockWrittenAt(raw);
       const started = now() - process.uptime() * 1000;
-      return written !== null && written < started - 500;
+      return written !== null && written < started;
     }
     return !pidAlive(pid);
   }
