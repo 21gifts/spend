@@ -111,17 +111,31 @@ export function createServer(opts: {
       }
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
-      const result = await payout(day);
-      console.warn(
-        JSON.stringify({
-          ts: clock().toISOString(),
-          event: 'spend.catchup',
-          day,
-          live: true,
-          exitCode: result.exitCode,
-        }),
-      );
-      return result;
+      try {
+        const result = await payout(day);
+        console.warn(
+          JSON.stringify({
+            ts: clock().toISOString(),
+            event: 'spend.catchup',
+            day,
+            live: true,
+            exitCode: result.exitCode,
+          }),
+        );
+        return result;
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : 'catchup';
+        console.warn(
+          JSON.stringify({
+            ts: clock().toISOString(),
+            event: 'spend.catchup',
+            day,
+            live: true,
+            error,
+          }),
+        );
+        return null;
+      }
     },
   };
 }

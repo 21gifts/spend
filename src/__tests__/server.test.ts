@@ -116,6 +116,23 @@ describe('createServer', () => {
     expect(runDay).toHaveBeenCalledWith(expect.anything(), { live: true, day: '2026-08-27' });
   });
 
+  it('startCatchup logs and returns null when payout throws', async () => {
+    const runDay = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    await expect(app.startCatchup()).resolves.toBeNull();
+    expect(JSON.stringify(warn.mock.calls)).toContain('spend.catchup');
+    expect(JSON.stringify(warn.mock.calls)).toContain('boom');
+    warn.mockRestore();
+  });
+
   it('startCatchup is a no-op without SPEND_LIVE', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const app = createServer({
