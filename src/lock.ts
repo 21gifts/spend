@@ -38,44 +38,9 @@ function createTakingFile(taking: string): boolean {
   }
 }
 
-function takingOwnerPid(taking: string): number | null {
-  try {
-    const line = readFileSync(taking, 'utf8').trim().split('\n')[0];
-    if (line === undefined || line === '') {
-      return null;
-    }
-    const pid = Number(line);
-    if (Number.isInteger(pid) && pid > 0) {
-      return pid;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function claimTaking(taking: string): boolean {
-  if (createTakingFile(taking)) {
-    return true;
-  }
-  const owner = takingOwnerPid(taking);
-  if (owner === null) {
-    return false;
-  }
-  if (owner !== process.pid && pidAlive(owner)) {
-    return false;
-  }
-  try {
-    unlinkSync(taking);
-  } catch {
-    return false;
-  }
-  return createTakingFile(taking);
-}
-
 function withStealMutex(dir: string, day: string, fn: () => boolean): boolean {
   const taking = join(dir, `${day}.taking`);
-  if (!claimTaking(taking)) {
+  if (!createTakingFile(taking)) {
     return false;
   }
   try {
@@ -148,9 +113,9 @@ function contentsStealable(raw: string, path: string, now: () => number): boolea
  * Steal when the owner pid is dead, or when the pid is this process but the
  * lock was written before this incarnation started (PID reuse after restart).
  * Never unlink a file whose pid is a different live process. Steal of a leftover
- * is serialized with an `O_EXCL` `{day}.taking` file (owner pid). A live
- * different owner or an unreadable taking file is never replaced. `release`
- * unlinks only if the path still holds this process's token.
+ * is serialized with a virgin `O_EXCL` `{day}.taking` file — an existing taking
+ * file is never replaced (fail-closed). `release` unlinks only if the path still
+ * holds this process's token.
  *
  * @param dir - State directory.
  * @param day - UTC date `YYYY-MM-DD`.
