@@ -42,7 +42,7 @@ function serviceVersion(): string {
  * HTTP app for the dashboard and health probe.
  *
  * @param opts - Env, fetch, and clock.
- * @returns Fetch handler and scheduler starter.
+ * @returns Fetch handler, midnight scheduler starter, and live catch-up starter.
  */
 export function createServer(opts: {
   env: Record<string, string | undefined>;
