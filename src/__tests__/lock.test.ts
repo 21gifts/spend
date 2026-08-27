@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -83,24 +83,33 @@ describe('fileDayLock', () => {
     }
   });
 
-  it('replaces a taking directory left by a previous incarnation of this pid', () => {
+  it('replaces a taking file left by a previous incarnation of this pid', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-lock-'));
     try {
       writeFileSync(join(dir, '2026-08-23.lock'), `${Date.now()}\n999999999\n`);
-      mkdirSync(join(dir, '2026-08-23.taking'));
-      writeFileSync(join(dir, '2026-08-23.taking', 'owner'), `${process.pid}\n`);
+      writeFileSync(join(dir, '2026-08-23.taking'), `${process.pid}\n`);
       expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('does not replace a taking directory owned by a different live pid', () => {
+  it('does not replace a taking file owned by a different live pid', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-lock-'));
     try {
       writeFileSync(join(dir, '2026-08-23.lock'), `${Date.now()}\n999999999\n`);
-      mkdirSync(join(dir, '2026-08-23.taking'));
-      writeFileSync(join(dir, '2026-08-23.taking', 'owner'), '1\n');
+      writeFileSync(join(dir, '2026-08-23.taking'), '1\n');
+      expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not steal when the taking file has no readable owner pid', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-lock-'));
+    try {
+      writeFileSync(join(dir, '2026-08-23.lock'), `${Date.now()}\n999999999\n`);
+      writeFileSync(join(dir, '2026-08-23.taking'), 'not-a-pid\n');
       expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });

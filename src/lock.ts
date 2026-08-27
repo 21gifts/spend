@@ -5,10 +5,8 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -25,35 +23,54 @@ export interface DayLock {
  */
 export const LOCK_STALE_MS = 10 * 60 * 1000;
 
-function claimTaking(taking: string): boolean {
-  const marker = join(taking, 'owner');
+function createTakingFile(taking: string): boolean {
   try {
-    mkdirSync(taking);
-    writeFileSync(marker, `${process.pid}\n`);
+    const fd = openSync(taking, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+    try {
+      writeSync(fd, `${process.pid}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     return true;
   } catch {
-    let owner: number | null = null;
-    try {
-      const raw = readFileSync(marker, 'utf8').trim();
-      const pid = Number(raw);
-      if (Number.isInteger(pid) && pid > 0) {
-        owner = pid;
-      }
-    } catch {
-      owner = null;
-    }
-    if (owner !== null && owner !== process.pid && pidAlive(owner)) {
-      return false;
-    }
-    try {
-      rmSync(taking, { recursive: true, force: true });
-      mkdirSync(taking);
-      writeFileSync(marker, `${process.pid}\n`);
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
+}
+
+function takingOwnerPid(taking: string): number | null {
+  try {
+    const line = readFileSync(taking, 'utf8').trim().split('\n')[0];
+    if (line === undefined || line === '') {
+      return null;
+    }
+    const pid = Number(line);
+    if (Number.isInteger(pid) && pid > 0) {
+      return pid;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function claimTaking(taking: string): boolean {
+  if (createTakingFile(taking)) {
+    return true;
+  }
+  const owner = takingOwnerPid(taking);
+  if (owner === null) {
+    return false;
+  }
+  if (owner !== process.pid && pidAlive(owner)) {
+    return false;
+  }
+  try {
+    unlinkSync(taking);
+  } catch {
+    return false;
+  }
+  return createTakingFile(taking);
 }
 
 function withStealMutex(dir: string, day: string, fn: () => boolean): boolean {
@@ -65,7 +82,7 @@ function withStealMutex(dir: string, day: string, fn: () => boolean): boolean {
     return fn();
   } finally {
     try {
-      rmSync(taking, { recursive: true, force: true });
+      unlinkSync(taking);
     } catch {
       // already gone
     }
@@ -131,9 +148,9 @@ function contentsStealable(raw: string, path: string, now: () => number): boolea
  * Steal when the owner pid is dead, or when the pid is this process but the
  * lock was written before this incarnation started (PID reuse after restart).
  * Never unlink a file whose pid is a different live process. Steal of a leftover
- * is serialized with `{day}.taking` (owner pid in `taking/owner`); a live
- * different owner is never replaced. `release` unlinks only if the path still
- * holds this process's token.
+ * is serialized with an `O_EXCL` `{day}.taking` file (owner pid). A live
+ * different owner or an unreadable taking file is never replaced. `release`
+ * unlinks only if the path still holds this process's token.
  *
  * @param dir - State directory.
  * @param day - UTC date `YYYY-MM-DD`.
