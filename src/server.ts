@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { loadConfig, type SpendConfig } from './config';
 import { loadDashboard, renderDashboardHtml } from './dashboard';
 import { LndhubClient, parseLndhubUri } from './lndhub';
+import { createPayoutGate } from './payout-gate';
 import { fetchBtcUsdSpot } from './price';
 import { runDay } from './run';
 import { startMidnightScheduler } from './scheduler';
@@ -56,6 +57,7 @@ export function createServer(opts: {
   fetch: (req: Request) => Promise<Response>;
   startScheduler: () => { stop: () => void };
   startCatchup: () => Promise<{ exitCode: number } | null>;
+  drainPayouts: () => Promise<void>;
 } {
   const loaded = loadConfig(opts.env);
   if (!loaded.ok) {
@@ -89,8 +91,9 @@ export function createServer(opts: {
     return new Response('Not found', { status: 404 });
   };
 
+  const gate = createPayoutGate();
   const payout = (day: string): Promise<{ exitCode: number }> =>
-    (opts.runDay ?? runDay)(config, { live, day });
+    gate.run(() => (opts.runDay ?? runDay)(config, { live, day }));
 
   return {
     fetch: fetchHandler,
@@ -137,6 +140,7 @@ export function createServer(opts: {
         return null;
       }
     },
+    drainPayouts: () => gate.run(async () => undefined),
   };
 }
 
@@ -155,8 +159,19 @@ if (meta.main === true) {
       port: bind.port,
       fetch: app.fetch,
     });
-    app.startScheduler();
+    const scheduler = app.startScheduler();
     void app.startCatchup();
+    const shutdown = (): void => {
+      scheduler.stop();
+      void app.drainPayouts().finally(() => {
+        process.exit(0);
+      });
+      setTimeout(() => {
+        process.exit(1);
+      }, 55_000).unref();
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
     console.warn(
       JSON.stringify({
         ts: new Date().toISOString(),

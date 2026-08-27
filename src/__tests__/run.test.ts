@@ -414,6 +414,36 @@ describe('runDay', () => {
     expect(result.exitCode).toBe(3);
   });
 
+  it('treats API 409 as already paid and does not create a second invoice pay', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async () => {
+      invoices += 1;
+      return new Response(JSON.stringify({ error: 'Already paid today' }), { status: 409 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const state = memoryState();
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target, async (url) => {
+          if (String(url).endsWith('/auth')) {
+            return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        }),
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoices).toBe(1);
+    expect(state.load().some((row) => row.status === 'paid' && row.invoiceId === 'already-paid')).toBe(true);
+  });
+
   it('aborts when Coinbase spot is unreadable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {

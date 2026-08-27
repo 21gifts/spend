@@ -133,6 +133,28 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
+  it('drainPayouts waits for an in-flight catch-up', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runDay = vi.fn(async () => {
+      await blocked;
+      return { exitCode: 0 };
+    });
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const catchup = app.startCatchup();
+    const drained = app.drainPayouts();
+    release();
+    await expect(catchup).resolves.toEqual({ exitCode: 0 });
+    await expect(drained).resolves.toBeUndefined();
+  });
+
   it('startCatchup is a no-op without SPEND_LIVE', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const app = createServer({
