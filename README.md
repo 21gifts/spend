@@ -6,7 +6,7 @@ Daily Lightning gift payouts plus a tiny HTTP dashboard. This process **does not
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
-Recipient amounts in `recipients.tondo.json` are **USD**. Each payout (midnight, catch-up, CLI) fetches Coinbase BTC-USD spot and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot is fail-closed (exit `3`). The optional `amountSats` field in the JSON is a snapshot only — the process does not read it.
+Recipient amounts in `recipients.tondo.json` are **USD**. Each payout (midnight, catch-up, CLI) fetches Coinbase BTC-USD spot and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in the JSON is a snapshot only — the process does not read it.
 
 The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`): already-`paid` JSONL rows are skipped, so a recipient added after midnight can still be paid on the next process start.
 

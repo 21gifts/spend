@@ -310,7 +310,7 @@ describe('runDay', () => {
       lndhub: new LndhubClient(target),
       state: memoryState(),
       lock: heldLock,
-        btcUsd: async () => 100_000,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
@@ -407,7 +407,7 @@ describe('runDay', () => {
         lndhub: new LndhubClient(target),
         state: memoryState(),
         lock: openLock,
-          btcUsd: async () => 100_000,
+        btcUsd: async () => 100_000,
       },
     );
     warn.mockRestore();
