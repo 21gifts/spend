@@ -59,6 +59,6 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 - Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
 - State: `STATE_DIR/YYYY-MM-DD.jsonl`
 
-Exit codes: `0` ok, `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
+Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
 
 Secrets stay in `.env` / the LNDHub URI. They are never logged.
