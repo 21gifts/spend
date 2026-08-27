@@ -138,7 +138,13 @@ async function runDayLocked(
   let token = '';
   if (options.live) {
     const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
-    const needed = pending.reduce((sum, r) => sum + (satsByAddress.get(r.address) ?? 0), 0);
+    const needed = pending.reduce((sum, r) => {
+      const sats = satsByAddress.get(r.address);
+      if (sats === undefined) {
+        throw new Error('satsByAddress incomplete');
+      }
+      return sum + sats;
+    }, 0);
     let available: number;
     try {
       token = await lndhub.auth();
@@ -190,11 +196,7 @@ async function runDayLocked(
 
     const amountSats = satsByAddress.get(recipient.address);
     if (amountSats === undefined) {
-      sawProblem = true;
-      stopLive = true;
-      haltDay();
-      log('spend.uncertain', { address: recipient.address, reason: 'usd_to_sats' });
-      continue;
+      throw new Error('satsByAddress incomplete');
     }
 
     const comment = recipient.comment ?? config.comment;

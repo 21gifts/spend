@@ -43,7 +43,7 @@ docker run -p 3000:3000 -v spend-state:/data \
   21gifts/spend:latest
 ```
 
-UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Exit `3` (lock/balance) is retried on the next tick inside that window; exit `0`, `2`, or `4` ends the UTC day for this process. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
+UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Exit `3` (lock/balance/spot) is retried on the next tick inside that window; exit `0`, `2`, or `4` ends the UTC day for this process. Same-day re-entry is still gated by JSONL (`paid` / `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
 
 ## Fail-closed
 
@@ -56,6 +56,6 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 - Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
 - State: `STATE_DIR/YYYY-MM-DD.jsonl`
 
-Exit codes: `0` ok, `2` config, `3` preflight/balance/lock, `4` failed, uncertain, or halted.
+Exit codes: `0` ok, `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
 
 Secrets stay in `.env` / the LNDHub URI. They are never logged.

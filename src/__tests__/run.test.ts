@@ -397,6 +397,23 @@ describe('runDay', () => {
     expect(invoices).toBe(0);
   });
 
+  it('aborts when usd cannot convert to sats', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1e-12 }] },
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
+  });
+
   it('aborts when Coinbase spot is unreadable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
