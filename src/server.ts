@@ -52,7 +52,11 @@ export function createServer(opts: {
     config: SpendConfig,
     options: { live: boolean; day: string },
   ) => Promise<{ exitCode: number }>;
-}): { fetch: (req: Request) => Promise<Response>; startScheduler: () => { stop: () => void } } {
+}): {
+  fetch: (req: Request) => Promise<Response>;
+  startScheduler: () => { stop: () => void };
+  startCatchup: () => Promise<{ exitCode: number } | null>;
+} {
   const loaded = loadConfig(opts.env);
   if (!loaded.ok) {
     throw new Error(loaded.error);
@@ -85,17 +89,39 @@ export function createServer(opts: {
     return new Response('Not found', { status: 404 });
   };
 
+  const payout = (day: string): Promise<{ exitCode: number }> =>
+    (opts.runDay ?? runDay)(config, { live, day });
+
   return {
     fetch: fetchHandler,
     startScheduler: () => {
-      const scheduler = {
-        live,
-        run: (day: string) => (opts.runDay ?? runDay)(config, { live, day }),
-      };
+      const scheduler = { live, run: payout };
       if (opts.now === undefined) {
         return startMidnightScheduler(scheduler);
       }
       return startMidnightScheduler({ ...scheduler, now: opts.now });
+    },
+    /**
+     * Live catch-up: pay remaining recipients for the current UTC day even
+     * outside the midnight window (JSONL skips already-paid rows).
+     */
+    startCatchup: async (): Promise<{ exitCode: number } | null> => {
+      if (!live) {
+        return null;
+      }
+      const clock = opts.now ?? (() => new Date());
+      const day = clock().toISOString().slice(0, 10);
+      const result = await payout(day);
+      console.warn(
+        JSON.stringify({
+          ts: clock().toISOString(),
+          event: 'spend.catchup',
+          day,
+          live: true,
+          exitCode: result.exitCode,
+        }),
+      );
+      return result;
     },
   };
 }
@@ -116,6 +142,7 @@ if (meta.main === true) {
       fetch: app.fetch,
     });
     app.startScheduler();
+    void app.startCatchup();
     console.warn(
       JSON.stringify({
         ts: new Date().toISOString(),

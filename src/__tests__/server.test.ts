@@ -102,4 +102,29 @@ describe('createServer', () => {
     );
     handle.stop();
   });
+
+  it('startCatchup pays remaining live recipients outside midnight', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const result = await app.startCatchup();
+    expect(result).toEqual({ exitCode: 0 });
+    expect(runDay).toHaveBeenCalledWith(expect.anything(), { live: true, day: '2026-08-27' });
+  });
+
+  it('startCatchup is a no-op without SPEND_LIVE', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    await expect(app.startCatchup()).resolves.toBeNull();
+    expect(runDay).not.toHaveBeenCalled();
+  });
 });
