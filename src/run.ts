@@ -204,6 +204,19 @@ async function runDayLocked(
     try {
       invoice = await gifts.createInvoice(recipient.address, amountSats * 1000, comment);
     } catch (err) {
+      if (err instanceof GiftsApiError && err.status === 409) {
+        log('spend.skip', { address: recipient.address, reason: 'already_paid' });
+        const claimed: StateRow = {
+          ts: now().toISOString(),
+          address: recipient.address,
+          invoiceId: 'already-paid',
+          paymentHash: '0'.repeat(64),
+          status: 'paid',
+        };
+        state.append(claimed);
+        rows.push(claimed);
+        continue;
+      }
       const status = err instanceof GiftsApiError ? err.status : 0;
       const retryable = status === 0 || status >= 500;
       const rowStatus: StateRow['status'] = retryable ? 'uncertain' : 'failed';

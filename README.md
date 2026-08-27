@@ -47,6 +47,9 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 
 ## Fail-closed
 
+- One payout at a time in-process (midnight tick and catch-up share a queue). SIGTERM waits for the in-flight run (55s cap)
+- `POST /invoices` 409 (`Already paid today`) is treated as already paid — no second Lightning pay
+- JSONL appends are `fsync`'d so a restart does not lose a just-written `paid` row
 - Coinbase BTC-USD spot is required before any invoice. Recipients are USD; sats are computed at that spot
 - Balance preflight before the first pay (need remaining amount + `max(100 sats, 1%)` fee margin). LNDHub `balance` is sats as returned — not divided by 1000
 - Every run takes an exclusive `STATE_DIR/YYYY-MM-DD.lock` (`O_EXCL`) for the process lifetime. A concurrent second run (live or dry-run) exits `3`. After a normal exit the lock file is removed; same-UTC-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`, not later `dry-run` rows)
@@ -56,6 +59,6 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 - Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
 - State: `STATE_DIR/YYYY-MM-DD.jsonl`
 
-Exit codes: `0` ok, `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
+Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
 
 Secrets stay in `.env` / the LNDHub URI. They are never logged.

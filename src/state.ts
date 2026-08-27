@@ -1,4 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /** Unreadable or truncated day JSONL. */
@@ -33,7 +42,15 @@ export class DayState {
     } = {
       exists: existsSync,
       read: (path) => readFileSync(path, 'utf8'),
-      append: (path, data) => appendFileSync(path, data),
+      append: (path, data) => {
+        const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY);
+        try {
+          writeSync(fd, data);
+          fsyncSync(fd);
+        } finally {
+          closeSync(fd);
+        }
+      },
       mkdir: (path) => mkdirSync(path, { recursive: true }),
     },
   ) {}
