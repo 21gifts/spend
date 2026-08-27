@@ -102,6 +102,7 @@ async function runDayLocked(
     );
     if (recipientUncertain || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       log('spend.done', { ok: false, reason: 'halted' });
+      state.markFinished();
       return { exitCode: 4 };
     }
   }
@@ -386,6 +387,11 @@ async function runDayLocked(
     };
     state.append(paidRow);
     rows.push(paidRow);
+  }
+
+  const blocked = config.recipients.every((r) => dayBlock(rows, r.address) !== undefined);
+  if (blocked || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
+    state.markFinished();
   }
 
   log('spend.done', { ok: !sawProblem });

@@ -11,6 +11,8 @@ export function startMidnightScheduler(opts: {
   live: boolean;
   run: (day: string) => Promise<{ exitCode: number }>;
   intervalMs?: number;
+  /** Durable skip (disk), so a restart does not re-enter the midnight window. */
+  isDayFinished?: (day: string) => boolean;
 }): { stop: () => void } {
   const now = opts.now ?? (() => new Date());
   const intervalMs = opts.intervalMs ?? 30_000;
@@ -23,6 +25,10 @@ export function startMidnightScheduler(opts: {
       return;
     }
     const day = instant.toISOString().slice(0, 10);
+    if (opts.isDayFinished?.(day) === true) {
+      lastDay = day;
+      return;
+    }
     if (lastDay === day || inFlight) {
       return;
     }

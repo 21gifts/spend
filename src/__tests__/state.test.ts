@@ -52,6 +52,26 @@ describe('DayState', () => {
     });
     expect(writes[0]).toContain('dry-run');
   });
+
+  it('markFinished appends once and isFinished becomes true', () => {
+    const writes: string[] = [];
+    const files = new Set<string>();
+    const state = new DayState('/tmp', '2026-08-23', {
+      exists: (path) => files.has(path),
+      read: () => '',
+      append: (path, data) => {
+        files.add(path);
+        writes.push(data);
+      },
+      mkdir: () => undefined,
+    });
+    expect(state.isFinished()).toBe(false);
+    state.markFinished();
+    expect(state.isFinished()).toBe(true);
+    expect(writes).toEqual(['2026-08-23\n']);
+    state.markFinished();
+    expect(writes).toEqual(['2026-08-23\n']);
+  });
 });
 
 describe('latestStatus', () => {

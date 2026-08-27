@@ -16,6 +16,7 @@ const config: SpendConfig = {
   recipientsFile: 'r.json',
   stateDir: '/tmp',
   comment: '21gifts daily',
+  lightningAddress: null,
   recipients: [
     { address: 'a@b.com', amountUsd: 1 },
     { address: 'c@d.com', amountUsd: 0.5 },
@@ -29,10 +30,15 @@ if (target === null) {
 
 function memoryState(existing = ''): DayState {
   let file = existing;
+  let finished = false;
   return new DayState('/tmp', '2026-08-23', {
-    exists: () => file !== '',
+    exists: (path) => (path.endsWith('.finished') ? finished : file !== ''),
     read: () => file,
-    append: (_p, data) => {
+    append: (path, data) => {
+      if (path.endsWith('.finished')) {
+        finished = true;
+        return;
+      }
       file += data;
     },
     mkdir: () => undefined,
@@ -148,15 +154,17 @@ describe('runDay', () => {
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
+    const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: true, day: '2026-08-23' },
-      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(proofBody).toEqual({ id: 'id1', preimage: PREIMAGE });
+    expect(state.isFinished()).toBe(true);
   });
 
   it('skips addresses already paid', async () => {
@@ -196,16 +204,18 @@ describe('runDay', () => {
       }
       return new Response(JSON.stringify({ BTC: { AvailableBalance: 10 } }), { status: 200 });
     });
+    const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts: new GiftsApi('https://api.21.gifts', 'tok'),
       lndhub,
-      state: memoryState(),
+      state,
       lock: openLock,
       btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
+    expect(state.isFinished()).toBe(false);
   });
 
   it('treats gifts API 503 as uncertain halt and does not retry the rest', async () => {
@@ -304,16 +314,18 @@ describe('runDay', () => {
   });
 
   it('exits 3 when the live day lock is held', async () => {
+    const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts: new GiftsApi('https://api.21.gifts', 'tok'),
       lndhub: new LndhubClient(target),
-      state: memoryState(),
+      state,
       lock: heldLock,
       btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
+    expect(state.isFinished()).toBe(false);
   });
 
   it('halts remaining live recipients and persists halt for the UTC day', async () => {
@@ -350,6 +362,7 @@ describe('runDay', () => {
     expect(first.exitCode).toBe(4);
     expect(invoices).toBe(1);
     expect(state.load().some((row) => row.address === '*halt*' && row.status === 'uncertain')).toBe(true);
+    expect(state.isFinished()).toBe(true);
     const second = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts,
       lndhub,
@@ -442,18 +455,21 @@ describe('runDay', () => {
     expect(result.exitCode).toBe(0);
     expect(invoices).toBe(1);
     expect(state.load().some((row) => row.status === 'paid' && row.invoiceId === 'already-paid')).toBe(true);
+    expect(state.isFinished()).toBe(true);
   });
 
   it('aborts when Coinbase spot is unreadable', async () => {
+    const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts: new GiftsApi('https://api.21.gifts', 'tok'),
       lndhub: new LndhubClient(target),
-      state: memoryState(),
+      state,
       lock: openLock,
       btcUsd: async () => null,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
+    expect(state.isFinished()).toBe(false);
   });
 });

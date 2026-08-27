@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadConfig, type SpendConfig } from './config';
 import { loadDashboard, renderDashboardHtml } from './dashboard';
 import { LndhubClient, parseLndhubUri } from './lndhub';
@@ -75,15 +76,27 @@ export function createServer(opts: {
 
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if (req.method === 'GET' && url.pathname === '/healthz') {
-      return Response.json({ status: 'ok', service: SERVICE_NAME, version });
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') {
+      const body = JSON.stringify({ status: 'ok', service: SERVICE_NAME, version });
+      return new Response(req.method === 'HEAD' ? null : body, {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      });
+    }
+    if (req.method === 'HEAD' && url.pathname === '/') {
+      return new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
     }
     if (req.method === 'GET' && url.pathname === '/') {
       const data = await loadDashboard({
         lndhub,
         btcUsd: () => fetchBtcUsdSpot(fetchImpl),
+        lightningAddress: config.lightningAddress,
       });
-      return new Response(renderDashboardHtml(data), {
+      const html = renderDashboardHtml(data);
+      return new Response(html, {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
@@ -98,7 +111,11 @@ export function createServer(opts: {
   return {
     fetch: fetchHandler,
     startScheduler: () => {
-      const scheduler = { live, run: payout };
+      const scheduler = {
+        live,
+        run: payout,
+        isDayFinished: (day: string) => existsSync(join(config.stateDir, `${day}.finished`)),
+      };
       if (opts.now === undefined) {
         return startMidnightScheduler(scheduler);
       }

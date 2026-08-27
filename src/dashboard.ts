@@ -4,25 +4,34 @@ import { bitcoinQrSvg } from './qr';
 export interface DashboardData {
   sats: number | null;
   usd: number | null;
-  address: string | null;
+  lightningAddress: string | null;
 }
 
 /**
- * Load balance and deposit address.
+ * QR payload wallets scan for a Lightning Address (LUD-16).
  *
- * @param deps - LNDHub + spot price.
+ * @param address - Lightning Address `user@domain`.
+ * @returns `lightning:` URI.
+ */
+export function lightningQrPayload(address: string): string {
+  return `lightning:${address}`;
+}
+
+/**
+ * Load balance. Lightning Address comes from config, not LNDHub on-chain.
+ *
+ * @param deps - LNDHub + spot + Lightning Address.
  * @returns Dashboard fields; nulls mean unavailable.
  */
 export async function loadDashboard(deps: {
   lndhub: {
     auth(): Promise<string>;
     balance(token: string): Promise<number | null>;
-    getDepositAddress(token: string): Promise<string | null>;
   };
   btcUsd: () => Promise<number | null>;
+  lightningAddress: string | null;
 }): Promise<DashboardData> {
   let sats: number | null = null;
-  let address: string | null = null;
   let token: string | null = null;
   try {
     token = await deps.lndhub.auth();
@@ -35,11 +44,6 @@ export async function loadDashboard(deps: {
     } catch {
       sats = null;
     }
-    try {
-      address = await deps.lndhub.getDepositAddress(token);
-    } catch {
-      address = null;
-    }
   }
   let usd: number | null = null;
   if (sats !== null) {
@@ -48,7 +52,7 @@ export async function loadDashboard(deps: {
       usd = (sats / 1e8) * spot;
     }
   }
-  return { sats, usd, address };
+  return { sats, usd, lightningAddress: deps.lightningAddress };
 }
 
 function slot(value: string): string {
@@ -68,17 +72,12 @@ function formatUsd(usd: number | null): string {
 }
 
 /**
- * Server-rendered dashboard HTML. Only balance (sats + USD) and deposit address + QR.
+ * Server-rendered dashboard: balance and Lightning Address + QR.
  *
  * @param data - Current values.
  * @returns HTML document.
  */
 export function renderDashboardHtml(data: DashboardData): string {
-  const addressText = data.address === null ? 'unavailable' : data.address;
-  const qr =
-    data.address === null
-      ? ''
-      : `<div class="qr">${bitcoinQrSvg(data.address)}</div>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -98,10 +97,10 @@ dd{margin:0.35rem 0 0}
 <dt>Balance</dt>
 <dd>${slot(formatSats(data.sats))}</dd>
 <dd>${slot(formatUsd(data.usd))}</dd>
-<dt>Deposit address</dt>
-<dd class="addr">${slot(addressText)}</dd>
-${qr}
+<dt>Lightning address</dt>
+<dd class="addr">${data.lightningAddress === null ? 'unavailable' : slot(data.lightningAddress)}</dd>
 </dl>
+${data.lightningAddress === null ? '' : `<div class="qr">${bitcoinQrSvg(lightningQrPayload(data.lightningAddress))}</div>`}
 </body>
 </html>
 `;

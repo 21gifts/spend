@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { loadDashboard, renderDashboardHtml } from '../dashboard';
+import { lightningQrPayload, loadDashboard, renderDashboardHtml } from '../dashboard';
+
+describe('lightningQrPayload', () => {
+  it('prefixes lightning:', () => {
+    expect(lightningQrPayload('9643e3@lightning.space')).toBe('lightning:9643e3@lightning.space');
+  });
+});
 
 describe('loadDashboard', () => {
   it('converts sats to USD with the spot price', async () => {
@@ -7,11 +13,15 @@ describe('loadDashboard', () => {
       lndhub: {
         auth: async () => 'tok',
         balance: async () => 100_000_000,
-        getDepositAddress: async () => 'bc1qabc',
       },
       btcUsd: async () => 50_000,
+      lightningAddress: '9643e3@lightning.space',
     });
-    expect(data).toEqual({ sats: 100_000_000, usd: 50_000, address: 'bc1qabc' });
+    expect(data).toEqual({
+      sats: 100_000_000,
+      usd: 50_000,
+      lightningAddress: '9643e3@lightning.space',
+    });
   });
 
   it('leaves usd null when spot is missing', async () => {
@@ -19,65 +29,49 @@ describe('loadDashboard', () => {
       lndhub: {
         auth: async () => 'tok',
         balance: async () => 1000,
-        getDepositAddress: async () => null,
       },
       btcUsd: async () => null,
+      lightningAddress: null,
     });
     expect(data.usd).toBeNull();
     expect(data.sats).toBe(1000);
+    expect(data.lightningAddress).toBeNull();
   });
 
-  it('keeps the deposit address when balance throws', async () => {
+  it('keeps the lightning address when balance throws', async () => {
     const data = await loadDashboard({
       lndhub: {
         auth: async () => 'tok',
         balance: async () => {
           throw new Error('balance failed');
         },
-        getDepositAddress: async () => 'bc1qstillthere',
       },
       btcUsd: async () => 50_000,
+      lightningAddress: '9643e3@lightning.space',
     });
     expect(data.sats).toBeNull();
     expect(data.usd).toBeNull();
-    expect(data.address).toBe('bc1qstillthere');
-  });
-
-  it('keeps sats when the deposit address lookup throws', async () => {
-    const data = await loadDashboard({
-      lndhub: {
-        auth: async () => 'tok',
-        balance: async () => 3803,
-        getDepositAddress: async () => {
-          throw new Error('newbtc failed');
-        },
-      },
-      btcUsd: async () => 78883.06,
-    });
-    expect(data.sats).toBe(3803);
-    expect(data.address).toBeNull();
-    expect(data.usd).not.toBeNull();
+    expect(data.lightningAddress).toBe('9643e3@lightning.space');
   });
 });
 
 describe('renderDashboardHtml', () => {
-  it('shows sats, usd, address, and a qr svg', () => {
+  it('shows sats, usd, lightning address, and a qr svg', () => {
     const html = renderDashboardHtml({
       sats: 3803,
       usd: 3.0,
-      address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+      lightningAddress: '9643e3@lightning.space',
     });
     expect(html).toContain('3803 sats');
     expect(html).toContain('3.00 USD');
-    expect(html).toContain('bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh');
+    expect(html).toContain('Lightning address');
+    expect(html).toContain('9643e3@lightning.space');
     expect(html).toContain('<svg');
-    expect(html).not.toContain('<h1');
-    expect(html).not.toContain('recipient');
-    expect(html).not.toContain('payout');
+    expect(html).not.toContain('Deposit address');
   });
 
   it('shows unavailable when values are null', () => {
-    const html = renderDashboardHtml({ sats: null, usd: null, address: null });
+    const html = renderDashboardHtml({ sats: null, usd: null, lightningAddress: null });
     expect(html).toContain('unavailable');
     expect(html).not.toContain('<svg');
   });
@@ -86,7 +80,7 @@ describe('renderDashboardHtml', () => {
     const html = renderDashboardHtml({
       sats: 1,
       usd: 1,
-      address: '<script>alert(1)</script>',
+      lightningAddress: '<script>alert(1)</script>',
     });
     expect(html).toContain('&lt;script&gt;');
     expect(html).not.toContain('<script>alert(1)</script>');
