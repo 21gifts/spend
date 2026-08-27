@@ -6,6 +6,8 @@ Daily Lightning gift payouts plus a tiny HTTP dashboard. This process **does not
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
+Recipient amounts in `recipients.tondo.json` are **USD**. Each payout (midnight, catch-up, CLI) fetches Coinbase BTC-USD spot and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot is fail-closed (exit `3`). The optional `amountSats` field in the JSON is a snapshot only — the process does not read it.
+
 The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`): already-`paid` JSONL rows are skipped, so a recipient added after midnight can still be paid on the next process start.
 
 The dashboard at `GET /` shows only:
@@ -45,6 +47,7 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 
 ## Fail-closed
 
+- Coinbase BTC-USD spot is required before any invoice. Recipients are USD; sats are computed at that spot
 - Balance preflight before the first pay (need remaining amount + `max(100 sats, 1%)` fee margin). LNDHub `balance` is sats as returned — not divided by 1000
 - Every run takes an exclusive `STATE_DIR/YYYY-MM-DD.lock` (`O_EXCL`) for the process lifetime. A concurrent second run (live or dry-run) exits `3`. After a normal exit the lock file is removed; same-UTC-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`, not later `dry-run` rows)
 - `uncertain` (network/5xx, missing preimage, proof failure, amount mismatch) is logged and **not** retried the same UTC day

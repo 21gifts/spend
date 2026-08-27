@@ -1,6 +1,7 @@
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
+import { fetchBtcUsdSpot, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
 import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
@@ -50,6 +51,7 @@ export async function runDay(
     state?: DayState;
     now?: () => Date;
     lock?: DayLock;
+    btcUsd?: () => Promise<number | null>;
   },
 ): Promise<RunResult> {
   const gifts = deps?.gifts ?? new GiftsApi(config.giftsApiUrl, config.giftsApiToken);
@@ -69,7 +71,7 @@ export async function runDay(
   }
 
   try {
-    return await runDayLocked(config, options, gifts, lndhub, state, now);
+    return await runDayLocked(config, options, gifts, lndhub, state, now, deps?.btcUsd);
   } finally {
     lock.release();
   }
@@ -82,6 +84,7 @@ async function runDayLocked(
   lndhub: LndhubClient,
   state: DayState,
   now: () => Date,
+  btcUsdSpot: (() => Promise<number | null>) | undefined,
 ): Promise<RunResult> {
   let rows: StateRow[];
   try {
@@ -93,8 +96,6 @@ async function runDayLocked(
     }
     throw err;
   }
-  log('spend.start', { live: options.live, day: options.day, recipients: config.recipients.length });
-
   if (options.live) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
@@ -105,10 +106,39 @@ async function runDayLocked(
     }
   }
 
+  const rate = await (btcUsdSpot ?? fetchBtcUsdSpot)();
+  if (rate === null) {
+    log('spend.done', { ok: false, reason: 'spot_unreadable' });
+    return { exitCode: 3 };
+  }
+
+  const satsByAddress = new Map<string, number>();
+  for (const recipient of config.recipients) {
+    const sats = usdToSats(recipient.amountUsd, rate);
+    if (sats === null) {
+      log('spend.done', {
+        ok: false,
+        reason: 'usd_to_sats',
+        address: recipient.address,
+        amountUsd: recipient.amountUsd,
+        btcUsd: rate,
+      });
+      return { exitCode: 3 };
+    }
+    satsByAddress.set(recipient.address, sats);
+  }
+
+  log('spend.start', {
+    live: options.live,
+    day: options.day,
+    recipients: config.recipients.length,
+    btcUsd: rate,
+  });
+
   let token = '';
   if (options.live) {
     const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
-    const needed = pending.reduce((sum, r) => sum + r.amountSats, 0);
+    const needed = pending.reduce((sum, r) => sum + (satsByAddress.get(r.address) ?? 0), 0);
     let available: number;
     try {
       token = await lndhub.auth();
@@ -158,10 +188,19 @@ async function runDayLocked(
       continue;
     }
 
+    const amountSats = satsByAddress.get(recipient.address);
+    if (amountSats === undefined) {
+      sawProblem = true;
+      stopLive = true;
+      haltDay();
+      log('spend.uncertain', { address: recipient.address, reason: 'usd_to_sats' });
+      continue;
+    }
+
     const comment = recipient.comment ?? config.comment;
     let invoice;
     try {
-      invoice = await gifts.createInvoice(recipient.address, recipient.amountSats * 1000, comment);
+      invoice = await gifts.createInvoice(recipient.address, amountSats * 1000, comment);
     } catch (err) {
       const status = err instanceof GiftsApiError ? err.status : 0;
       const retryable = status === 0 || status >= 500;
@@ -173,7 +212,7 @@ async function runDayLocked(
       }
       log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
         address: recipient.address,
-        amountSats: recipient.amountSats,
+        amountSats,
         error: err instanceof Error ? err.message : 'invoice',
       });
       if (!options.live) {
@@ -191,7 +230,7 @@ async function runDayLocked(
       continue;
     }
 
-    const expectedMsat = recipient.amountSats * 1000;
+    const expectedMsat = amountSats * 1000;
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
       stopLive = true;
@@ -200,7 +239,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         reason: 'amount_mismatch',
       });
       if (!options.live) {
@@ -222,7 +261,7 @@ async function runDayLocked(
       address: recipient.address,
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
-      amountSats: recipient.amountSats,
+      amountSats,
       pr: prPreview(invoice.pr),
     });
 
@@ -261,7 +300,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         error: err instanceof Error ? err.message : 'pay',
       });
       continue;
@@ -276,7 +315,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         reason: 'preimage',
       });
       const preFail: StateRow = {
@@ -311,7 +350,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         error: err instanceof Error ? err.message : 'proof',
       });
       continue;
@@ -321,7 +360,7 @@ async function runDayLocked(
       address: recipient.address,
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
-      amountSats: recipient.amountSats,
+      amountSats,
     });
     const paidRow: StateRow = {
       ts: now().toISOString(),
