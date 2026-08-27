@@ -140,7 +140,7 @@ describe('fileDayLock', () => {
       const owner = fileDayLock(dir, '2026-08-23');
       expect(owner.tryAcquire()).toBe(true);
       const path = join(dir, '2026-08-23.lock');
-      writeFileSync(path, `${Date.now()}\n${process.pid}\n`);
+      writeFileSync(path, `${Date.now() + 60_000}\n${process.pid}\n`);
       owner.release();
       expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(false);
     } finally {
