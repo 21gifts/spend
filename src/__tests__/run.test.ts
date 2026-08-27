@@ -17,8 +17,8 @@ const config: SpendConfig = {
   stateDir: '/tmp',
   comment: '21gifts daily',
   recipients: [
-    { address: 'a@b.com', amountSats: 1000 },
-    { address: 'c@d.com', amountSats: 500 },
+    { address: 'a@b.com', amountUsd: 1 },
+    { address: 'c@d.com', amountUsd: 0.5 },
   ],
 };
 
@@ -59,7 +59,7 @@ describe('runDay', () => {
     const dry = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: false, day: '2026-08-23' },
-      { gifts: failing, lndhub: new LndhubClient(target), state, lock: openLock },
+      { gifts: failing, lndhub: new LndhubClient(target), state, lock: openLock, btcUsd: async () => 100_000 },
     );
     expect(dry.exitCode).toBe(4);
     expect(state.load().some((row) => row.status === 'uncertain')).toBe(false);
@@ -84,7 +84,7 @@ describe('runDay', () => {
     const live = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: true, day: '2026-08-23' },
-      { gifts, lndhub, state, lock: openLock },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
     );
     warn.mockRestore();
     expect(live.exitCode).toBe(0);
@@ -120,6 +120,7 @@ describe('runDay', () => {
       lndhub,
       state: memoryState(),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
@@ -151,7 +152,7 @@ describe('runDay', () => {
     const result = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: true, day: '2026-08-23' },
-      { gifts, lndhub, state: memoryState(), lock: openLock },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
@@ -181,7 +182,7 @@ describe('runDay', () => {
     const result = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: true, day: '2026-08-23' },
-      { gifts, lndhub, state: memoryState(paid), lock: openLock },
+      { gifts, lndhub, state: memoryState(paid), lock: openLock, btcUsd: async () => 100_000 },
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
@@ -201,6 +202,7 @@ describe('runDay', () => {
       lndhub,
       state: memoryState(),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
@@ -224,6 +226,7 @@ describe('runDay', () => {
       lndhub,
       state: memoryState(),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
@@ -248,6 +251,7 @@ describe('runDay', () => {
       lndhub,
       state: memoryState(),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
@@ -279,7 +283,7 @@ describe('runDay', () => {
     const result = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: true, day: '2026-08-23' },
-      { gifts, lndhub, state: memoryState(), lock: openLock },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
@@ -293,6 +297,7 @@ describe('runDay', () => {
       lndhub: new LndhubClient(target),
       state: memoryState('not-json\n'),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
@@ -305,6 +310,7 @@ describe('runDay', () => {
       lndhub: new LndhubClient(target),
       state: memoryState(),
       lock: heldLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
@@ -339,6 +345,7 @@ describe('runDay', () => {
       lndhub,
       state,
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     expect(first.exitCode).toBe(4);
     expect(invoices).toBe(1);
@@ -348,6 +355,7 @@ describe('runDay', () => {
       lndhub,
       state,
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(second.exitCode).toBe(4);
@@ -382,9 +390,40 @@ describe('runDay', () => {
       lndhub,
       state: memoryState(prior),
       lock: openLock,
+      btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
     expect(invoices).toBe(0);
+  });
+
+  it('aborts when usd cannot convert to sats', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1e-12 }] },
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
+  });
+
+  it('aborts when Coinbase spot is unreadable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+      lndhub: new LndhubClient(target),
+      state: memoryState(),
+      lock: openLock,
+      btcUsd: async () => null,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
   });
 });

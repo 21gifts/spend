@@ -11,7 +11,7 @@ const env = {
 
 const file = JSON.stringify({
   comment: '21gifts daily',
-  recipients: [{ address: 'a@b.com', amountSats: 1000, comment: 'x' }],
+  recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'x' }],
 });
 
 describe('loadConfig', () => {
@@ -55,7 +55,7 @@ describe('loadConfig', () => {
 
   it('rejects a bad amount', () => {
     expect(
-      loadConfig(env, () => JSON.stringify({ recipients: [{ address: 'a@b.com', amountSats: 0 }] })).ok,
+      loadConfig(env, () => JSON.stringify({ recipients: [{ address: 'a@b.com', amountUsd: 0 }] })).ok,
     ).toBe(false);
   });
 
@@ -66,8 +66,8 @@ describe('loadConfig', () => {
         () =>
           JSON.stringify({
             recipients: [
-              { address: 'a@b.com', amountSats: 1 },
-              { address: 'a@b.com', amountSats: 2 },
+              { address: 'a@b.com', amountUsd: 1 },
+              { address: 'a@b.com', amountUsd: 2 },
             ],
           }),
       ).ok,
@@ -93,7 +93,9 @@ describe('loadConfig', () => {
     if (loaded.ok) {
       expect(loaded.config.recipients).toHaveLength(16);
       expect(loaded.config.recipients[0]?.address).toBe('mentalnic63@walletofsatoshi.com');
+      expect(loaded.config.recipients[0]?.amountUsd).toBe(3);
       expect(loaded.config.recipients[15]?.address).toBe('bentfresh52@walletofsatoshi.com');
+      expect(loaded.config.recipients[15]?.amountUsd).toBe(2.5);
     }
   });
 });

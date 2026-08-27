@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 
-/** One payout recipient. */
+/** One payout recipient. Amounts are USD; sats are computed at payout time. */
 export interface Recipient {
   address: string;
-  amountSats: number;
+  amountUsd: number;
   comment?: string;
 }
 
@@ -77,14 +77,14 @@ export function loadConfig(
     if (item === null || typeof item !== 'object') {
       return { ok: false, error: 'each recipient must be an object' };
     }
-    const rec = item as { address?: unknown; amountSats?: unknown; comment?: unknown };
+    const rec = item as { address?: unknown; amountUsd?: unknown; comment?: unknown };
     if (typeof rec.address !== 'string' || !rec.address.includes('@')) {
       return { ok: false, error: 'each recipient needs a Lightning Address' };
     }
-    if (typeof rec.amountSats !== 'number' || !Number.isInteger(rec.amountSats) || rec.amountSats < 1) {
-      return { ok: false, error: 'each recipient needs amountSats >= 1' };
+    if (typeof rec.amountUsd !== 'number' || !Number.isFinite(rec.amountUsd) || rec.amountUsd <= 0) {
+      return { ok: false, error: 'each recipient needs amountUsd > 0' };
     }
-    const row: Recipient = { address: rec.address, amountSats: rec.amountSats };
+    const row: Recipient = { address: rec.address, amountUsd: rec.amountUsd };
     if (typeof rec.comment === 'string') {
       row.comment = rec.comment;
     }

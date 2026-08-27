@@ -30,7 +30,7 @@ export function startMidnightScheduler(opts: {
     void opts
       .run(day)
       .then((result) => {
-        // Retry inside the window on preflight/lock/balance (exit 3).
+        // Retry inside the window on preflight/lock/balance/spot (exit 3).
         // Success (0), config (2), and halt/failed (4) must not re-enter.
         if (result.exitCode !== 3) {
           lastDay = day;
