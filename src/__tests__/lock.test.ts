@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -78,6 +78,17 @@ describe('fileDayLock', () => {
       utimesSync(path, stale / 1000, stale / 1000);
       expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(false);
       owner.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not steal while another recovery holds the taking directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-lock-'));
+    try {
+      writeFileSync(join(dir, '2026-08-23.lock'), `${Date.now()}\n999999999\n`);
+      mkdirSync(join(dir, '2026-08-23.taking'));
+      expect(fileDayLock(dir, '2026-08-23').tryAcquire()).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

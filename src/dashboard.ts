@@ -7,7 +7,12 @@ export interface DashboardData {
   lightningAddress: string | null;
 }
 
-/** QR payload wallets scan for a Lightning Address (LUD-16). */
+/**
+ * QR payload wallets scan for a Lightning Address (LUD-16).
+ *
+ * @param address - Lightning Address `user@domain`.
+ * @returns `lightning:` URI.
+ */
 export function lightningQrPayload(address: string): string {
   return `lightning:${address}`;
 }

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeSync,
@@ -22,6 +23,35 @@ export interface DayLock {
  * A different live owner pid is never stolen via this mtime path.
  */
 export const LOCK_STALE_MS = 10 * 60 * 1000;
+
+/** Age after which a leftover `{day}.taking` directory may be replaced. */
+const TAKING_STALE_MS = 5_000;
+
+function withStealMutex(dir: string, day: string, now: () => number, fn: () => boolean): boolean {
+  const taking = join(dir, `${day}.taking`);
+  try {
+    mkdirSync(taking);
+  } catch {
+    try {
+      if (now() - statSync(taking).mtimeMs < TAKING_STALE_MS) {
+        return false;
+      }
+      rmdirSync(taking);
+      mkdirSync(taking);
+    } catch {
+      return false;
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      rmdirSync(taking);
+    } catch {
+      // already gone
+    }
+  }
+}
 
 function pidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -81,8 +111,10 @@ function contentsStealable(raw: string, path: string, now: () => number): boolea
  *
  * Steal when the owner pid is dead, or when the pid is this process but the
  * lock was written before this incarnation started (PID reuse after restart).
- * Never unlink a file whose pid is a different live process. `release` unlinks
- * only if the path still holds this process's token.
+ * Never unlink a file whose pid is a different live process. Steal of a leftover
+ * is serialized with an exclusive `{day}.taking` directory so two recoveries
+ * cannot both unlink. `release` unlinks only if the path still holds this
+ * process's token.
  *
  * @param dir - State directory.
  * @param day - UTC date `YYYY-MM-DD`.
@@ -144,27 +176,29 @@ export function fileDayLock(dir: string, day: string, now: () => number = Date.n
       if (first === 'mismatch') {
         return false;
       }
-      let raw: string;
-      try {
-        raw = readFileSync(path, 'utf8');
-      } catch {
-        return tryCreate() === 'ok';
-      }
-      if (!contentsStealable(raw, path, now)) {
-        return false;
-      }
-      try {
-        if (readFileSync(path, 'utf8') !== raw) {
-          return false;
+      return withStealMutex(dir, day, now, () => {
+        let raw: string;
+        try {
+          raw = readFileSync(path, 'utf8');
+        } catch {
+          return tryCreate() === 'ok';
         }
         if (!contentsStealable(raw, path, now)) {
           return false;
         }
-        unlinkSync(path);
-      } catch {
-        // leftover may already be gone
-      }
-      return tryCreate() === 'ok';
+        try {
+          if (readFileSync(path, 'utf8') !== raw) {
+            return false;
+          }
+          if (!contentsStealable(raw, path, now)) {
+            return false;
+          }
+          unlinkSync(path);
+        } catch {
+          // leftover may already be gone
+        }
+        return tryCreate() === 'ok';
+      });
     },
     release(): void {
       if (fd === undefined) {
