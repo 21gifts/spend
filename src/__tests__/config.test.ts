@@ -76,11 +76,24 @@ describe('loadConfig', () => {
 
   it('loads recipients.tondo.json', () => {
     const path = fileURLToPath(new URL('../../recipients.tondo.json', import.meta.url));
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as {
+      btcUsd: string;
+      recipients: { address: string; amountSats: number; amountUsd: number }[];
+    };
+    const rate = Number(raw.btcUsd);
+    expect(raw.recipients).toHaveLength(16);
+    expect(raw.recipients.map((r) => r.address)).toContain('piousmenu95@walletofsatoshi.com');
+    expect(raw.recipients.reduce((sum, r) => sum + r.amountUsd, 0)).toBe(50);
+    expect(raw.recipients.reduce((sum, r) => sum + r.amountSats, 0)).toBe(64021);
+    for (const row of raw.recipients) {
+      expect(row.amountSats).toBe(Math.round((row.amountUsd / rate) * 1e8));
+    }
     const loaded = loadConfig({ ...env, RECIPIENTS_FILE: path }, (file) => readFileSync(file, 'utf8'));
     expect(loaded.ok).toBe(true);
     if (loaded.ok) {
-      expect(loaded.config.recipients).toHaveLength(15);
+      expect(loaded.config.recipients).toHaveLength(16);
       expect(loaded.config.recipients[0]?.address).toBe('mentalnic63@walletofsatoshi.com');
+      expect(loaded.config.recipients[15]?.address).toBe('bentfresh52@walletofsatoshi.com');
     }
   });
 });
