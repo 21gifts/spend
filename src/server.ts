@@ -156,6 +156,7 @@ export function createServer(opts: {
   }
   const lndhub = new LndhubClient(target, fetchImpl);
   const version = serviceVersion();
+  const recipientsGate = createPayoutGate();
   const sessionNow = (): number => (opts.now ?? (() => new Date()))().getTime() / 1000;
 
   const requireSession = (req: Request): boolean => {
@@ -273,62 +274,62 @@ export function createServer(opts: {
       if (!requireSession(req)) {
         return redirect('/login');
       }
-      const loadedLive = loadOrError();
-      if (!loadedLive.ok) {
-        return loadedLive.response;
-      }
       const form = await readForm(req);
-      let comment = loadedLive.comment;
-      let recipients = loadedLive.recipients.map((r) => ({ ...r }));
-
-      if (url.pathname === '/recipients/add') {
-        const address = parseAddress(form.get('address'));
-        const amountUsd = parseAmountUsd(form.get('amountUsd'));
-        if (address === null || amountUsd === null) {
-          return recipientsPage(recipients, 'Invalid address or amount');
+      return recipientsGate.run(async () => {
+        const loadedLive = loadOrError();
+        if (!loadedLive.ok) {
+          return loadedLive.response;
         }
-        if (recipients.some((r) => r.address === address)) {
-          return recipientsPage(recipients, 'Address already listed');
-        }
-        recipients = [...recipients, { address, amountUsd }];
-        saveLiveRecipients(config.stateDir, { comment, recipients });
-        return redirect('/recipients');
-      }
+        const comment = loadedLive.comment;
+        let recipients = loadedLive.recipients.map((r) => ({ ...r }));
 
-      if (url.pathname === '/recipients/update') {
+        if (url.pathname === '/recipients/add') {
+          const address = parseAddress(form.get('address'));
+          const amountUsd = parseAmountUsd(form.get('amountUsd'));
+          if (address === null || amountUsd === null) {
+            return recipientsPage(recipients, 'Invalid address or amount');
+          }
+          if (recipients.some((r) => r.address === address)) {
+            return recipientsPage(recipients, 'Address already listed');
+          }
+          recipients = [...recipients, { address, amountUsd }];
+          saveLiveRecipients(config.stateDir, { comment, recipients });
+          return redirect('/recipients');
+        }
+
+        if (url.pathname === '/recipients/update') {
+          const address = parseAddress(form.get('address'));
+          const amountUsd = parseAmountUsd(form.get('amountUsd'));
+          if (address === null) {
+            return recipientsPage(recipients, 'Unknown address');
+          }
+          const idx = recipients.findIndex((r) => r.address === address);
+          if (idx < 0) {
+            return recipientsPage(recipients, 'Unknown address');
+          }
+          if (amountUsd === null) {
+            return recipientsPage(recipients, 'Invalid address or amount');
+          }
+          const current = recipients[idx];
+          if (current === undefined) {
+            return recipientsPage(recipients, 'Unknown address');
+          }
+          recipients[idx] = { ...current, amountUsd };
+          saveLiveRecipients(config.stateDir, { comment, recipients });
+          return redirect('/recipients');
+        }
+
         const address = parseAddress(form.get('address'));
-        const amountUsd = parseAmountUsd(form.get('amountUsd'));
         if (address === null) {
           return recipientsPage(recipients, 'Unknown address');
         }
-        const idx = recipients.findIndex((r) => r.address === address);
-        if (idx < 0) {
+        const next = recipients.filter((r) => r.address !== address);
+        if (next.length === recipients.length) {
           return recipientsPage(recipients, 'Unknown address');
         }
-        if (amountUsd === null) {
-          return recipientsPage(recipients, 'Invalid address or amount');
-        }
-        const current = recipients[idx];
-        if (current === undefined) {
-          return recipientsPage(recipients, 'Unknown address');
-        }
-        recipients[idx] = { ...current, amountUsd };
-        saveLiveRecipients(config.stateDir, { comment, recipients });
+        saveLiveRecipients(config.stateDir, { comment, recipients: next });
         return redirect('/recipients');
-      }
-
-      // delete
-      const address = parseAddress(form.get('address'));
-      if (address === null) {
-        return recipientsPage(recipients, 'Unknown address');
-      }
-      const next = recipients.filter((r) => r.address !== address);
-      if (next.length === recipients.length) {
-        return recipientsPage(recipients, 'Unknown address');
-      }
-      recipients = next;
-      saveLiveRecipients(config.stateDir, { comment, recipients });
-      return redirect('/recipients');
+      });
     }
 
     return new Response('Not found', { status: 404 });

@@ -395,6 +395,35 @@ describe('recipient editor', () => {
     expect(res.headers.get('location')).toBe('/login');
   });
 
+  it('keeps both recipients when two adds overlap', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const post = (address: string): Promise<Response> =>
+      app.fetch(
+        new Request('http://127.0.0.1/recipients/add', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+          body: `address=${encodeURIComponent(address)}&amountUsd=2`,
+        }),
+      );
+    const [first, second] = await Promise.all([
+      post('bob@walletofsatoshi.com'),
+      post('carol@walletofsatoshi.com'),
+    ]);
+    expect(first.status).toBe(303);
+    expect(second.status).toBe(303);
+    const listed = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const html = await listed.text();
+    expect(html).toContain('bob@walletofsatoshi.com');
+    expect(html).toContain('carol@walletofsatoshi.com');
+  });
+
   it('adds, updates, and deletes recipients', async () => {
     const app = createServer({
       env: sessionEnv(),
