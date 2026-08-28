@@ -6,7 +6,7 @@ Daily Lightning gift payouts plus a tiny HTTP dashboard. This process **does not
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
-Recipient amounts in `recipients.tondo.json` are **USD**. Each payout (midnight, catch-up, CLI) fetches Coinbase BTC-USD spot and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in the JSON is a snapshot only — the process does not read it.
+Recipient amounts are **USD**. Each payout (midnight, catch-up, CLI) reads the live roster `STATE_DIR/recipients.json`, fetches Coinbase BTC-USD spot, and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in a seed JSON is a snapshot only — the process does not read it.
 
 The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`): already-`paid` JSONL rows are skipped, so a recipient added after midnight can still be paid on the next process start.
 
@@ -16,7 +16,11 @@ The dashboard at `GET /` shows:
 - the same balance in USD (Coinbase BTC-USD spot)
 - the configured **Lightning Address** (`SPEND_LIGHTNING_ADDRESS`) and a `lightning:` QR
 
-`GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). Nothing else is on the page.
+`GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). The public page does not link to the editor.
+
+The recipient editor is at `GET /login` (password) then `GET /recipients`. Set `SPEND_DASHBOARD_PASSWORD`. When it is unset or blank, `/login` and `/recipients` return 503 and payouts still run. Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`).
+
+Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_FILE` (process default `./recipients.json`; image `ENV` `/app/recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing. `POST /login`, `POST /logout`, and list mutations require a same-origin `Origin` header (host must match `Host`).
 
 ## Setup
 
@@ -31,7 +35,7 @@ bun src/cli.ts --date 2026-08-23  # dry-run for that UTC state day
 bun src/cli.ts --live     # one-shot real payments
 ```
 
-Production image: `21gifts/spend:latest` (`linux/arm64`). `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`). Required env: `GIFTS_API_URL`, `GIFTS_API_TOKEN`, `LNDHUB_URI`. Optional: `SPEND_LIGHTNING_ADDRESS` (dashboard QR). Set `SPEND_LIVE=true` to pay.
+Production image: `21gifts/spend:latest` (`linux/arm64`). `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`). Required env: `GIFTS_API_URL`, `GIFTS_API_TOKEN`, `LNDHUB_URI`. Optional: `SPEND_LIGHTNING_ADDRESS` (dashboard QR), `SPEND_DASHBOARD_PASSWORD` (recipient editor). Set `SPEND_LIVE=true` to pay.
 
 ```bash
 docker run -p 3000:3000 -v spend-state:/data \

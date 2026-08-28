@@ -17,6 +17,7 @@ const config: SpendConfig = {
   stateDir: '/tmp',
   comment: '21gifts daily',
   lightningAddress: null,
+  dashboardPassword: null,
   recipients: [
     { address: 'a@b.com', amountUsd: 1 },
     { address: 'c@d.com', amountUsd: 0.5 },

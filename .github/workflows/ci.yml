@@ -15,4 +15,30 @@ jobs:
           bun-version: '1.3.0'
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run test
+      - run: bun run test:coverage
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 21gifts/api
+          path: api-src
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.0'
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - name: Playwright UI
+        run: bun run e2e
+      - name: Playwright visual
+        run: bun run e2e:visual
+      - name: Install 21gifts/api deps
+        working-directory: api-src
+        run: bun install --frozen-lockfile
+      - name: Invoice path against 21gifts/api
+        env:
+          GIFTS_API_DIR: ${{ github.workspace }}/api-src
+        run: bun run test:with-api
