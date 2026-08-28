@@ -4,7 +4,6 @@ const spendPort = 3350;
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: /ui\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env['CI'],

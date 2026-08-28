@@ -31,7 +31,7 @@ jobs:
           bun-version: '1.3.0'
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
-      - name: Playwright UI + visual
+      - name: Playwright UI
         run: bun run e2e
       - name: Install 21gifts/api deps
         working-directory: api-src
