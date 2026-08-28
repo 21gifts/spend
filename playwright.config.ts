@@ -4,6 +4,7 @@ const spendPort = 3350;
 
 export default defineConfig({
   testDir: './e2e',
+  snapshotPathTemplate: '{testDir}/{testFileName}-snapshots/{arg}{ext}',
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env['CI'],

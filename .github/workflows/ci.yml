@@ -33,6 +33,13 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - name: Playwright UI
         run: bun run e2e
+      - name: Playwright visual goldens
+        run: bun run e2e:visual -- --update-snapshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-snapshots
+          path: e2e/visual.spec.ts-snapshots/
       - name: Install 21gifts/api deps
         working-directory: api-src
         run: bun install --frozen-lockfile
