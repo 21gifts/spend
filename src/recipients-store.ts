@@ -1,12 +1,13 @@
 import {
   closeSync,
   constants,
-  existsSync,
+  copyFileSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -40,6 +41,9 @@ export function parseRecipientsJson(raw: string): { comment: string; recipients:
   try {
     parsed = JSON.parse(raw) as RecipientsFile;
   } catch {
+    throw new CorruptRecipientsError('recipients JSON is not valid');
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new CorruptRecipientsError('recipients JSON is not valid');
   }
   const comment = typeof parsed.comment === 'string' ? parsed.comment : '21gifts daily';
@@ -83,9 +87,6 @@ export function parseRecipientsJson(raw: string): { comment: string; recipients:
  */
 export function ensureLiveRecipients(stateDir: string, seedPath: string): void {
   const livePath = join(stateDir, LIVE_RECIPIENTS_FILE);
-  if (existsSync(livePath)) {
-    return;
-  }
   let seedBytes: Buffer;
   try {
     seedBytes = readFileSync(seedPath);
@@ -101,7 +102,15 @@ export function ensureLiveRecipients(stateDir: string, seedPath: string): void {
   } finally {
     closeSync(fd);
   }
-  renameSync(tmpPath, livePath);
+  try {
+    copyFileSync(tmpPath, livePath, constants.COPYFILE_EXCL);
+  } catch (err) {
+    /* v8 ignore next 3 — disk errors other than a live file already present */
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw err;
+    }
+  }
+  unlinkSync(tmpPath);
 }
 
 /**

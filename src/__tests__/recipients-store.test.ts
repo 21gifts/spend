@@ -48,6 +48,9 @@ describe('parseRecipientsJson', () => {
 
   it('rejects invalid JSON, non-arrays, duplicates, and bad fields', () => {
     expect(() => parseRecipientsJson('{')).toThrow(CorruptRecipientsError);
+    expect(() => parseRecipientsJson('null')).toThrow(CorruptRecipientsError);
+    expect(() => parseRecipientsJson('[]')).toThrow(CorruptRecipientsError);
+    expect(() => parseRecipientsJson('1')).toThrow(CorruptRecipientsError);
     expect(() => parseRecipientsJson('{}')).toThrow(/array/);
     expect(() => parseRecipientsJson('{"recipients":[null]}')).toThrow(/object/);
     expect(() => parseRecipientsJson('{"recipients":[{"address":1,"amountUsd":1}]}')).toThrow(
