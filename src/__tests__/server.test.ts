@@ -24,6 +24,18 @@ const env = {
 
 const sessionDirs: string[] = [];
 
+function req(url: string, init?: RequestInit): Request {
+  const parsed = new URL(url);
+  const headers = new Headers(init?.headers);
+  if (!headers.has('host')) {
+    headers.set('host', parsed.host);
+  }
+  if ((init?.method ?? 'GET') === 'POST' && !headers.has('origin')) {
+    headers.set('origin', parsed.origin);
+  }
+  return new Request(url, { ...init, headers });
+}
+
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
   for (const dir of sessionDirs) {
@@ -54,7 +66,7 @@ describe('createServer', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/nope'));
+    const res = await app.fetch(req('http://127.0.0.1/nope'));
     expect(res.status).toBe(404);
   });
 
@@ -65,7 +77,7 @@ describe('createServer', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/healthz'));
+    const res = await app.fetch(req('http://127.0.0.1/healthz'));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; service: string };
     expect(body.status).toBe('ok');
@@ -79,7 +91,7 @@ describe('createServer', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/healthz', { method: 'HEAD' }));
+    const res = await app.fetch(req('http://127.0.0.1/healthz', { method: 'HEAD' }));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('');
   });
@@ -101,7 +113,7 @@ describe('createServer', () => {
         return new Response('{}', { status: 404 });
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/'));
+    const res = await app.fetch(req('http://127.0.0.1/'));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('3803 sats');
@@ -124,7 +136,7 @@ describe('createServer', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/', { method: 'HEAD' }));
+    const res = await app.fetch(req('http://127.0.0.1/', { method: 'HEAD' }));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('');
   });
@@ -253,7 +265,7 @@ function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
 
 async function login(app: ReturnType<typeof createServer>, password = 'test-password'): Promise<string> {
   const res = await app.fetch(
-    new Request('http://127.0.0.1/login', {
+    req('http://127.0.0.1/login', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: `password=${encodeURIComponent(password)}`,
@@ -272,7 +284,7 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/login'));
+    const res = await app.fetch(req('http://127.0.0.1/login'));
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('name="password"');
   });
@@ -284,7 +296,7 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/login'));
+    const res = await app.fetch(req('http://127.0.0.1/login'));
     expect(res.status).toBe(503);
     expect(await res.text()).toContain('Recipient editor is not configured');
   });
@@ -297,7 +309,7 @@ describe('recipient editor', () => {
       },
     });
     const res = await app.fetch(
-      new Request('http://127.0.0.1/login', {
+      req('http://127.0.0.1/login', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: 'password=x',
@@ -314,7 +326,7 @@ describe('recipient editor', () => {
       },
     });
     const res = await app.fetch(
-      new Request('http://127.0.0.1/login', {
+      req('http://127.0.0.1/login', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: 'password=nope',
@@ -333,7 +345,7 @@ describe('recipient editor', () => {
       },
     });
     const res = await app.fetch(
-      new Request('http://127.0.0.1/login', {
+      req('http://127.0.0.1/login', {
         method: 'POST',
         body: 'password=test-password',
       }),
@@ -352,7 +364,7 @@ describe('recipient editor', () => {
     const token = await login(app);
     expect(token.startsWith('v1.')).toBe(true);
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -367,7 +379,7 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/recipients'));
+    const res = await app.fetch(req('http://127.0.0.1/recipients'));
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('/login');
   });
@@ -379,8 +391,30 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/recipients'));
+    const res = await app.fetch(req('http://127.0.0.1/recipients'));
     expect(res.status).toBe(503);
+  });
+
+  it('rejects a cross-origin mutation', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+          origin: 'https://evil.example',
+        },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(res.status).toBe(403);
   });
 
   it('unauthenticated POST /recipients/add redirects to login', async () => {
@@ -391,7 +425,7 @@ describe('recipient editor', () => {
       },
     });
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
+      req('http://127.0.0.1/recipients/add', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: 'address=bob@walletofsatoshi.com&amountUsd=2',
@@ -412,7 +446,7 @@ describe('recipient editor', () => {
     const cookie = `spend_session=${token}`;
     const post = (address: string): Promise<Response> =>
       app.fetch(
-        new Request('http://127.0.0.1/recipients/add', {
+        req('http://127.0.0.1/recipients/add', {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
           body: `address=${encodeURIComponent(address)}&amountUsd=2`,
@@ -424,7 +458,7 @@ describe('recipient editor', () => {
     ]);
     expect(first.status).toBe(303);
     expect(second.status).toBe(303);
-    const listed = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const listed = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
     const html = await listed.text();
     expect(html).toContain('bob@walletofsatoshi.com');
     expect(html).toContain('carol@walletofsatoshi.com');
@@ -440,7 +474,7 @@ describe('recipient editor', () => {
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const add = await app.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
+      req('http://127.0.0.1/recipients/add', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com&amountUsd=2',
@@ -448,7 +482,7 @@ describe('recipient editor', () => {
     );
     expect(add.status).toBe(303);
     const dup = await app.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
+      req('http://127.0.0.1/recipients/add', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com&amountUsd=9',
@@ -457,7 +491,7 @@ describe('recipient editor', () => {
     expect(dup.status).toBe(200);
     expect(await dup.text()).toContain('Address already listed');
     const badAdd = await app.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
+      req('http://127.0.0.1/recipients/add', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=not-an-address&amountUsd=2',
@@ -465,7 +499,7 @@ describe('recipient editor', () => {
     );
     expect(await badAdd.text()).toContain('Invalid address or amount');
     const update = await app.fetch(
-      new Request('http://127.0.0.1/recipients/update', {
+      req('http://127.0.0.1/recipients/update', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com&amountUsd=3',
@@ -473,7 +507,7 @@ describe('recipient editor', () => {
     );
     expect(update.status).toBe(303);
     const unknown = await app.fetch(
-      new Request('http://127.0.0.1/recipients/update', {
+      req('http://127.0.0.1/recipients/update', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=nobody@walletofsatoshi.com&amountUsd=3',
@@ -481,17 +515,17 @@ describe('recipient editor', () => {
     );
     expect(await unknown.text()).toContain('Unknown address');
     const badUsd = await app.fetch(
-      new Request('http://127.0.0.1/recipients/update', {
+      req('http://127.0.0.1/recipients/update', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com&amountUsd=0',
       }),
     );
     expect(await badUsd.text()).toContain('Invalid address or amount');
-    const listed = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const listed = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
     expect(await listed.text()).toContain('value="3"');
     const del = await app.fetch(
-      new Request('http://127.0.0.1/recipients/delete', {
+      req('http://127.0.0.1/recipients/delete', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com',
@@ -499,7 +533,7 @@ describe('recipient editor', () => {
     );
     expect(del.status).toBe(303);
     const delUnknown = await app.fetch(
-      new Request('http://127.0.0.1/recipients/delete', {
+      req('http://127.0.0.1/recipients/delete', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=bob@walletofsatoshi.com',
@@ -507,13 +541,13 @@ describe('recipient editor', () => {
     );
     expect(await delUnknown.text()).toContain('Unknown address');
     await app.fetch(
-      new Request('http://127.0.0.1/recipients/delete', {
+      req('http://127.0.0.1/recipients/delete', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
         body: 'address=alice@walletofsatoshi.com',
       }),
     );
-    const empty = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const empty = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
     expect(await empty.text()).toContain('No recipients');
   });
 
@@ -527,7 +561,7 @@ describe('recipient editor', () => {
     const form = new FormData();
     form.set('password', 'test-password');
     const res = await app.fetch(
-      new Request('https://spend.example/login', {
+      req('https://spend.example/login', {
         method: 'POST',
         headers: { 'x-forwarded-proto': 'https' },
         body: form,
@@ -544,7 +578,7 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/logout', { method: 'POST' }));
+    const res = await app.fetch(req('http://127.0.0.1/logout', { method: 'POST' }));
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('/login');
     expect(cookieFrom(res)).toContain('Max-Age=0');
@@ -568,7 +602,7 @@ describe('recipient editor', () => {
     const token = await login(app);
     writeFileSync(join(dir, 'recipients.json'), '{');
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
     );
     expect(res.status).toBe(500);
     expect(await res.text()).toBe('Recipient list is unreadable');
@@ -588,7 +622,7 @@ describe('recipient editor', () => {
     });
     const token = await login(app);
     await app.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
+      req('http://127.0.0.1/recipients/add', {
         method: 'POST',
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
@@ -612,7 +646,7 @@ describe('recipient editor', () => {
         throw new Error('no network');
       },
     });
-    const res = await app.fetch(new Request('http://127.0.0.1/recipients/add', { method: 'POST' }));
+    const res = await app.fetch(req('http://127.0.0.1/recipients/add', { method: 'POST' }));
     expect(res.status).toBe(503);
   });
 
@@ -625,7 +659,7 @@ describe('recipient editor', () => {
     });
     const token = await login(app);
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients/update', {
+      req('http://127.0.0.1/recipients/update', {
         method: 'POST',
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
@@ -646,7 +680,7 @@ describe('recipient editor', () => {
     });
     const token = await login(app);
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients/delete', {
+      req('http://127.0.0.1/recipients/delete', {
         method: 'POST',
         headers: {
           'content-type': 'application/x-www-form-urlencoded',

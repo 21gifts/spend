@@ -145,7 +145,7 @@ export function createServer(opts: {
   try {
     ensureLiveRecipients(config.stateDir, config.recipientsFile);
   } catch {
-    // Payout/catch-up fail closed on corrupt/missing live file.
+    // Seed copy is best-effort; payout/catch-up still fail closed on a bad live file.
   }
   /* v8 ignore stop */
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -165,6 +165,23 @@ export function createServer(opts: {
       return false;
     }
     return sessionCookieValid(req.headers.get('cookie'), password, sessionNow);
+  };
+
+  const requireSameOrigin = (req: Request): boolean => {
+    const origin = req.headers.get('origin');
+    if (origin === null || origin === '') {
+      return false;
+    }
+    let originHost: string;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      return false;
+    }
+    const forwarded = req.headers.get('x-forwarded-host');
+    const host =
+      (forwarded ?? req.headers.get('host') ?? new URL(req.url).host).split(',')[0]?.trim() ?? '';
+    return host !== '' && originHost === host;
   };
 
   const recipientsPage = (recipients: Recipient[], error?: string): Response => {
@@ -231,6 +248,9 @@ export function createServer(opts: {
       if (config.dashboardPassword === null) {
         return htmlResponse(renderLoginHtml({ disabled: true }), 503);
       }
+      if (!requireSameOrigin(req)) {
+        return new Response('Forbidden', { status: 403 });
+      }
       const form = await readForm(req);
       const submitted = form.get('password') ?? '';
       if (!passwordsMatch(config.dashboardPassword, submitted)) {
@@ -243,6 +263,9 @@ export function createServer(opts: {
     }
 
     if (req.method === 'POST' && url.pathname === '/logout') {
+      if (config.dashboardPassword !== null && !requireSameOrigin(req)) {
+        return new Response('Forbidden', { status: 403 });
+      }
       return redirect('/login', {
         'set-cookie': sessionCookieHeader(clearSessionCookie(), req, 0),
       });
@@ -273,6 +296,9 @@ export function createServer(opts: {
       }
       if (!requireSession(req)) {
         return redirect('/login');
+      }
+      if (!requireSameOrigin(req)) {
+        return new Response('Forbidden', { status: 403 });
       }
       const form = await readForm(req);
       return recipientsGate.run(async () => {

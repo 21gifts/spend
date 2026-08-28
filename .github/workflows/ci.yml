@@ -41,4 +41,4 @@ jobs:
       - name: Invoice path against 21gifts/api
         env:
           GIFTS_API_DIR: ${{ github.workspace }}/api-src
-        run: bun test src/__tests__/with-api.e2e.test.ts
+        run: bun run test:with-api
