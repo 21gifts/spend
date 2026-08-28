@@ -16,7 +16,11 @@ The dashboard at `GET /` shows:
 - the same balance in USD (Coinbase BTC-USD spot)
 - the configured **Lightning Address** (`SPEND_LIGHTNING_ADDRESS`) and a `lightning:` QR
 
-`GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). Nothing else is on the page.
+`GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). The public page does not link to the editor.
+
+The recipient editor is at `GET /login` (password) then `GET /recipients`. Set `SPEND_DASHBOARD_PASSWORD`. When it is unset or blank, `/login` and `/recipients` return 503 and payouts still run. Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`).
+
+Live roster: `STATE_DIR/recipients.json`. On first boot the image seed (`RECIPIENTS_FILE`, default `recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing.
 
 ## Setup
 
@@ -31,7 +35,7 @@ bun src/cli.ts --date 2026-08-23  # dry-run for that UTC state day
 bun src/cli.ts --live     # one-shot real payments
 ```
 
-Production image: `21gifts/spend:latest` (`linux/arm64`). `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`). Required env: `GIFTS_API_URL`, `GIFTS_API_TOKEN`, `LNDHUB_URI`. Optional: `SPEND_LIGHTNING_ADDRESS` (dashboard QR). Set `SPEND_LIVE=true` to pay.
+Production image: `21gifts/spend:latest` (`linux/arm64`). `BIND_ADDR` defaults to `0.0.0.0:3000`. Recipients in the image are `recipients.tondo.json`. State is `STATE_DIR` (Docker: `/data`). Required env: `GIFTS_API_URL`, `GIFTS_API_TOKEN`, `LNDHUB_URI`. Optional: `SPEND_LIGHTNING_ADDRESS` (dashboard QR), `SPEND_DASHBOARD_PASSWORD` (recipient editor). Set `SPEND_LIVE=true` to pay.
 
 ```bash
 docker run -p 3000:3000 -v spend-state:/data \

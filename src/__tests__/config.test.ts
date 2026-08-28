@@ -22,6 +22,7 @@ describe('loadConfig', () => {
       expect(loaded.config.giftsApiUrl).toBe('https://api.21.gifts');
       expect(loaded.config.recipients[0]?.comment).toBe('x');
       expect(loaded.config.lightningAddress).toBeNull();
+      expect(loaded.config.dashboardPassword).toBeNull();
     }
   });
 
@@ -32,6 +33,19 @@ describe('loadConfig', () => {
       expect(ok.config.lightningAddress).toBe('9643e3@lightning.space');
     }
     expect(loadConfig({ ...env, SPEND_LIGHTNING_ADDRESS: 'not-an-address' }, () => file).ok).toBe(false);
+  });
+
+  it('trims SPEND_DASHBOARD_PASSWORD and treats blank as null', () => {
+    const set = loadConfig({ ...env, SPEND_DASHBOARD_PASSWORD: '  secret  ' }, () => file);
+    expect(set.ok).toBe(true);
+    if (set.ok) {
+      expect(set.config.dashboardPassword).toBe('secret');
+    }
+    const blank = loadConfig({ ...env, SPEND_DASHBOARD_PASSWORD: '   ' }, () => file);
+    expect(blank.ok).toBe(true);
+    if (blank.ok) {
+      expect(blank.config.dashboardPassword).toBeNull();
+    }
   });
 
   it('requires GIFTS_API_URL', () => {

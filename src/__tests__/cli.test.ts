@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { isUtcMidnightWindow, main, parseArgs } from '../cli';
 
 describe('parseArgs', () => {
@@ -39,6 +42,11 @@ describe('parseArgs', () => {
     expect(parseArgs(['bun', 'cli', '--date']).ok).toBe(false);
     expect(parseArgs(['bun', 'cli', '--date', '2026-8-23']).ok).toBe(false);
   });
+
+  it('main prints the --date error', async () => {
+    const code = await main({}, ['bun', 'cli', '--date']);
+    expect(code).toBe(2);
+  });
 });
 
 describe('isUtcMidnightWindow', () => {
@@ -74,5 +82,27 @@ describe('main --at-utc-midnight', () => {
       new Date('2026-08-25T00:00:00.000Z'),
     );
     expect(code).toBe(2);
+  });
+});
+
+describe('main live recipients', () => {
+  it('exits 4 when the live recipients file is corrupt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-cli-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const code = await main(
+      {
+        GIFTS_API_URL: 'http://api.example',
+        GIFTS_API_TOKEN: 'tok',
+        LNDHUB_URI: 'lndhub://admin:secret@https://lightning.space/lndhub',
+        RECIPIENTS_FILE: seed,
+        STATE_DIR: dir,
+      },
+      ['bun', 'cli'],
+      () => new Date('2026-08-25T12:00:00.000Z'),
+    );
+    expect(code).toBe(4);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

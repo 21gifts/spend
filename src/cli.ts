@@ -1,4 +1,9 @@
 import { loadConfig } from './config';
+import {
+  CorruptRecipientsError,
+  ensureLiveRecipients,
+  loadLiveRecipients,
+} from './recipients-store';
 import { runDay } from './run';
 import { isUtcMidnightWindow } from './utc-window';
 
@@ -73,13 +78,34 @@ export async function main(
     console.error(JSON.stringify({ event: 'spend.config', error: loaded.error }));
     return 2;
   }
-  const result = await runDay(loaded.config, { live: flags.live, day: flags.day });
-  return result.exitCode;
+  try {
+    ensureLiveRecipients(loaded.config.stateDir, loaded.config.recipientsFile);
+    const liveList = loadLiveRecipients(loaded.config.stateDir);
+    const result = await runDay(
+      {
+        ...loaded.config,
+        recipients: liveList.recipients,
+        comment: liveList.comment,
+      },
+      { live: flags.live, day: flags.day },
+    );
+    return result.exitCode;
+  } catch (err) {
+    if (err instanceof CorruptRecipientsError) {
+      console.error(
+        JSON.stringify({ event: 'spend.done', ok: false, reason: 'corrupt_recipients' }),
+      );
+      return 4;
+    }
+    throw err;
+  }
 }
 
+/* v8 ignore start */
 const meta = import.meta as ImportMeta & { main?: boolean };
 if (meta.main === true) {
   void main().then((code) => {
     process.exit(code);
   });
 }
+/* v8 ignore stop */

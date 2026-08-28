@@ -1,16 +1,43 @@
-import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createServer, parseBindAddr } from '../server';
+
+const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
+const seedPath = join(stateDir, 'seed.json');
+writeFileSync(
+  seedPath,
+  `${JSON.stringify({
+    comment: '21gifts daily',
+    recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+  })}\n`,
+);
 
 const env = {
   GIFTS_API_URL: 'http://api.example',
   GIFTS_API_TOKEN: 'tok',
   LNDHUB_URI: 'lndhub://admin:secret@https://lightning.space/lndhub',
-  RECIPIENTS_FILE: './recipients.example.json',
+  RECIPIENTS_FILE: seedPath,
+  STATE_DIR: stateDir,
 };
+
+afterAll(() => {
+  rmSync(stateDir, { recursive: true, force: true });
+});
 
 describe('parseBindAddr', () => {
   it('parses host and port', () => {
     expect(parseBindAddr('0.0.0.0:3000')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+  });
+
+  it('defaults when unset, empty, or malformed', () => {
+    expect(parseBindAddr(undefined)).toEqual({ hostname: '0.0.0.0', port: 3000 });
+    expect(parseBindAddr('')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+    expect(parseBindAddr('nope')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+    expect(parseBindAddr(':80')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+    expect(parseBindAddr('host:')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+    expect(parseBindAddr('host:99999')).toEqual({ hostname: '0.0.0.0', port: 3000 });
   });
 });
 
@@ -80,6 +107,9 @@ describe('createServer', () => {
     expect(html).not.toContain('bc1q');
     expect(html).not.toContain('Deposit address');
     expect(html).not.toContain('/getbtc');
+    expect(html).not.toContain('/login');
+    expect(html).not.toContain('/recipients');
+    expect(html).not.toContain('Log in');
   });
 
   it('HEAD / is 200 with empty body and does not load the dashboard', async () => {
@@ -190,5 +220,406 @@ describe('createServer', () => {
     });
     await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
+  });
+});
+
+function cookieFrom(res: Response): string {
+  return res.headers.get('set-cookie') ?? '';
+}
+
+function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'spend-sess-'));
+  const seed = join(dir, 'seed.json');
+  writeFileSync(
+    seed,
+    `${JSON.stringify({
+      comment: '21gifts daily',
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    })}\n`,
+  );
+  return {
+    ...env,
+    STATE_DIR: dir,
+    RECIPIENTS_FILE: seed,
+    SPEND_DASHBOARD_PASSWORD: 'test-password',
+  };
+}
+
+async function login(app: ReturnType<typeof createServer>, password = 'test-password'): Promise<string> {
+  const res = await app.fetch(
+    new Request('http://127.0.0.1/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: `password=${encodeURIComponent(password)}`,
+    }),
+  );
+  const setCookie = cookieFrom(res);
+  const match = /spend_session=([^;]+)/.exec(setCookie);
+  return match?.[1] ?? '';
+}
+
+describe('recipient editor', () => {
+  it('GET /login shows the form when a password is configured', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/login'));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('name="password"');
+  });
+
+  it('GET /login is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/login'));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain('Recipient editor is not configured');
+  });
+
+  it('POST /login is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'password=x',
+      }),
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('rejects a wrong password without a session cookie', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'password=nope',
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('Invalid password');
+    expect(cookieFrom(res)).not.toContain('spend_session=v1.');
+  });
+
+  it('logs in from a raw form body without a content-type', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/login', {
+        method: 'POST',
+        body: 'password=test-password',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(cookieFrom(res)).toContain('spend_session=v1.');
+  });
+
+  it('logs in and lists seeded recipients', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    expect(token.startsWith('v1.')).toBe(true);
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('alice@walletofsatoshi.com');
+    expect(html).toContain('Log out');
+  });
+
+  it('GET /recipients without a cookie redirects to login', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/recipients'));
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/login');
+  });
+
+  it('GET /recipients is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/recipients'));
+    expect(res.status).toBe(503);
+  });
+
+  it('unauthenticated POST /recipients/add redirects to login', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/login');
+  });
+
+  it('adds, updates, and deletes recipients', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const add = await app.fetch(
+      new Request('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(add.status).toBe(303);
+    const dup = await app.fetch(
+      new Request('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=9',
+      }),
+    );
+    expect(dup.status).toBe(200);
+    expect(await dup.text()).toContain('Address already listed');
+    const badAdd = await app.fetch(
+      new Request('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=not-an-address&amountUsd=2',
+      }),
+    );
+    expect(await badAdd.text()).toContain('Invalid address or amount');
+    const update = await app.fetch(
+      new Request('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      }),
+    );
+    expect(update.status).toBe(303);
+    const unknown = await app.fetch(
+      new Request('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=nobody@walletofsatoshi.com&amountUsd=3',
+      }),
+    );
+    expect(await unknown.text()).toContain('Unknown address');
+    const badUsd = await app.fetch(
+      new Request('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=0',
+      }),
+    );
+    expect(await badUsd.text()).toContain('Invalid address or amount');
+    const listed = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    expect(await listed.text()).toContain('value="3"');
+    const del = await app.fetch(
+      new Request('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com',
+      }),
+    );
+    expect(del.status).toBe(303);
+    const delUnknown = await app.fetch(
+      new Request('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com',
+      }),
+    );
+    expect(await delUnknown.text()).toContain('Unknown address');
+    await app.fetch(
+      new Request('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=alice@walletofsatoshi.com',
+      }),
+    );
+    const empty = await app.fetch(new Request('http://127.0.0.1/recipients', { headers: { cookie } }));
+    expect(await empty.text()).toContain('No recipients');
+  });
+
+  it('accepts multipart login and sets Secure when forwarded proto is https', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const form = new FormData();
+    form.set('password', 'test-password');
+    const res = await app.fetch(
+      new Request('https://spend.example/login', {
+        method: 'POST',
+        headers: { 'x-forwarded-proto': 'https' },
+        body: form,
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(cookieFrom(res)).toContain('Secure');
+  });
+
+  it('POST /logout clears the cookie', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/logout', { method: 'POST' }));
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/login');
+    expect(cookieFrom(res)).toContain('Max-Age=0');
+  });
+
+  it('GET /recipients is 500 when the live file is corrupt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-bad-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_DASHBOARD_PASSWORD: 'test-password',
+      },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe('Recipient list is unreadable');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('payout reloads the live list and skips a corrupt file', async () => {
+    const sess = sessionEnv();
+    const runDay = vi.fn(async (cfg: { recipients: Array<{ address: string }> }) => {
+      expect(cfg.recipients.map((r) => r.address)).toEqual(['alice@walletofsatoshi.com', 'bob@walletofsatoshi.com']);
+      return { exitCode: 0 };
+    });
+    const app = createServer({
+      env: sess,
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const token = await login(app);
+    await app.fetch(
+      new Request('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+        },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
+    writeFileSync(join(sess.STATE_DIR, 'recipients.json'), 'not-json');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
+    expect(JSON.stringify(warn.mock.calls)).toContain('corrupt_recipients');
+    warn.mockRestore();
+  });
+
+  it('POST /recipients/add is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(new Request('http://127.0.0.1/recipients/add', { method: 'POST' }));
+    expect(res.status).toBe(503);
+  });
+
+  it('POST /recipients/update with a blank address is unknown', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+        },
+        body: 'address=&amountUsd=3',
+      }),
+    );
+    expect(await res.text()).toContain('Unknown address');
+  });
+
+  it('POST /recipients/delete with a blank address is unknown', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+        },
+        body: 'address=',
+      }),
+    );
+    expect(await res.text()).toContain('Unknown address');
   });
 });

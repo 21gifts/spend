@@ -17,6 +17,8 @@ export interface SpendConfig {
   comment: string;
   recipients: Recipient[];
   lightningAddress: string | null;
+  /** Dashboard editor password; `null` when unset (editor returns 503, payouts still boot). */
+  dashboardPassword: string | null;
 }
 
 interface RecipientsFile {
@@ -58,6 +60,8 @@ export function loadConfig(
     return { ok: false, error: 'SPEND_LIGHTNING_ADDRESS must be a Lightning Address' };
   }
   const lightningAddress = lightningRaw === '' ? null : lightningRaw;
+  const passwordRaw = trimOrEmpty(env['SPEND_DASHBOARD_PASSWORD']);
+  const dashboardPassword = passwordRaw === '' ? null : passwordRaw;
 
   let raw: string;
   try {
@@ -111,6 +115,7 @@ export function loadConfig(
       comment: fileComment,
       recipients,
       lightningAddress,
+      dashboardPassword,
     },
   };
 }

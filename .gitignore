@@ -4,3 +4,4 @@ state/
 recipients.json
 recipients.local.json
 coverage/
+e2e/.state/
