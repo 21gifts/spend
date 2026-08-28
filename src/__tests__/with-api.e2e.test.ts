@@ -80,7 +80,11 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
     const login = await spend.fetch(
       new Request('http://127.0.0.1/login', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          origin: 'http://127.0.0.1',
+          host: '127.0.0.1',
+        },
         body: 'password=test-password',
       }),
     );
@@ -91,6 +95,8 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
           cookie: `spend_session=${token}`,
+          origin: 'http://127.0.0.1',
+          host: '127.0.0.1',
         },
         body: 'address=bob@walletofsatoshi.com&amountUsd=1',
       }),

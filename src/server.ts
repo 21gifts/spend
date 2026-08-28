@@ -178,9 +178,7 @@ export function createServer(opts: {
     } catch {
       return false;
     }
-    const forwarded = req.headers.get('x-forwarded-host');
-    const host =
-      (forwarded ?? req.headers.get('host') ?? new URL(req.url).host).split(',')[0]?.trim() ?? '';
+    const host = (req.headers.get('host') ?? new URL(req.url).host).split(',')[0]?.trim() ?? '';
     return host !== '' && originHost === host;
   };
 
