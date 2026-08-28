@@ -76,6 +76,9 @@ export function loadConfig(
   } catch {
     return { ok: false, error: 'recipients file is not JSON' };
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'recipients file is not JSON' };
+  }
 
   const fileComment = typeof parsed.comment === 'string' ? parsed.comment : '21gifts daily';
   if (!Array.isArray(parsed.recipients) || parsed.recipients.length === 0) {

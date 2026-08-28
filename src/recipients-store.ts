@@ -79,8 +79,9 @@ export function parseRecipientsJson(raw: string): { comment: string; recipients:
 }
 
 /**
- * If `join(stateDir, 'recipients.json')` is missing, write the seed file bytes
- * atomically into it (tmp + fsync + rename). Never overwrites an existing live file.
+ * If `join(stateDir, 'recipients.json')` is missing, copy the seed file bytes
+ * into it via tmp + fsync + `copyFileSync(..., COPYFILE_EXCL)`. Never overwrites
+ * an existing live file.
  *
  * @param stateDir - `STATE_DIR`.
  * @param seedPath - `RECIPIENTS_FILE` seed path.

@@ -22,8 +22,13 @@ const env = {
   STATE_DIR: stateDir,
 };
 
+const sessionDirs: string[] = [];
+
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
+  for (const dir of sessionDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe('parseBindAddr', () => {
@@ -229,6 +234,7 @@ function cookieFrom(res: Response): string {
 
 function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
   const dir = mkdtempSync(join(tmpdir(), 'spend-sess-'));
+  sessionDirs.push(dir);
   const seed = join(dir, 'seed.json');
   writeFileSync(
     seed,

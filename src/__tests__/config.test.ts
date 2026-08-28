@@ -75,6 +75,8 @@ describe('loadConfig', () => {
 
   it('rejects bad JSON', () => {
     expect(loadConfig(env, () => '{').ok).toBe(false);
+    expect(loadConfig(env, () => 'null').ok).toBe(false);
+    expect(loadConfig(env, () => '[]').ok).toBe(false);
   });
 
   it('rejects a bad amount', () => {
