@@ -22,6 +22,14 @@ import {
   sessionCookieHeader,
   sessionCookieValid,
 } from './session';
+import {
+  loadTelegram,
+  minimalRunSummary,
+  notifyPayout,
+  shouldNotify,
+  type RunSummary,
+  type TelegramSource,
+} from './telegram';
 
 const SERVICE_NAME = 'spend';
 
@@ -140,6 +148,11 @@ export function createServer(opts: {
   if (!loaded.ok) {
     throw new Error(loaded.error);
   }
+  const telegram = loadTelegram(opts.env);
+  if (!telegram.ok) {
+    throw new Error(telegram.error);
+  }
+  const telegramTarget = telegram.target;
   const config = loaded.config;
   /* v8 ignore start — seed was already parsed by loadConfig; copy is best-effort. */
   try {
@@ -360,7 +373,7 @@ export function createServer(opts: {
   };
 
   const gate = createPayoutGate();
-  const payout = (day: string): Promise<{ exitCode: number }> =>
+  const payout = (day: string, source: TelegramSource): Promise<{ exitCode: number }> =>
     gate.run(async () => {
       let liveList: { comment: string; recipients: Recipient[] };
       try {
@@ -375,14 +388,35 @@ export function createServer(opts: {
               reason: 'corrupt_recipients',
             }),
           );
+          const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
+          if (telegramTarget !== null && shouldNotify(source, summary)) {
+            await notifyPayout({
+              target: telegramTarget,
+              summary,
+              source,
+              fetchImpl,
+            });
+          }
           return { exitCode: 4 };
         }
         throw err;
       }
-      return (opts.runDay ?? runDay)(
+      const result = await (opts.runDay ?? runDay)(
         { ...config, recipients: liveList.recipients, comment: liveList.comment },
         { live, day },
       );
+      const withSummary = result as { exitCode: number; summary?: RunSummary };
+      const summary =
+        withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
+      if (telegramTarget !== null && shouldNotify(source, summary)) {
+        await notifyPayout({
+          target: telegramTarget,
+          summary,
+          source,
+          fetchImpl,
+        });
+      }
+      return { exitCode: result.exitCode };
     });
 
   return {
@@ -390,7 +424,7 @@ export function createServer(opts: {
     startScheduler: () => {
       const scheduler = {
         live,
-        run: payout,
+        run: (day: string) => payout(day, 'scheduler'),
         isDayFinished: (day: string) => existsSync(join(config.stateDir, `${day}.finished`)),
       };
       if (opts.now === undefined) {
@@ -409,7 +443,7 @@ export function createServer(opts: {
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
       try {
-        const result = await payout(day);
+        const result = await payout(day, 'catchup');
         console.warn(
           JSON.stringify({
             ts: clock().toISOString(),
@@ -434,7 +468,7 @@ export function createServer(opts: {
         return null;
       }
     },
-    runPayout: payout,
+    runPayout: (day: string) => payout(day, 'scheduler'),
     drainPayouts: () => gate.run(async () => undefined),
   };
 }

@@ -164,6 +164,18 @@ describe('runDay', () => {
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
+    expect(result.summary).toMatchObject({
+      day: '2026-08-23',
+      live: true,
+      ok: true,
+      exitCode: 0,
+      btcUsd: 100_000,
+      paid: [{ address: 'a@b.com', amountSats: 1000, amountUsd: 1 }],
+      skipped: [],
+      failed: [],
+      uncertain: [],
+      dryRun: [],
+    });
     expect(proofBody).toEqual({ id: 'id1', preimage: PREIMAGE });
     expect(state.isFinished()).toBe(true);
   });
@@ -216,6 +228,16 @@ describe('runDay', () => {
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
+    expect(result.summary).toMatchObject({
+      day: '2026-08-23',
+      live: true,
+      ok: false,
+      exitCode: 3,
+      reason: 'insufficient_balance',
+      btcUsd: 100_000,
+      needed: expect.any(Number),
+      available: 10,
+    });
     expect(state.isFinished()).toBe(false);
   });
 

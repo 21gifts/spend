@@ -1,10 +1,14 @@
 import { loadConfig } from './config';
+import { GiftsApi } from './gifts-api';
+import { LndhubClient, parseLndhubUri } from './lndhub';
+import { fetchBtcUsdSpot } from './price';
 import {
   CorruptRecipientsError,
   ensureLiveRecipients,
   loadLiveRecipients,
 } from './recipients-store';
 import { runDay } from './run';
+import { loadTelegram, minimalRunSummary, notifyPayout, shouldNotify } from './telegram';
 import { isUtcMidnightWindow } from './utc-window';
 
 export { isUtcMidnightWindow } from './utc-window';
@@ -49,12 +53,14 @@ export function parseArgs(
  * @param env - Process env.
  * @param argv - Process arguments.
  * @param now - Clock (default: `Date`).
+ * @param fetchImpl - HTTP fetch for payout clients and Telegram notify (default: `fetch`).
  * @returns Promise of the exit code (tests); production calls `process.exit`.
  */
 export async function main(
   env = process.env,
   argv = process.argv,
   now: () => Date = () => new Date(),
+  fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
   const instant = now();
   const flags = parseArgs(argv, instant);
@@ -78,23 +84,49 @@ export async function main(
     console.error(JSON.stringify({ event: 'spend.config', error: loaded.error }));
     return 2;
   }
+  const telegram = loadTelegram(env);
+  if (!telegram.ok) {
+    console.error(JSON.stringify({ event: 'spend.config', error: telegram.error }));
+    return 2;
+  }
   try {
     ensureLiveRecipients(loaded.config.stateDir, loaded.config.recipientsFile);
     const liveList = loadLiveRecipients(loaded.config.stateDir);
+    const lndhubTarget = parseLndhubUri(loaded.config.lndhubUri);
     const result = await runDay(
-      {
-        ...loaded.config,
-        recipients: liveList.recipients,
-        comment: liveList.comment,
-      },
+      { ...loaded.config, recipients: liveList.recipients, comment: liveList.comment },
       { live: flags.live, day: flags.day },
+      lndhubTarget === null
+        ? undefined
+        : {
+            gifts: new GiftsApi(loaded.config.giftsApiUrl, loaded.config.giftsApiToken, fetchImpl),
+            lndhub: new LndhubClient(lndhubTarget, fetchImpl),
+            btcUsd: () => fetchBtcUsdSpot(fetchImpl),
+          },
     );
+    if (telegram.target !== null && shouldNotify('cli', result.summary)) {
+      await notifyPayout({
+        target: telegram.target,
+        summary: result.summary,
+        source: 'cli',
+        fetchImpl,
+      });
+    }
     return result.exitCode;
   } catch (err) {
     if (err instanceof CorruptRecipientsError) {
       console.error(
         JSON.stringify({ event: 'spend.done', ok: false, reason: 'corrupt_recipients' }),
       );
+      const summary = { ...minimalRunSummary(flags.day, flags.live, 4), reason: 'corrupt_recipients' };
+      if (telegram.target !== null && shouldNotify('cli', summary)) {
+        await notifyPayout({
+          target: telegram.target,
+          summary,
+          source: 'cli',
+          fetchImpl,
+        });
+      }
       return 4;
     }
     throw err;
