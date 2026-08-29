@@ -70,6 +70,7 @@ jobs:
           printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" >"$plain"
           openssl pkeyutl -encrypt -pubin -inkey "$pub" \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256 \
             -in "$plain" -out "$cipher"
           ciphertext=$(python3 -c 'import sys,base64; sys.stdout.write(base64.b64encode(sys.stdin.buffer.read()).decode())' <"$cipher")
           [ -n "$ciphertext" ]
