@@ -1,0 +1,70 @@
+# Encrypt SPEND_TELEGRAM_* with the infra transport public key and fire
+# repository_dispatch install-21gifts-spend-telegram. Ciphertext only —
+# never put the token or chat id in the payload. Manual run after the
+# matching infra workflow is on the default branch.
+
+name: Install PRD Telegram
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-prd-telegram
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Encrypt and dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Encrypt and notify infrastructure
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.SPEND_TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.SPEND_TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          repo="${{ secrets.DISPATCH_REPO }}"
+          pub=".github/telegram-install-transport.pub"
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${repo:-}" ]; then
+            echo "ERR: DISPATCH_TOKEN or DISPATCH_REPO unset" >&2
+            exit 1
+          fi
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "ERR: SPEND_TELEGRAM_BOT_TOKEN or SPEND_TELEGRAM_CHAT_ID unset" >&2
+            exit 1
+          fi
+          test -f "$pub"
+          umask 077
+          plain=$(mktemp)
+          cipher=$(mktemp)
+          cleanup() { rm -f "$plain" "$cipher"; }
+          trap cleanup EXIT
+          printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" >"$plain"
+          openssl pkeyutl -encrypt -pubin -inkey "$pub" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -in "$plain" -out "$cipher"
+          ciphertext=$(python3 -c 'import sys,base64; sys.stdout.write(base64.b64encode(sys.stdin.buffer.read()).decode())' <"$cipher")
+          [ -n "$ciphertext" ]
+          python3 - "$repo" "$ciphertext" <<'PY'
+import json, os, subprocess, sys
+repo, ciphertext = sys.argv[1], sys.argv[2]
+payload = {
+    "event_type": "install-21gifts-spend-telegram",
+    "client_payload": {"ciphertext": ciphertext},
+}
+subprocess.run(
+    ["gh", "api", f"repos/{repo}/dispatches", "--input", "-"],
+    input=json.dumps(payload),
+    text=True,
+    check=True,
+)
+PY
+          echo "dispatched install-21gifts-spend-telegram"
