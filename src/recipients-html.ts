@@ -60,7 +60,7 @@ function renderRow(row: Recipient): string {
  * @param error - Optional error shown above the form
  * @returns Inner HTML fragment
  */
-export function renderLoginPanel(error?: string): string {
+function renderLoginPanel(error?: string): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   return `<h2>Log in</h2>
@@ -78,7 +78,7 @@ export function renderLoginPanel(error?: string): string {
  * @param error - Optional error shown above the roster
  * @returns Inner HTML fragment
  */
-export function renderEditorPanel(recipients: Recipient[], error?: string): string {
+function renderEditorPanel(recipients: Recipient[], error?: string): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   const roster =

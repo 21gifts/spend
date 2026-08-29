@@ -22,7 +22,7 @@ Under that: when `SPEND_DASHBOARD_PASSWORD` is set and there is no session, a co
 
 Wallet of Satoshi addresses render as `local@w...` in the editor; mutations still use the full address. Visual snapshots (`bun run e2e:visual`) are Linux/Chromium; when login or editor layout changes, replace `e2e/visual.spec.ts-snapshots/` from the CI actuals.
 
-Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_FILE` (process default `./recipients.json`; image `ENV` `/app/recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing. `POST /login`, `POST /logout`, and list mutations require a same-origin `Origin` header (host must match `Host`).
+Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_FILE` (process default `./recipients.json`; image `ENV` `/app/recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing. `POST /` (login; alias `POST /login`), `POST /logout`, and list mutations require a same-origin `Origin` header (host must match `Host`).
 
 ## Setup
 
