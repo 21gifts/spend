@@ -61,7 +61,10 @@ jobs:
           case "$TELEGRAM_CHAT_ID" in
             *[[:space:]]*) echo "ERR: telegram chat id contains whitespace" >&2; exit 1 ;;
           esac
-          test -f "$pub"
+          if [ ! -f "$pub" ]; then
+            echo "ERR: missing transport public key" >&2
+            exit 1
+          fi
           umask 077
           plain=$(mktemp)
           cipher=$(mktemp)
@@ -74,18 +77,5 @@ jobs:
             -in "$plain" -out "$cipher"
           ciphertext=$(python3 -c 'import sys,base64; sys.stdout.write(base64.b64encode(sys.stdin.buffer.read()).decode())' <"$cipher")
           [ -n "$ciphertext" ]
-          python3 - "$repo" "$ciphertext" <<'PY'
-import json, subprocess, sys
-repo, ciphertext = sys.argv[1], sys.argv[2]
-payload = {
-    "event_type": "install-21gifts-spend-telegram",
-    "client_payload": {"ciphertext": ciphertext},
-}
-subprocess.run(
-    ["gh", "api", f"repos/{repo}/dispatches", "--input", "-"],
-    input=json.dumps(payload),
-    text=True,
-    check=True,
-)
-PY
+          DISPATCH_EVENT_REPO="$repo" DISPATCH_CIPHERTEXT="$ciphertext" python3 -c 'import json,os,subprocess; payload={"event_type":"install-21gifts-spend-telegram","client_payload":{"ciphertext":os.environ["DISPATCH_CIPHERTEXT"]}}; subprocess.run(["gh","api","repos/"+os.environ["DISPATCH_EVENT_REPO"]+"/dispatches","--input","-"],input=json.dumps(payload),text=True,check=True)'
           echo "dispatched install-21gifts-spend-telegram"
