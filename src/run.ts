@@ -5,6 +5,7 @@ import { fetchBtcUsdSpot, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
 import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
+import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
 
@@ -17,6 +18,7 @@ export interface RunOptions {
 /** Outcome of {@link runDay}. */
 export interface RunResult {
   exitCode: number;
+  summary: RunSummary;
 }
 
 function log(event: string, fields: Record<string, string | number | boolean>): void {
@@ -34,13 +36,32 @@ function feeMargin(availableSats: number): number {
   return Math.max(100, Math.ceil(availableSats * 0.01));
 }
 
+function emptyBags(): Pick<RunSummary, 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'> {
+  return { paid: [], skipped: [], failed: [], uncertain: [], dryRun: [] };
+}
+
+function makeSummary(
+  options: RunOptions,
+  exitCode: number,
+  extra: Partial<Omit<RunSummary, 'day' | 'live' | 'ok' | 'exitCode'>> = {},
+): RunSummary {
+  return {
+    day: options.day,
+    live: options.live,
+    ok: exitCode === 0,
+    exitCode,
+    ...emptyBags(),
+    ...extra,
+  };
+}
+
 /**
  * Run one UTC day's gifts.
  *
  * @param config - Loaded operator config.
  * @param options - Live vs dry-run and the day key.
  * @param deps - Injected clients (tests).
- * @returns Process exit code.
+ * @returns Process exit code and a structured summary for Telegram notify.
  */
 export async function runDay(
   config: SpendConfig,
@@ -58,7 +79,7 @@ export async function runDay(
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
     log('spend.done', { ok: false, reason: 'bad_lndhub_uri' });
-    return { exitCode: 2 };
+    return { exitCode: 2, summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }) };
   }
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
   const state = deps?.state ?? new DayState(config.stateDir, options.day);
@@ -67,7 +88,7 @@ export async function runDay(
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
   if (!lock.tryAcquire()) {
     log('spend.done', { ok: false, reason: 'locked' });
-    return { exitCode: 3 };
+    return { exitCode: 3, summary: makeSummary(options, 3, { reason: 'locked' }) };
   }
 
   try {
@@ -86,13 +107,36 @@ async function runDayLocked(
   now: () => Date,
   btcUsdSpot: (() => Promise<number | null>) | undefined,
 ): Promise<RunResult> {
+  const paid: PayoutLine[] = [];
+  const skipped: PayoutLine[] = [];
+  const failed: PayoutLine[] = [];
+  const uncertain: PayoutLine[] = [];
+  const dryRun: PayoutLine[] = [];
+  let btcUsd: number | undefined;
+
+  const finish = (
+    exitCode: number,
+    extra: Partial<Omit<RunSummary, 'day' | 'live' | 'ok' | 'exitCode' | 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'>> = {},
+  ): RunResult => ({
+    exitCode,
+    summary: makeSummary(options, exitCode, {
+      paid,
+      skipped,
+      failed,
+      uncertain,
+      dryRun,
+      ...(btcUsd !== undefined ? { btcUsd } : {}),
+      ...extra,
+    }),
+  });
+
   let rows: StateRow[];
   try {
     rows = state.load();
   } catch (err) {
     if (err instanceof CorruptStateError) {
       log('spend.done', { ok: false, reason: 'corrupt_state' });
-      return { exitCode: 4 };
+      return finish(4, { reason: 'corrupt_state' });
     }
     throw err;
   }
@@ -103,15 +147,16 @@ async function runDayLocked(
     if (recipientUncertain || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       log('spend.done', { ok: false, reason: 'halted' });
       state.markFinished();
-      return { exitCode: 4 };
+      return finish(4, { reason: 'halted' });
     }
   }
 
   const rate = await (btcUsdSpot ?? fetchBtcUsdSpot)();
   if (rate === null) {
     log('spend.done', { ok: false, reason: 'spot_unreadable' });
-    return { exitCode: 3 };
+    return finish(3, { reason: 'spot_unreadable' });
   }
+  btcUsd = rate;
 
   const satsByAddress = new Map<string, number>();
   for (const recipient of config.recipients) {
@@ -124,7 +169,8 @@ async function runDayLocked(
         amountUsd: recipient.amountUsd,
         btcUsd: rate,
       });
-      return { exitCode: 3 };
+      failed.push({ address: recipient.address, amountUsd: recipient.amountUsd, reason: 'usd_to_sats' });
+      return finish(3, { reason: 'usd_to_sats' });
     }
     satsByAddress.set(recipient.address, sats);
   }
@@ -152,17 +198,17 @@ async function runDayLocked(
       const bal = await lndhub.balance(token);
       if (bal === null) {
         log('spend.done', { ok: false, reason: 'balance_unreadable' });
-        return { exitCode: 3 };
+        return finish(3, { reason: 'balance_unreadable' });
       }
       available = bal;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'lndhub';
       log('spend.done', { ok: false, reason: 'lndhub_preflight', error: message });
-      return { exitCode: 3 };
+      return finish(3, { reason: 'lndhub_preflight' });
     }
     if (needed > 0 && needed + feeMargin(available) > available) {
       log('spend.done', { ok: false, reason: 'insufficient_balance', needed, available });
-      return { exitCode: 3 };
+      return finish(3, { reason: 'insufficient_balance', needed, available });
     }
   }
 
@@ -185,19 +231,22 @@ async function runDayLocked(
   };
 
   for (const recipient of config.recipients) {
+    const amountSats = satsByAddress.get(recipient.address);
+    if (amountSats === undefined) {
+      throw new Error('satsByAddress incomplete');
+    }
+    const lineBase = { address: recipient.address, amountSats, amountUsd: recipient.amountUsd };
+
     const prior = dayBlock(rows, recipient.address);
     if (prior !== undefined) {
       log('spend.skip', { address: recipient.address, reason: prior });
+      skipped.push({ ...lineBase, reason: prior });
       continue;
     }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
+      skipped.push({ ...lineBase, reason: 'halted' });
       continue;
-    }
-
-    const amountSats = satsByAddress.get(recipient.address);
-    if (amountSats === undefined) {
-      throw new Error('satsByAddress incomplete');
     }
 
     const comment = recipient.comment ?? config.comment;
@@ -207,6 +256,7 @@ async function runDayLocked(
     } catch (err) {
       if (err instanceof GiftsApiError && err.status === 409) {
         log('spend.skip', { address: recipient.address, reason: 'already_paid' });
+        skipped.push({ ...lineBase, reason: 'already_paid' });
         const claimed: StateRow = {
           ts: now().toISOString(),
           address: recipient.address,
@@ -231,6 +281,11 @@ async function runDayLocked(
         amountSats,
         error: err instanceof Error ? err.message : 'invoice',
       });
+      if (rowStatus === 'failed') {
+        failed.push(lineBase);
+      } else {
+        uncertain.push(lineBase);
+      }
       if (!options.live) {
         continue;
       }
@@ -258,6 +313,7 @@ async function runDayLocked(
         amountSats,
         reason: 'amount_mismatch',
       });
+      uncertain.push({ ...lineBase, reason: 'amount_mismatch' });
       if (!options.live) {
         continue;
       }
@@ -291,6 +347,7 @@ async function runDayLocked(
       };
       state.append(dry);
       rows.push(dry);
+      dryRun.push(lineBase);
       continue;
     }
 
@@ -306,8 +363,8 @@ async function runDayLocked(
 
     let preimage: string | null;
     try {
-      const paid = await lndhub.payInvoice(token, invoice.pr);
-      preimage = paid.preimage;
+      const paidInvoice = await lndhub.payInvoice(token, invoice.pr);
+      preimage = paidInvoice.preimage;
     } catch (err) {
       sawProblem = true;
       stopLive = true;
@@ -319,6 +376,7 @@ async function runDayLocked(
         amountSats,
         error: err instanceof Error ? err.message : 'pay',
       });
+      uncertain.push(lineBase);
       continue;
     }
 
@@ -334,6 +392,7 @@ async function runDayLocked(
         amountSats,
         reason: 'preimage',
       });
+      uncertain.push({ ...lineBase, reason: 'preimage' });
       const preFail: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
@@ -369,6 +428,7 @@ async function runDayLocked(
         amountSats,
         error: err instanceof Error ? err.message : 'proof',
       });
+      uncertain.push(lineBase);
       continue;
     }
 
@@ -378,6 +438,7 @@ async function runDayLocked(
       paymentHash: invoice.paymentHash,
       amountSats,
     });
+    paid.push(lineBase);
     const paidRow: StateRow = {
       ts: now().toISOString(),
       address: recipient.address,
@@ -395,5 +456,5 @@ async function runDayLocked(
   }
 
   log('spend.done', { ok: !sawProblem });
-  return { exitCode: sawProblem ? 4 : 0 };
+  return finish(sawProblem ? 4 : 0);
 }

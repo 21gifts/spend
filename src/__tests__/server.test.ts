@@ -238,6 +238,128 @@ describe('createServer', () => {
     await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
   });
+
+  it('fails closed on boot when only one Telegram env is set', () => {
+    expect(() =>
+      createServer({
+        env: { ...env, TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx' },
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      }),
+    ).toThrow(/TELEGRAM_CHAT_ID/);
+  });
+
+  it('scheduler notifies Telegram after payout when configured', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const telegramCalls: string[] = [];
+    const runDay = vi.fn(async () => ({
+      exitCode: 0,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: true,
+        exitCode: 0,
+        paid: [{ address: 'alice@walletofsatoshi.com', amountSats: 1000, amountUsd: 1 }],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const app = createServer({
+      env: {
+        ...env,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url) => {
+        const path = String(url);
+        if (path.includes('api.telegram.org')) {
+          telegramCalls.push(path);
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    const handle = app.startScheduler();
+    await vi.waitFor(() => {
+      expect(telegramCalls.length).toBe(1);
+    });
+    expect(telegramCalls[0]).toContain('api.telegram.org/bot');
+    const warnPayload = JSON.stringify(warn.mock.calls);
+    expect(warnPayload).toContain('spend.telegram');
+    expect(warnPayload).not.toContain('123456:AA-testtoken_notreal_xxxxxx');
+    handle.stop();
+    warn.mockRestore();
+  });
+
+  it('catch-up does not notify Telegram on a pure all-skip success', async () => {
+    const telegramCalls: string[] = [];
+    const runDay = vi.fn(async () => ({
+      exitCode: 0,
+      summary: {
+        day: '2026-08-27',
+        live: true,
+        ok: true,
+        exitCode: 0,
+        paid: [],
+        skipped: [{ address: 'alice@walletofsatoshi.com', reason: 'paid' }],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const app = createServer({
+      env: {
+        ...env,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      runDay,
+      fetchImpl: async (url) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramCalls.push(String(url));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 0 });
+    expect(telegramCalls).toEqual([]);
+  });
+
+  it('runPayout notifies with a minimal summary when runDay omits summary', async () => {
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env: {
+        ...env,
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      chat_id: '-1001234567890',
+      text: expect.stringContaining('source=scheduler'),
+      disable_web_page_preview: true,
+    });
+  });
 });
 
 function cookieFrom(res: Response): string {
