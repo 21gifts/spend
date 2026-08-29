@@ -51,10 +51,10 @@ jobs:
             exit 1
           fi
           case "$TELEGRAM_BOT_TOKEN" in
-            *$'\n'*|*$'\r'*|*' '*) echo "ERR: telegram token contains whitespace" >&2; exit 1 ;;
+            *[[:space:]]*) echo "ERR: telegram token contains whitespace" >&2; exit 1 ;;
           esac
           case "$TELEGRAM_CHAT_ID" in
-            *$'\n'*|*$'\r'*|*' '*) echo "ERR: telegram chat id contains whitespace" >&2; exit 1 ;;
+            *[[:space:]]*) echo "ERR: telegram chat id contains whitespace" >&2; exit 1 ;;
           esac
           test -f "$pub"
           umask 077
@@ -69,7 +69,7 @@ jobs:
           ciphertext=$(python3 -c 'import sys,base64; sys.stdout.write(base64.b64encode(sys.stdin.buffer.read()).decode())' <"$cipher")
           [ -n "$ciphertext" ]
           python3 - "$repo" "$ciphertext" <<'PY'
-import json, os, subprocess, sys
+import json, subprocess, sys
 repo, ciphertext = sys.argv[1], sys.argv[2]
 payload = {
     "event_type": "install-21gifts-spend-telegram",
