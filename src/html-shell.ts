@@ -47,7 +47,6 @@ h2{font-size:0.85rem;font-weight:600;letter-spacing:0.06em;text-transform:upperc
 .muted{color:rgba(255,255,255,0.55);margin:0.5rem 0}
 .error{color:#ff6b6b;margin:0 0 0.75rem}
 form.card p,.card > p{margin:0}
-label:not(.field){display:block;font-size:0.8rem;color:rgba(255,255,255,0.7);margin:0 0 0.35rem}
 label.field{display:flex;flex-direction:column;gap:0.5rem;margin:0}
 label.field > span{font-size:0.75rem;letter-spacing:0.04em;color:rgba(255,255,255,0.55);line-height:1.2}
 input[type=text],input[type=password]{
