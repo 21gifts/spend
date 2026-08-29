@@ -12,6 +12,7 @@ const TRASH_SVG =
  *
  * @param opts.error - Optional error message shown above the form
  * @param opts.disabled - When true, show the unconfigured notice instead of the form
+ * @returns Complete HTML document.
  */
 export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {}): string {
   const error =
@@ -42,12 +43,12 @@ function renderRow(row: Recipient): string {
               <span class="addr" title="${full}">${display}</span>
               <form class="inline" method="post" action="/recipients/update">
                 <input type="hidden" name="address" value="${full}">
-                <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD">
-                <button class="icon" type="submit" aria-label="Update" title="Update">${PENCIL_SVG}</button>
+                <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD amount for ${full}">
+                <button class="icon" type="submit" aria-label="Update ${full}" title="Update">${PENCIL_SVG}</button>
               </form>
               <form class="inline" method="post" action="/recipients/delete">
                 <input type="hidden" name="address" value="${full}">
-                <button class="icon danger" type="submit" aria-label="Delete" title="Delete">${TRASH_SVG}</button>
+                <button class="icon danger" type="submit" aria-label="Delete ${full}" title="Delete">${TRASH_SVG}</button>
               </form>
             </li>`;
 }
@@ -57,6 +58,7 @@ function renderRow(row: Recipient): string {
  *
  * @param opts.recipients - Current recipient list
  * @param opts.error - Optional error message shown above the roster
+ * @returns Complete HTML document.
  */
 export function renderRecipientsHtml(opts: {
   recipients: Recipient[];

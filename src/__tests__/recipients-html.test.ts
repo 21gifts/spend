@@ -47,7 +47,8 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('value="alice@walletofsatoshi.com"');
     expect(html).not.toContain('>Update<');
     expect(html).not.toContain('>Delete<');
-    expect(html).toContain('aria-label="Update"');
-    expect(html).toContain('aria-label="Delete"');
+    expect(html).toContain('aria-label="Update alice@walletofsatoshi.com"');
+    expect(html).toContain('aria-label="Delete alice@walletofsatoshi.com"');
+    expect(html).toContain('aria-label="USD amount for alice@walletofsatoshi.com"');
   });
 });
