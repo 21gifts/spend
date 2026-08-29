@@ -1,4 +1,5 @@
 import { bitcoinQrSvg } from './qr';
+import { renderDocument, slot } from './html-shell';
 
 /** Values shown on GET `/`. */
 export interface DashboardData {
@@ -55,14 +56,6 @@ export async function loadDashboard(deps: {
   return { sats, usd, lightningAddress: deps.lightningAddress };
 }
 
-function slot(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
 function formatSats(sats: number | null): string {
   return sats === null ? 'unavailable' : `${sats} sats`;
 }
@@ -78,30 +71,21 @@ function formatUsd(usd: number | null): string {
  * @returns HTML document.
  */
 export function renderDashboardHtml(data: DashboardData): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>21.gifts spend</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}
-dt{font-weight:600;margin-top:1.25rem}
-dd{margin:0.35rem 0 0}
-.addr{word-break:break-all;font-family:ui-monospace,monospace}
-.qr svg{width:12rem;height:12rem;margin-top:0.75rem}
-</style>
-</head>
-<body>
-<dl>
-<dt>Balance</dt>
-<dd>${slot(formatSats(data.sats))}</dd>
-<dd>${slot(formatUsd(data.usd))}</dd>
-<dt>Lightning address</dt>
-<dd class="addr">${data.lightningAddress === null ? 'unavailable' : slot(data.lightningAddress)}</dd>
-</dl>
-${data.lightningAddress === null ? '' : `<div class="qr">${bitcoinQrSvg(lightningQrPayload(data.lightningAddress))}</div>`}
-</body>
-</html>
-`;
+  const addressHtml =
+    data.lightningAddress === null ? 'unavailable' : slot(data.lightningAddress);
+  const qr =
+    data.lightningAddress === null
+      ? ''
+      : `<div class="qr">${bitcoinQrSvg(lightningQrPayload(data.lightningAddress))}</div>`;
+  const body = `<div class="wrap">
+  <p class="brand">21.gifts</p>
+  <h1>Spend</h1>
+  <p class="kicker">Balance</p>
+  <p class="balance-sats">${slot(formatSats(data.sats))}</p>
+  <p class="balance-usd">${slot(formatUsd(data.usd))}</p>
+  <p class="kicker">Lightning address</p>
+  <p class="addr">${addressHtml}</p>
+  ${qr}
+</div>`;
+  return renderDocument({ title: '21.gifts spend', body });
 }

@@ -21,7 +21,7 @@ test('recipients-one', async ({ page }) => {
   await page.goto('/login');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
-  await expect(page.locator('body')).toContainText('alice@walletofsatoshi.com');
+  await expect(page.locator('body')).toContainText('alice@w...');
   await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
 });
 
@@ -29,7 +29,7 @@ test('recipients-empty', async ({ page }) => {
   await page.goto('/login');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
-  await page.locator('tr:has-text("alice@walletofsatoshi.com") form[action="/recipients/delete"] button').click();
+  await page.locator('li.row:has(input[name="address"][value="alice@walletofsatoshi.com"]) form[action="/recipients/delete"] button').click();
   await expect(page.locator('body')).toContainText('No recipients');
   await expect(page).toHaveScreenshot('recipients-empty.png', SHOT);
 });

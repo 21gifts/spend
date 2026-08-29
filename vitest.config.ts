@@ -8,7 +8,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reportsDirectory: './coverage',
-      include: ['src/recipients-store.ts', 'src/session.ts', 'src/recipients-html.ts'],
+      include: ['src/recipients-store.ts', 'src/session.ts', 'src/recipients-html.ts', 'src/html-shell.ts'],
       exclude: ['src/__tests__/**'],
       thresholds: {
         statements: 100,

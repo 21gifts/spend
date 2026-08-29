@@ -29,11 +29,25 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('action="/logout"');
     expect(html).toContain('Address already listed');
     expect(html).not.toContain('href="/"');
+    expect(html).toMatch(/class="addr"[^>]*>a@b\.com</);
     const escaped = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com"><img>', amountUsd: 1 }],
     });
     expect(escaped).toContain('&quot;');
     expect(escaped).toContain('&lt;img&gt;');
     expect(renderRecipientsHtml({ recipients: [] })).toContain('No recipients');
+  });
+
+  it('abbreviates Wallet of Satoshi in .addr and uses icon buttons', () => {
+    const html = renderRecipientsHtml({
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    });
+    expect(html).toMatch(/class="addr"[^>]*>alice@w\.\.\.</);
+    expect(html).toContain('title="alice@walletofsatoshi.com"');
+    expect(html).toContain('value="alice@walletofsatoshi.com"');
+    expect(html).not.toContain('>Update<');
+    expect(html).not.toContain('>Delete<');
+    expect(html).toContain('aria-label="Update"');
+    expect(html).toContain('aria-label="Delete"');
   });
 });

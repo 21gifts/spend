@@ -19,6 +19,7 @@ The dashboard at `GET /` shows:
 `GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). The public page does not link to the editor.
 
 The recipient editor is at `GET /login` (password) then `GET /recipients`. Set `SPEND_DASHBOARD_PASSWORD`. When it is unset or blank, `/login` and `/recipients` return 503 and payouts still run. Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`).
+Wallet of Satoshi addresses render as `local@w...` in the editor; mutations still use the full address.
 
 Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_FILE` (process default `./recipients.json`; image `ENV` `/app/recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing. `POST /login`, `POST /logout`, and list mutations require a same-origin `Origin` header (host must match `Host`).
 

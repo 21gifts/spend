@@ -68,6 +68,9 @@ describe('renderDashboardHtml', () => {
     expect(html).toContain('9643e3@lightning.space');
     expect(html).toContain('<svg');
     expect(html).not.toContain('Deposit address');
+    expect(html).not.toContain('/login');
+    expect(html).not.toContain('/recipients');
+    expect(html).not.toContain('Log in');
   });
 
   it('shows unavailable when values are null', () => {
