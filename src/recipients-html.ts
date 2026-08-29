@@ -65,9 +65,12 @@ function renderLoginPanel(error?: string): string {
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   return `<h2>Log in</h2>
   ${errorHtml}
-  <form class="card add-grid" method="post" action="/">
-    <p class="grow"><label>Password<br><input name="password" type="password" autocomplete="current-password"></label></p>
-    <p><button class="primary" type="submit">Log in</button></p>
+  <form class="card login-form" method="post" action="/">
+    <label class="field grow">
+      <span>Password</span>
+      <input name="password" type="password" autocomplete="current-password">
+    </label>
+    <button class="primary" type="submit">Log in</button>
   </form>`;
 }
 
@@ -94,9 +97,15 @@ function renderEditorPanel(recipients: Recipient[], error?: string): string {
   ${roster}
   <h2>Add recipient</h2>
   <form class="card add-grid" method="post" action="/recipients/add">
-    <p class="grow"><label>Address<br><input name="address" type="text" autocomplete="off"></label></p>
-    <p class="usd"><label>USD<br><input name="amountUsd" type="text" inputmode="decimal"></label></p>
-    <p><button class="primary" type="submit">Add</button></p>
+    <label class="field grow">
+      <span>Address</span>
+      <input name="address" type="text" autocomplete="off">
+    </label>
+    <label class="field usd">
+      <span>USD</span>
+      <input name="amountUsd" type="text" inputmode="decimal">
+    </label>
+    <button class="primary" type="submit">Add</button>
   </form>`;
 }
 

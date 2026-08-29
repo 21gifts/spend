@@ -46,14 +46,18 @@ h2{font-size:0.85rem;font-weight:600;letter-spacing:0.06em;text-transform:upperc
 }
 .muted{color:rgba(255,255,255,0.55);margin:0.5rem 0}
 .error{color:#ff6b6b;margin:0 0 0.75rem}
-label{display:block;font-size:0.8rem;color:rgba(255,255,255,0.7);margin:0 0 0.35rem}
+form.card p,.card > p{margin:0}
+label:not(.field){display:block;font-size:0.8rem;color:rgba(255,255,255,0.7);margin:0 0 0.35rem}
+label.field{display:flex;flex-direction:column;gap:0.5rem;margin:0}
+label.field > span{font-size:0.75rem;letter-spacing:0.04em;color:rgba(255,255,255,0.55);line-height:1.2}
 input[type=text],input[type=password]{
   width:100%;box-sizing:border-box;
   background:#141218;color:#f5f5f4;
   border:1px solid rgba(255,255,255,0.14);
-  border-radius:10px;padding:0.55rem 0.7rem;font:inherit
+  border-radius:10px;padding:0.55rem 0.7rem;font:inherit;
+  height:2.75rem
 }
-input[type=text]:focus,input[type=password]:focus{outline:2px solid #f7931a;outline-offset:1px;border-color:transparent}
+input[type=text]:focus,input[type=password]:focus{outline:none;border-color:#f7931a;box-shadow:0 0 0 1px #f7931a}
 button.primary{
   background:#f7931a;color:#0a090c;border:0;border-radius:999px;
   font:inherit;font-weight:600;padding:0.55rem 1.1rem;cursor:pointer
@@ -83,7 +87,8 @@ form.inline{display:flex;align-items:center;gap:0.35rem;margin:0}
   width:4.75rem;text-align:right;
   background:#141218;color:#f5f5f4;
   border:1px solid rgba(255,255,255,0.14);
-  border-radius:10px;padding:0.4rem 0.5rem;font:inherit
+  border-radius:10px;padding:0.4rem 0.5rem;font:inherit;
+  height:auto
 }
 button.icon{
   display:inline-flex;align-items:center;justify-content:center;
@@ -101,9 +106,10 @@ button.icon svg{display:block}
 .balance-sats{font-size:2rem;font-weight:600;letter-spacing:-0.03em;margin:0.2rem 0 0}
 .balance-usd{color:rgba(255,255,255,0.6);margin:0.25rem 0 1.25rem}
 .kicker{font-size:0.75rem;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin:0}
-.add-grid{display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap}
-.add-grid .grow{flex:1 1 12rem}
+.login-form,.add-grid{display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap}
+.login-form .grow,.add-grid .grow{flex:1 1 12rem;min-width:0}
 .add-grid .usd{flex:0 0 6.5rem}
+.login-form button.primary,.add-grid button.primary{box-sizing:border-box;height:2.75rem;flex:0 0 auto;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}`;
 
 /**

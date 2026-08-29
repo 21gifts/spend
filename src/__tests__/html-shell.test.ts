@@ -63,10 +63,27 @@ describe('SHELL_STYLE', () => {
     expect(SHELL_STYLE).toContain('#f5f5f4');
   });
 
+  it('defines login-form and field label tokens', () => {
+    expect(SHELL_STYLE).toContain('.login-form');
+    expect(SHELL_STYLE).toContain('label.field');
+  });
+
+  it('does not use outline-offset for focus rings', () => {
+    expect(SHELL_STYLE).not.toContain('outline-offset');
+  });
+
   it('ellipsizes only roster-row addresses', () => {
     const row = /\.row \.addr\{([^}]+)\}/.exec(SHELL_STYLE)?.[1] ?? '';
     expect(row).toContain('text-overflow:ellipsis');
     const withoutRow = SHELL_STYLE.replace(/\.row \.addr\{[^}]+\}/, '');
     expect(withoutRow).not.toMatch(/\.addr\{[^}]*text-overflow:ellipsis/);
+  });
+
+  it('sizes login/add primary buttons with border-box', () => {
+    expect(SHELL_STYLE).toContain('.login-form button.primary');
+    const start = SHELL_STYLE.indexOf('.login-form button.primary');
+    const end = SHELL_STYLE.indexOf('}', start);
+    const rule = SHELL_STYLE.slice(start, end);
+    expect(rule).toContain('box-sizing:border-box');
   });
 });

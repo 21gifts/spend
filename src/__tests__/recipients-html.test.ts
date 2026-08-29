@@ -8,6 +8,11 @@ describe('renderLoginHtml', () => {
     expect(form).toContain('action="/"');
     expect(form).toContain('name="password"');
     expect(form).toContain('Log in');
+    expect(form).toContain('class="card login-form"');
+    expect(form).toContain('<span>Password</span>');
+    const loginBody = form.slice(form.indexOf('<body>'));
+    expect(loginBody).not.toContain('<br>');
+    expect(loginBody).not.toContain('add-grid');
     expect(renderLoginHtml({ error: 'Invalid password' })).toContain('Invalid password');
     expect(renderLoginHtml({ disabled: true })).toContain('Recipient editor is not configured');
     expect(renderLoginHtml({ disabled: true })).not.toContain('name="password"');
@@ -35,7 +40,13 @@ describe('renderRecipientsHtml', () => {
     });
     expect(escaped).toContain('&quot;');
     expect(escaped).toContain('&lt;img&gt;');
-    expect(renderRecipientsHtml({ recipients: [] })).toContain('No recipients');
+    const empty = renderRecipientsHtml({ recipients: [] });
+    expect(empty).toContain('No recipients');
+    expect(empty).toContain('class="card add-grid"');
+    expect(empty).toContain('<span>Address</span>');
+    expect(empty).toContain('<span>USD</span>');
+    const addForm = empty.slice(empty.indexOf('action="/recipients/add"'));
+    expect(addForm).not.toContain('<br>');
   });
 
   it('abbreviates Wallet of Satoshi in .addr and uses icon buttons', () => {
