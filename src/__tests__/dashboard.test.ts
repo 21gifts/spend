@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { lightningQrPayload, loadDashboard, renderDashboardHtml } from '../dashboard';
+import { lightningQrPayload, loadDashboard } from '../dashboard';
+import { renderDashboardHtml } from '../recipients-html';
 
 describe('lightningQrPayload', () => {
   it('prefixes lightning:', () => {
@@ -97,5 +98,38 @@ describe('renderDashboardHtml', () => {
     });
     expect(html).toContain('&lt;script&gt;');
     expect(html).not.toContain('<script>alert(1)</script>');
+  });
+
+  it('with login panel includes the form and still shows sats/address', () => {
+    const html = renderDashboardHtml(
+      {
+        sats: 3803,
+        usd: 3.0,
+        lightningAddress: '9643e3@lightning.space',
+      },
+      { kind: 'login' },
+    );
+    expect(html).toContain('name="password"');
+    expect(html).toContain('Log in');
+    expect(html).toContain('action="/"');
+    expect(html).toContain('3803 sats');
+    expect(html).toContain('9643e3@lightning.space');
+  });
+
+  it('with editor panel includes Log out, abbreviated WoS, and dashboard sats', () => {
+    const html = renderDashboardHtml(
+      {
+        sats: 3803,
+        usd: 3.0,
+        lightningAddress: '9643e3@lightning.space',
+      },
+      {
+        kind: 'editor',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      },
+    );
+    expect(html).toContain('Log out');
+    expect(html).toContain('alice@w...');
+    expect(html).toContain('3803 sats');
   });
 });

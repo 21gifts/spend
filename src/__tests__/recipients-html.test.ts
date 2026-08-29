@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { renderLoginHtml, renderRecipientsHtml } from '../recipients-html';
+import { renderLoginHtml, renderRecipientsHtml, renderUnconfiguredHtml } from '../recipients-html';
 
 describe('renderLoginHtml', () => {
   it('renders the form, an error, and the disabled state', () => {
     const form = renderLoginHtml({});
-    expect(form).toContain('<title>21.gifts spend login</title>');
-    expect(form).toContain('action="/login"');
+    expect(form).toContain('<title>21.gifts spend</title>');
+    expect(form).toContain('action="/"');
     expect(form).toContain('name="password"');
     expect(form).toContain('Log in');
     expect(renderLoginHtml({ error: 'Invalid password' })).toContain('Invalid password');
@@ -20,7 +20,7 @@ describe('renderRecipientsHtml', () => {
       recipients: [{ address: 'a@b.com', amountUsd: 1.5 }],
       error: 'Address already listed',
     });
-    expect(html).toContain('<title>21.gifts spend recipients</title>');
+    expect(html).toContain('<title>21.gifts spend</title>');
     expect(html).toContain('a@b.com');
     expect(html).toContain('value="1.5"');
     expect(html).toContain('action="/recipients/update"');
@@ -50,5 +50,20 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('aria-label="Update alice@walletofsatoshi.com"');
     expect(html).toContain('aria-label="Delete alice@walletofsatoshi.com"');
     expect(html).toContain('aria-label="USD amount for alice@walletofsatoshi.com"');
+  });
+});
+
+describe('renderUnconfiguredHtml', () => {
+  it('shows the muted notice with a loaded spend block', () => {
+    const html = renderUnconfiguredHtml({
+      sats: 10,
+      usd: 1,
+      lightningAddress: 'x@y.com',
+    });
+    expect(html).toContain('<title>21.gifts spend</title>');
+    expect(html).toContain('Recipient editor is not configured');
+    expect(html).toContain('10 sats');
+    expect(html).toContain('x@y.com');
+    expect(html).not.toContain('name="password"');
   });
 });

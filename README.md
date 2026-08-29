@@ -10,15 +10,15 @@ Recipient amounts are **USD**. Each payout (midnight, catch-up, CLI) reads the l
 
 The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`): already-`paid` JSONL rows are skipped, so a recipient added after midnight can still be paid on the next process start.
 
-The dashboard at `GET /` shows:
+`GET /` is the only UI page. It always shows the Spend block:
 
 - current LNDHub balance in sats
 - the same balance in USD (Coinbase BTC-USD spot)
 - the configured **Lightning Address** (`SPEND_LIGHTNING_ADDRESS`) and a `lightning:` QR
 
-`GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). The public page does not link to the editor.
+Under that: when `SPEND_DASHBOARD_PASSWORD` is set and there is no session, a compact login form (`POST /`, still accepted at `POST /login`); when the session is valid, the recipient roster plus add and Log out; when the password is unset, the dashboard only (no login form).
 
-The recipient editor is at `GET /login` (password) then `GET /recipients`. Set `SPEND_DASHBOARD_PASSWORD`. When it is unset or blank, `/login` and `/recipients` return 503 and payouts still run. Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`).
+`GET /login` and `GET /recipients` redirect to `/` when the editor is configured. When the password is unset or blank, those paths return 503 (Spend block plus a muted notice) and payouts still run. `GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`); after login, logout, and mutations the response redirects to `/`.
 
 Wallet of Satoshi addresses render as `local@w...` in the editor; mutations still use the full address. Visual snapshots (`bun run e2e:visual`) are Linux/Chromium; when login or editor layout changes, replace `e2e/visual.spec.ts-snapshots/` from the CI actuals.
 

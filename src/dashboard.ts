@@ -1,6 +1,3 @@
-import { bitcoinQrSvg } from './qr';
-import { renderDocument, slot } from './html-shell';
-
 /** Values shown on GET `/`. */
 export interface DashboardData {
   sats: number | null;
@@ -54,38 +51,4 @@ export async function loadDashboard(deps: {
     }
   }
   return { sats, usd, lightningAddress: deps.lightningAddress };
-}
-
-function formatSats(sats: number | null): string {
-  return sats === null ? 'unavailable' : `${sats} sats`;
-}
-
-function formatUsd(usd: number | null): string {
-  return usd === null ? 'unavailable' : `${usd.toFixed(2)} USD`;
-}
-
-/**
- * Server-rendered dashboard: balance and Lightning Address + QR.
- *
- * @param data - Current values.
- * @returns HTML document.
- */
-export function renderDashboardHtml(data: DashboardData): string {
-  const addressHtml =
-    data.lightningAddress === null ? 'unavailable' : slot(data.lightningAddress);
-  const qr =
-    data.lightningAddress === null
-      ? ''
-      : `<div class="qr">${bitcoinQrSvg(lightningQrPayload(data.lightningAddress))}</div>`;
-  const body = `<div class="wrap">
-  <p class="brand">21.gifts</p>
-  <h1>Spend</h1>
-  <p class="kicker">Balance</p>
-  <p class="balance-sats">${slot(formatSats(data.sats))}</p>
-  <p class="balance-usd">${slot(formatUsd(data.usd))}</p>
-  <p class="kicker">Lightning address</p>
-  <p class="addr">${addressHtml}</p>
-  ${qr}
-</div>`;
-  return renderDocument({ title: '21.gifts spend', body });
 }
