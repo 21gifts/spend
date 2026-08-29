@@ -33,6 +33,13 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - name: Playwright UI
         run: bun run e2e
+      - name: Install 21gifts/api deps
+        working-directory: api-src
+        run: bun install --frozen-lockfile
+      - name: Invoice path against 21gifts/api
+        env:
+          GIFTS_API_DIR: ${{ github.workspace }}/api-src
+        run: bun run test:with-api
       - name: Playwright visual
         run: bun run e2e:visual
       - name: Upload visual actuals
@@ -41,10 +48,3 @@ jobs:
         with:
           name: visual-actuals
           path: test-results/**/*-actual.png
-      - name: Install 21gifts/api deps
-        working-directory: api-src
-        run: bun install --frozen-lockfile
-      - name: Invoice path against 21gifts/api
-        env:
-          GIFTS_API_DIR: ${{ github.workspace }}/api-src
-        run: bun run test:with-api
