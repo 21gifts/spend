@@ -42,9 +42,10 @@ jobs:
         run: bun run test:with-api
       - name: Playwright visual
         id: visual
+        if: ${{ !cancelled() }}
         run: bun run e2e:visual
       - name: Upload visual actuals
-        if: failure() && steps.visual.outcome == 'failure'
+        if: ${{ !cancelled() && steps.visual.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: visual-actuals
