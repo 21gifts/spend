@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test.skip(process.platform !== 'linux', 'visual baselines are linux/chromium');
 
-const SHOT = { animations: 'disabled' as const, caret: 'hide' as const };
+const SHOT = { animations: 'disabled' as const, caret: 'hide' as const, fullPage: true as const };
 
 test('login', async ({ page }) => {
   await page.goto('/');
