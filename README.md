@@ -20,7 +20,7 @@ Under that: when `SPEND_DASHBOARD_PASSWORD` is set and there is no session, a co
 
 `GET /login` and `GET /recipients` redirect to `/` when the editor is configured. When the password is unset or blank, those paths return 503 (Spend block plus a muted notice) and payouts still run. `GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`); after login, logout, and mutations the response redirects to `/`.
 
-Wallet of Satoshi addresses render as `local@w...` in the editor; mutations still use the full address. Visual snapshots (`bun run e2e:visual`) are Linux/Chromium; when login or editor layout changes, replace `e2e/visual.spec.ts-snapshots/` from the CI actuals.
+Wallet of Satoshi addresses render as `local@w...` in the editor; mutations still use the full address. Visual snapshots (`bun run e2e:visual`) are Linux/Chromium against a local mock wallet (sats, USD, QR); when login or editor layout changes, replace `e2e/visual.spec.ts-snapshots/` from the CI actuals.
 
 Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_FILE` (process default `./recipients.json`; image `ENV` `/app/recipients.tondo.json`) is copied there if missing and is never overwritten afterwards. Midnight, catch-up, and the CLI reload that live file each run. An empty list after deletes pays nothing. `POST /` (login; alias `POST /login`), `POST /logout`, and list mutations require a same-origin `Origin` header (host must match `Host`).
 

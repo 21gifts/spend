@@ -6,6 +6,9 @@ const SHOT = { animations: 'disabled' as const, caret: 'hide' as const };
 
 test('login', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('body')).toContainText('500000 sats');
+  await expect(page.locator('body')).toContainText('387.50 USD');
+  await expect(page.locator('body')).toContainText('9643e3@lightning.space');
   await expect(page).toHaveScreenshot('login.png', SHOT);
 });
 
@@ -24,6 +27,7 @@ test('recipients-one', async ({ page }) => {
   await page.click('button[type=submit]');
   await expect(page).toHaveURL('/');
   await expect(page.locator('body')).toContainText('alice@w...');
+  await expect(page.locator('body')).toContainText('500000 sats');
   await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
 });
 
