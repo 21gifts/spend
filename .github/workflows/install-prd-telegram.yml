@@ -29,6 +29,7 @@ jobs:
       - name: Encrypt and notify infrastructure
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          DISPATCH_REPO: ${{ secrets.DISPATCH_REPO }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.SPEND_TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.SPEND_TELEGRAM_CHAT_ID }}
         run: |
@@ -40,12 +41,16 @@ jobs:
               exit 2
               ;;
           esac
-          repo="${{ secrets.DISPATCH_REPO }}"
+          repo="${DISPATCH_REPO:-}"
           pub=".github/telegram-install-transport.pub"
           if [ -z "${GH_TOKEN:-}" ] || [ -z "${repo:-}" ]; then
             echo "ERR: DISPATCH_TOKEN or DISPATCH_REPO unset" >&2
             exit 1
           fi
+          case "$repo" in
+            [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;;
+            *) echo "ERR: DISPATCH_REPO must be owner/repo" >&2; exit 1 ;;
+          esac
           if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
             echo "ERR: SPEND_TELEGRAM_BOT_TOKEN or SPEND_TELEGRAM_CHAT_ID unset" >&2
             exit 1
