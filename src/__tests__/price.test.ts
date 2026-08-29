@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { fetchBtcUsdSpot, usdToSats } from '../price';
+import { DEFAULT_BTC_USD_SPOT_URL, btcUsdSpotUrl, fetchBtcUsdSpot, usdToSats } from '../price';
+
+describe('btcUsdSpotUrl', () => {
+  it('defaults to Coinbase and honours BTC_USD_SPOT_URL', () => {
+    expect(btcUsdSpotUrl({})).toBe(DEFAULT_BTC_USD_SPOT_URL);
+    expect(btcUsdSpotUrl({ BTC_USD_SPOT_URL: '' })).toBe(DEFAULT_BTC_USD_SPOT_URL);
+    expect(btcUsdSpotUrl({ BTC_USD_SPOT_URL: ' http://127.0.0.1:3998/v2/prices/BTC-USD/spot ' })).toBe(
+      'http://127.0.0.1:3998/v2/prices/BTC-USD/spot',
+    );
+  });
+});
 
 describe('fetchBtcUsdSpot', () => {
   it('parses Coinbase data.amount', async () => {

@@ -33,8 +33,6 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - name: Playwright UI
         run: bun run e2e
-      - name: Playwright visual
-        run: bun run e2e:visual
       - name: Install 21gifts/api deps
         working-directory: api-src
         run: bun install --frozen-lockfile
@@ -42,3 +40,14 @@ jobs:
         env:
           GIFTS_API_DIR: ${{ github.workspace }}/api-src
         run: bun run test:with-api
+      - name: Playwright visual
+        id: visual
+        if: ${{ !cancelled() }}
+        run: bun run e2e:visual
+      - name: Upload visual actuals
+        if: ${{ !cancelled() && steps.visual.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-actuals
+          path: test-results/**/*-actual.png
+          if-no-files-found: ignore

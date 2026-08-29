@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
-import { loadDashboard, renderDashboardHtml } from './dashboard';
+import { loadDashboard } from './dashboard';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
 import { fetchBtcUsdSpot } from './price';
@@ -11,7 +11,11 @@ import {
   loadLiveRecipients,
   saveLiveRecipients,
 } from './recipients-store';
-import { renderLoginHtml, renderRecipientsHtml } from './recipients-html';
+import {
+  renderDashboardHtml,
+  renderUnconfiguredHtml,
+  type SpendPanel,
+} from './recipients-html';
 import { runDay } from './run';
 import { startMidnightScheduler } from './scheduler';
 import {
@@ -195,12 +199,23 @@ export function createServer(opts: {
     return host !== '' && originHost === host;
   };
 
-  const recipientsPage = (recipients: Recipient[], error?: string): Response => {
-    const html =
-      error === undefined
-        ? renderRecipientsHtml({ recipients })
-        : renderRecipientsHtml({ recipients, error });
-    return htmlResponse(html);
+  const loadDashboardData = () =>
+    loadDashboard({
+      lndhub,
+      btcUsd: () => fetchBtcUsdSpot(fetchImpl),
+      lightningAddress: config.lightningAddress,
+    });
+
+  /** Load dashboard then render the combined page (optional panel). */
+  const combinedPage = async (panel?: SpendPanel): Promise<Response> => {
+    const data = await loadDashboardData();
+    return htmlResponse(renderDashboardHtml(data, panel));
+  };
+
+  /** Load dashboard then render Spend + unconfigured notice (HTTP 503). */
+  const unconfiguredPage = async (): Promise<Response> => {
+    const data = await loadDashboardData();
+    return htmlResponse(renderUnconfiguredHtml(data), 503);
   };
 
   const loadOrError = ():
@@ -236,28 +251,29 @@ export function createServer(opts: {
       });
     }
     if (req.method === 'GET' && url.pathname === '/') {
-      const data = await loadDashboard({
-        lndhub,
-        btcUsd: () => fetchBtcUsdSpot(fetchImpl),
-        lightningAddress: config.lightningAddress,
-      });
-      const html = renderDashboardHtml(data);
-      return new Response(html, {
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-      });
+      if (config.dashboardPassword === null) {
+        return combinedPage();
+      }
+      if (requireSession(req)) {
+        const loadedLive = loadOrError();
+        if (!loadedLive.ok) {
+          return loadedLive.response;
+        }
+        return combinedPage({ kind: 'editor', recipients: loadedLive.recipients });
+      }
+      return combinedPage({ kind: 'login' });
     }
 
     if (req.method === 'GET' && url.pathname === '/login') {
       if (config.dashboardPassword === null) {
-        return htmlResponse(renderLoginHtml({ disabled: true }), 503);
+        return unconfiguredPage();
       }
-      return htmlResponse(renderLoginHtml({}));
+      return redirect('/');
     }
 
-    if (req.method === 'POST' && url.pathname === '/login') {
+    if (req.method === 'POST' && (url.pathname === '/login' || url.pathname === '/')) {
       if (config.dashboardPassword === null) {
-        return htmlResponse(renderLoginHtml({ disabled: true }), 503);
+        return unconfiguredPage();
       }
       if (!requireSameOrigin(req)) {
         return new Response('Forbidden', { status: 403 });
@@ -265,10 +281,10 @@ export function createServer(opts: {
       const form = await readForm(req);
       const submitted = form.get('password') ?? '';
       if (!passwordsMatch(config.dashboardPassword, submitted)) {
-        return htmlResponse(renderLoginHtml({ error: 'Invalid password' }));
+        return combinedPage({ kind: 'login', error: 'Invalid password' });
       }
       const value = mintSessionCookie(config.dashboardPassword, sessionNow);
-      return redirect('/recipients', {
+      return redirect('/', {
         'set-cookie': sessionCookieHeader(value, req, SESSION_TTL_SEC),
       });
     }
@@ -277,23 +293,16 @@ export function createServer(opts: {
       if (config.dashboardPassword !== null && !requireSameOrigin(req)) {
         return new Response('Forbidden', { status: 403 });
       }
-      return redirect('/login', {
+      return redirect('/', {
         'set-cookie': sessionCookieHeader(clearSessionCookie(), req, 0),
       });
     }
 
     if (req.method === 'GET' && url.pathname === '/recipients') {
       if (config.dashboardPassword === null) {
-        return htmlResponse(renderLoginHtml({ disabled: true }), 503);
+        return unconfiguredPage();
       }
-      if (!requireSession(req)) {
-        return redirect('/login');
-      }
-      const loadedLive = loadOrError();
-      if (!loadedLive.ok) {
-        return loadedLive.response;
-      }
-      return recipientsPage(loadedLive.recipients);
+      return redirect('/');
     }
 
     if (
@@ -303,10 +312,10 @@ export function createServer(opts: {
         url.pathname === '/recipients/delete')
     ) {
       if (config.dashboardPassword === null) {
-        return htmlResponse(renderLoginHtml({ disabled: true }), 503);
+        return unconfiguredPage();
       }
       if (!requireSession(req)) {
-        return redirect('/login');
+        return redirect('/');
       }
       if (!requireSameOrigin(req)) {
         return new Response('Forbidden', { status: 403 });
@@ -324,48 +333,60 @@ export function createServer(opts: {
           const address = parseAddress(form.get('address'));
           const amountUsd = parseAmountUsd(form.get('amountUsd'));
           if (address === null || amountUsd === null) {
-            return recipientsPage(recipients, 'Invalid address or amount');
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              error: 'Invalid address or amount',
+            });
           }
           if (recipients.some((r) => r.address === address)) {
-            return recipientsPage(recipients, 'Address already listed');
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              error: 'Address already listed',
+            });
           }
           recipients = [...recipients, { address, amountUsd }];
           saveLiveRecipients(config.stateDir, { comment, recipients });
-          return redirect('/recipients');
+          return redirect('/');
         }
 
         if (url.pathname === '/recipients/update') {
           const address = parseAddress(form.get('address'));
           const amountUsd = parseAmountUsd(form.get('amountUsd'));
           if (address === null) {
-            return recipientsPage(recipients, 'Unknown address');
+            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
           }
           const idx = recipients.findIndex((r) => r.address === address);
           if (idx < 0) {
-            return recipientsPage(recipients, 'Unknown address');
+            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
           }
           if (amountUsd === null) {
-            return recipientsPage(recipients, 'Invalid address or amount');
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              error: 'Invalid address or amount',
+            });
           }
           const current = recipients[idx];
           if (current === undefined) {
-            return recipientsPage(recipients, 'Unknown address');
+            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
           }
           recipients[idx] = { ...current, amountUsd };
           saveLiveRecipients(config.stateDir, { comment, recipients });
-          return redirect('/recipients');
+          return redirect('/');
         }
 
         const address = parseAddress(form.get('address'));
         if (address === null) {
-          return recipientsPage(recipients, 'Unknown address');
+          return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
         }
         const next = recipients.filter((r) => r.address !== address);
         if (next.length === recipients.length) {
-          return recipientsPage(recipients, 'Unknown address');
+          return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
         }
         saveLiveRecipients(config.stateDir, { comment, recipients: next });
-        return redirect('/recipients');
+        return redirect('/');
       });
     }
 

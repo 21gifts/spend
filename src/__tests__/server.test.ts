@@ -96,7 +96,7 @@ describe('createServer', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('renders sats on GET /', async () => {
+  it('renders sats on GET / without password and has no Log in', async () => {
     const app = createServer({
       env: { ...env, SPEND_LIGHTNING_ADDRESS: '9643e3@lightning.space' },
       fetchImpl: async (url) => {
@@ -127,6 +127,22 @@ describe('createServer', () => {
     expect(html).not.toContain('/login');
     expect(html).not.toContain('/recipients');
     expect(html).not.toContain('Log in');
+  });
+
+  it('GET / with password shows the login form', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/'));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('name="password"');
+    expect(html).toContain('Log in');
+    expect(html).toContain('action="/"');
+    expect(html).toContain('unavailable');
   });
 
   it('HEAD / is 200 with empty body and does not load the dashboard', async () => {
@@ -393,13 +409,15 @@ async function login(app: ReturnType<typeof createServer>, password = 'test-pass
       body: `password=${encodeURIComponent(password)}`,
     }),
   );
+  expect(res.status).toBe(303);
+  expect(res.headers.get('location')).toBe('/');
   const setCookie = cookieFrom(res);
   const match = /spend_session=([^;]+)/.exec(setCookie);
   return match?.[1] ?? '';
 }
 
 describe('recipient editor', () => {
-  it('GET /login shows the form when a password is configured', async () => {
+  it('GET /login redirects to / when a password is configured', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
@@ -407,8 +425,8 @@ describe('recipient editor', () => {
       },
     });
     const res = await app.fetch(req('http://127.0.0.1/login'));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain('name="password"');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
   });
 
   it('GET /login is 503 when the password is unset', async () => {
@@ -455,7 +473,9 @@ describe('recipient editor', () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('Invalid password');
+    const html = await res.text();
+    expect(html).toContain('Invalid password');
+    expect(html).toContain('name="password"');
     expect(cookieFrom(res)).not.toContain('spend_session=v1.');
   });
 
@@ -473,10 +493,11 @@ describe('recipient editor', () => {
       }),
     );
     expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
     expect(cookieFrom(res)).toContain('spend_session=v1.');
   });
 
-  it('logs in and lists seeded recipients', async () => {
+  it('logs in and lists seeded recipients on GET /', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
@@ -486,7 +507,7 @@ describe('recipient editor', () => {
     const token = await login(app);
     expect(token.startsWith('v1.')).toBe(true);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+      req('http://127.0.0.1/', { headers: { cookie: `spend_session=${token}` } }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -494,7 +515,7 @@ describe('recipient editor', () => {
     expect(html).toContain('Log out');
   });
 
-  it('GET /recipients without a cookie redirects to login', async () => {
+  it('GET /recipients without a cookie redirects to /', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
@@ -503,7 +524,22 @@ describe('recipient editor', () => {
     });
     const res = await app.fetch(req('http://127.0.0.1/recipients'));
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/login');
+    expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('GET /recipients with a cookie redirects to /', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
   });
 
   it('GET /recipients is 503 when the password is unset', async () => {
@@ -539,7 +575,7 @@ describe('recipient editor', () => {
     expect(res.status).toBe(403);
   });
 
-  it('unauthenticated POST /recipients/add redirects to login', async () => {
+  it('unauthenticated POST /recipients/add redirects to /', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
@@ -554,7 +590,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/login');
+    expect(res.headers.get('location')).toBe('/');
   });
 
   it('keeps both recipients when two adds overlap', async () => {
@@ -579,8 +615,10 @@ describe('recipient editor', () => {
       post('carol@walletofsatoshi.com'),
     ]);
     expect(first.status).toBe(303);
+    expect(first.headers.get('location')).toBe('/');
     expect(second.status).toBe(303);
-    const listed = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
+    expect(second.headers.get('location')).toBe('/');
+    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
     const html = await listed.text();
     expect(html).toContain('bob@walletofsatoshi.com');
     expect(html).toContain('carol@walletofsatoshi.com');
@@ -603,6 +641,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(add.status).toBe(303);
+    expect(add.headers.get('location')).toBe('/');
     const dup = await app.fetch(
       req('http://127.0.0.1/recipients/add', {
         method: 'POST',
@@ -628,6 +667,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(update.status).toBe(303);
+    expect(update.headers.get('location')).toBe('/');
     const unknown = await app.fetch(
       req('http://127.0.0.1/recipients/update', {
         method: 'POST',
@@ -644,7 +684,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(await badUsd.text()).toContain('Invalid address or amount');
-    const listed = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
     expect(await listed.text()).toContain('value="3"');
     const del = await app.fetch(
       req('http://127.0.0.1/recipients/delete', {
@@ -654,6 +694,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(del.status).toBe(303);
+    expect(del.headers.get('location')).toBe('/');
     const delUnknown = await app.fetch(
       req('http://127.0.0.1/recipients/delete', {
         method: 'POST',
@@ -669,7 +710,7 @@ describe('recipient editor', () => {
         body: 'address=alice@walletofsatoshi.com',
       }),
     );
-    const empty = await app.fetch(req('http://127.0.0.1/recipients', { headers: { cookie } }));
+    const empty = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
     expect(await empty.text()).toContain('No recipients');
   });
 
@@ -690,6 +731,7 @@ describe('recipient editor', () => {
       }),
     );
     expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
     expect(cookieFrom(res)).toContain('Secure');
   });
 
@@ -702,11 +744,11 @@ describe('recipient editor', () => {
     });
     const res = await app.fetch(req('http://127.0.0.1/logout', { method: 'POST' }));
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/login');
+    expect(res.headers.get('location')).toBe('/');
     expect(cookieFrom(res)).toContain('Max-Age=0');
   });
 
-  it('GET /recipients is 500 when the live file is corrupt', async () => {
+  it('GET / is 500 when the live file is corrupt', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-bad-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
@@ -724,7 +766,7 @@ describe('recipient editor', () => {
     const token = await login(app);
     writeFileSync(join(dir, 'recipients.json'), '{');
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+      req('http://127.0.0.1/', { headers: { cookie: `spend_session=${token}` } }),
     );
     expect(res.status).toBe(500);
     expect(await res.text()).toBe('Recipient list is unreadable');
