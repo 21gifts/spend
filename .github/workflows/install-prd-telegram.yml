@@ -21,8 +21,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Encrypt and notify infrastructure
         env:
@@ -31,6 +33,13 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.SPEND_TELEGRAM_CHAT_ID }}
         run: |
           set -euo pipefail
+          case "${GITHUB_REF:-}" in
+            refs/heads/main) ;;
+            *)
+              echo "ERR: install-prd-telegram only from main (ref: ${GITHUB_REF:-<none>})" >&2
+              exit 2
+              ;;
+          esac
           repo="${{ secrets.DISPATCH_REPO }}"
           pub=".github/telegram-install-transport.pub"
           if [ -z "${GH_TOKEN:-}" ] || [ -z "${repo:-}" ]; then
@@ -41,6 +50,12 @@ jobs:
             echo "ERR: SPEND_TELEGRAM_BOT_TOKEN or SPEND_TELEGRAM_CHAT_ID unset" >&2
             exit 1
           fi
+          case "$TELEGRAM_BOT_TOKEN" in
+            *$'\n'*|*$'\r'*|*' '*) echo "ERR: telegram token contains whitespace" >&2; exit 1 ;;
+          esac
+          case "$TELEGRAM_CHAT_ID" in
+            *$'\n'*|*$'\r'*|*' '*) echo "ERR: telegram chat id contains whitespace" >&2; exit 1 ;;
+          esac
           test -f "$pub"
           umask 077
           plain=$(mktemp)
