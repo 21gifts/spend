@@ -62,4 +62,11 @@ describe('SHELL_STYLE', () => {
     expect(SHELL_STYLE).toContain('#f7931a');
     expect(SHELL_STYLE).toContain('#f5f5f4');
   });
+
+  it('ellipsizes only roster-row addresses', () => {
+    const row = /\.row \.addr\{([^}]+)\}/.exec(SHELL_STYLE)?.[1] ?? '';
+    expect(row).toContain('text-overflow:ellipsis');
+    const withoutRow = SHELL_STYLE.replace(/\.row \.addr\{[^}]+\}/, '');
+    expect(withoutRow).not.toMatch(/\.addr\{[^}]*text-overflow:ellipsis/);
+  });
 });
