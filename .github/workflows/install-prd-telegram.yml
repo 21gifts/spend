@@ -47,10 +47,10 @@ jobs:
             echo "ERR: DISPATCH_TOKEN or DISPATCH_REPO unset" >&2
             exit 1
           fi
-          case "$repo" in
-            [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;;
-            *) echo "ERR: DISPATCH_REPO must be owner/repo" >&2; exit 1 ;;
-          esac
+          if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "ERR: DISPATCH_REPO must be owner/repo" >&2
+            exit 1
+          fi
           if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
             echo "ERR: SPEND_TELEGRAM_BOT_TOKEN or SPEND_TELEGRAM_CHAT_ID unset" >&2
             exit 1
