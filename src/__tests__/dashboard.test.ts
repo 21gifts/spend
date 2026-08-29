@@ -73,6 +73,16 @@ describe('renderDashboardHtml', () => {
     expect(html).not.toContain('Log in');
   });
 
+  it('does not abbreviate a Wallet of Satoshi spend address', () => {
+    const html = renderDashboardHtml({
+      sats: 1,
+      usd: 1,
+      lightningAddress: 'alice@walletofsatoshi.com',
+    });
+    expect(html).toContain('alice@walletofsatoshi.com');
+    expect(html).not.toContain('alice@w...');
+  });
+
   it('shows unavailable when values are null', () => {
     const html = renderDashboardHtml({ sats: null, usd: null, lightningAddress: null });
     expect(html).toContain('unavailable');

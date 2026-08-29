@@ -69,10 +69,14 @@ button.ghost{
   white-space:nowrap;min-height:2.5rem
 }
 .addr{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:0.92rem;
+  word-break:break-all
+}
+.row .addr{
   flex:1 1 auto;min-width:0;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-size:0.92rem
+  word-break:normal
 }
 form.inline{display:flex;align-items:center;gap:0.35rem;margin:0}
 .row input[name=amountUsd]{
