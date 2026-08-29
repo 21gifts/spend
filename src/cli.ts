@@ -8,7 +8,7 @@ import {
   loadLiveRecipients,
 } from './recipients-store';
 import { runDay } from './run';
-import { loadTelegram, notifyPayout, shouldNotify } from './telegram';
+import { loadTelegram, minimalRunSummary, notifyPayout, shouldNotify } from './telegram';
 import { isUtcMidnightWindow } from './utc-window';
 
 export { isUtcMidnightWindow } from './utc-window';
@@ -118,6 +118,15 @@ export async function main(
       console.error(
         JSON.stringify({ event: 'spend.done', ok: false, reason: 'corrupt_recipients' }),
       );
+      const summary = { ...minimalRunSummary(flags.day, flags.live, 4), reason: 'corrupt_recipients' };
+      if (telegram.target !== null && shouldNotify('cli', summary)) {
+        await notifyPayout({
+          target: telegram.target,
+          summary,
+          source: 'cli',
+          fetchImpl,
+        });
+      }
       return 4;
     }
     throw err;

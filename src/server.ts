@@ -388,6 +388,15 @@ export function createServer(opts: {
               reason: 'corrupt_recipients',
             }),
           );
+          const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
+          if (telegramTarget !== null && shouldNotify(source, summary)) {
+            await notifyPayout({
+              target: telegramTarget,
+              summary,
+              source,
+              fetchImpl,
+            });
+          }
           return { exitCode: 4 };
         }
         throw err;

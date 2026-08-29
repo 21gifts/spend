@@ -761,6 +761,57 @@ describe('recipient editor', () => {
     warn.mockRestore();
   });
 
+  it('notifies Telegram when live recipients are corrupt (runPayout and catch-up)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-08-28T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
+    expect(runDay).not.toHaveBeenCalled();
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      chat_id: '-1001234567890',
+      text: expect.stringContaining('corrupt_recipients'),
+      disable_web_page_preview: true,
+    });
+    expect(String((telegramBodies[0] as { text: string }).text)).toContain('exit=4');
+    expect(String((telegramBodies[0] as { text: string }).text)).toContain('ok=false');
+
+    telegramBodies.length = 0;
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
+    expect(runDay).not.toHaveBeenCalled();
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      chat_id: '-1001234567890',
+      text: expect.stringContaining('corrupt_recipients'),
+      disable_web_page_preview: true,
+    });
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('POST /recipients/add is 503 when the password is unset', async () => {
     const app = createServer({
       env,

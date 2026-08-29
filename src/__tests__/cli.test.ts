@@ -133,6 +133,42 @@ describe('main live recipients', () => {
     expect(code).toBe(4);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('notifies Telegram and exits 4 when live recipients are corrupt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-cli-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const telegramBodies: unknown[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const code = await main(
+      {
+        ...cliEnv(dir, seed),
+        TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID: TELEGRAM_CHAT,
+      },
+      ['bun', 'cli'],
+      () => new Date('2026-08-25T12:00:00.000Z'),
+      async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    );
+    error.mockRestore();
+    expect(code).toBe(4);
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      chat_id: TELEGRAM_CHAT,
+      text: expect.stringContaining('corrupt_recipients'),
+      disable_web_page_preview: true,
+    });
+    expect(String((telegramBodies[0] as { text: string }).text)).toContain('source=cli');
+    expect(JSON.stringify(telegramBodies)).not.toContain(TELEGRAM_TOKEN);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe('main Telegram notify', () => {
