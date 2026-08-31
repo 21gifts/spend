@@ -1,3 +1,5 @@
+import { displayLightningAddress } from './html-shell';
+
 /** Who triggered the payout that may notify Telegram. */
 export type TelegramSource = 'scheduler' | 'catchup' | 'cli';
 
@@ -95,7 +97,7 @@ export function shouldNotify(source: TelegramSource, summary: RunSummary): boole
 }
 
 function formatLine(line: PayoutLine): string {
-  const parts: string[] = [line.address];
+  const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
     parts.push(`${line.amountSats} sats`);
   }
