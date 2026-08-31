@@ -8,7 +8,7 @@ export function slot(value: string): string {
 }
 
 /**
- * Visible label for a Lightning Address in the recipient editor.
+ * Shared visible label for a Lightning Address (recipient editor and Telegram payout lines).
  * Domain `walletofsatoshi.com` (ASCII, case-insensitive, exact after the last `@`)
  * → `{local}@w...`. No `@` or any other domain → return `address` unchanged.
  *

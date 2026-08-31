@@ -142,6 +142,66 @@ describe('formatPayoutMessage', () => {
     expect(text).toContain('reason=insufficient_balance needed=1500 available=10');
     expect(text).toContain('alice@x  1000 sats  ($1)  (already_paid)');
   });
+
+  it('abbreviates Wallet of Satoshi on a paid line', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@walletofsatoshi.com', amountSats: 1000, amountUsd: 1 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('alice@w...  1000 sats  ($1)');
+    expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
+  });
+
+  it('preserves local-part case for Wallet of Satoshi', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'Alice@WalletOfSatoshi.COM', amountSats: 1000, amountUsd: 1 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('Alice@w...');
+    expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
+  });
+
+  it('leaves non-Wallet-of-Satoshi addresses full', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: '9643e3@lightning.space', amountSats: 500, amountUsd: 0.5 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('9643e3@lightning.space  500 sats  ($0.5)');
+  });
+
+  it('does not abbreviate a Wallet of Satoshi suffix trap', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'user@walletofsatoshi.com.evil', amountSats: 100, amountUsd: 0.1 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('user@walletofsatoshi.com.evil  100 sats  ($0.1)');
+  });
+
+  it('abbreviates Wallet of Satoshi on skipped lines', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'already_paid',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('alice@w...  1000 sats  ($1)  (already_paid)');
+    expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
+  });
 });
 
 describe('notifyPayout', () => {
