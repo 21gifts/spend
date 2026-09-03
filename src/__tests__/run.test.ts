@@ -210,6 +210,53 @@ describe('runDay', () => {
     expect(invoices).toBe(0);
   });
 
+  it('skips persisted failed recipients and pays the rest', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      if (String(url).endsWith('/proof')) {
+        return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+      }
+      invoices += 1;
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 500_000 }),
+        { status: 200 },
+      );
+    });
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const prior = `${JSON.stringify({
+      ts: 't',
+      address: 'a@b.com',
+      invoiceId: '',
+      paymentHash: '',
+      status: 'failed',
+    })}\n`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts,
+      lndhub,
+      state: memoryState(prior),
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoices).toBe(1);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'failed' }),
+    ]);
+    expect(result.summary.paid).toEqual([
+      expect.objectContaining({ address: 'c@d.com' }),
+    ]);
+  });
+
   it('aborts on low balance', async () => {
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
@@ -265,6 +312,7 @@ describe('runDay', () => {
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(invoices).toBe(2);
+    expect(state.load()).toEqual([]);
     expect(state.load().some((row) => row.status === 'uncertain')).toBe(false);
     expect(state.load().some((row) => row.address === '*halt*')).toBe(false);
     expect(state.isFinished()).toBe(false);
@@ -272,6 +320,75 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'invoice_unreachable' }),
       expect.objectContaining({ address: 'c@d.com', reason: 'invoice_unreachable' }),
+    ]);
+  });
+
+  it('treats gifts API network errors as invoice_unreachable', async () => {
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async () => {
+      throw new Error('network down');
+    });
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts,
+      lndhub,
+      state,
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'invoice_unreachable' }),
+      expect.objectContaining({ address: 'c@d.com', reason: 'invoice_unreachable' }),
+    ]);
+  });
+
+  it('treats malformed invoice paymentHash as uncertain halt', async () => {
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: 'nope', amountMsat: 1_000_000 }),
+        { status: 200 },
+      ),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(4);
+    expect(state.isFinished()).toBe(true);
+    expect(
+      state.load().some(
+        (row) =>
+          (row.address === 'a@b.com' || row.address === '*halt*') && row.status === 'uncertain',
+      ),
+    ).toBe(true);
+    expect(result.summary.uncertain).toEqual([
+      expect.objectContaining({ address: 'a@b.com' }),
     ]);
   });
 

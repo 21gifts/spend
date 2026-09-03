@@ -4,7 +4,7 @@ import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
 import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
@@ -243,6 +243,11 @@ async function runDayLocked(
       skipped.push({ ...lineBase, reason: prior });
       continue;
     }
+    if (latestStatus(rows, recipient.address) === 'failed') {
+      log('spend.skip', { address: recipient.address, reason: 'failed' });
+      skipped.push({ ...lineBase, reason: 'failed' });
+      continue;
+    }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
@@ -269,18 +274,41 @@ async function runDayLocked(
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;
-      const retryable = status === 0 || status >= 500;
-      sawProblem = true;
-      if (retryable) {
+      const message = err instanceof Error ? err.message : 'invoice';
+      const parseFail =
+        message === 'malformed invoice response' || message === 'malformed paymentHash';
+      const unreachable = !parseFail && (status === 0 || status >= 500);
+      if (unreachable) {
         log('spend.skip', { address: recipient.address, reason: 'invoice_unreachable' });
         skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
         continue;
       }
-      log('spend.failed', {
-        address: recipient.address,
-        amountSats,
-        error: err instanceof Error ? err.message : 'invoice',
-      });
+      if (parseFail) {
+        sawProblem = true;
+        stopLive = true;
+        haltDay();
+        log('spend.uncertain', {
+          address: recipient.address,
+          amountSats,
+          error: message,
+        });
+        uncertain.push(lineBase);
+        if (!options.live) {
+          continue;
+        }
+        const failRow: StateRow = {
+          ts: now().toISOString(),
+          address: recipient.address,
+          invoiceId: '',
+          paymentHash: '',
+          status: 'uncertain',
+        };
+        state.append(failRow);
+        rows.push(failRow);
+        continue;
+      }
+      sawProblem = true;
+      log('spend.failed', { address: recipient.address, amountSats, error: message });
       failed.push(lineBase);
       if (!options.live) {
         continue;
