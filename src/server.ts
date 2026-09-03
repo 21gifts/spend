@@ -26,6 +26,7 @@ import {
   sessionCookieHeader,
   sessionCookieValid,
 } from './session';
+import { DayState, dayBlock, latestStatus } from './state';
 import {
   loadTelegram,
   minimalRunSummary,
@@ -130,13 +131,14 @@ function parseAddress(raw: string | null): string | null {
 /**
  * HTTP app for the dashboard, recipient editor, and health probe.
  *
- * @param opts - Env, fetch, and clock.
- * @returns Fetch handler, midnight scheduler starter, live catch-up starter, payout runner, and payout drain.
+ * @param opts - Env, fetch, clock, and optional `retryCatchupMs`.
+ * @returns Fetch handler, midnight scheduler starter, live catch-up starter, retry-catchup starter, payout runner, and payout drain.
  */
 export function createServer(opts: {
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  retryCatchupMs?: number;
   runDay?: (
     config: SpendConfig,
     options: { live: boolean; day: string },
@@ -145,6 +147,7 @@ export function createServer(opts: {
   fetch: (req: Request) => Promise<Response>;
   startScheduler: () => { stop: () => void };
   startCatchup: () => Promise<{ exitCode: number } | null>;
+  startRetryCatchup: () => { stop: () => void };
   runPayout: (day: string) => Promise<{ exitCode: number }>;
   drainPayouts: () => Promise<void>;
 } {
@@ -440,6 +443,90 @@ export function createServer(opts: {
       return { exitCode: result.exitCode };
     });
 
+  /**
+   * Live catch-up: pay recipients with no JSONL row for the current UTC day
+   * even outside the midnight window. No-op on `*halt*` uncertain or a live
+   * recipient that is `uncertain`, and when every live recipient already has a
+   * row (`paid` / `failed` / `uncertain` / `dry-run`).
+   */
+  const startCatchup = async (): Promise<{ exitCode: number } | null> => {
+    if (!live) {
+      return null;
+    }
+    const clock = opts.now ?? (() => new Date());
+    const day = clock().toISOString().slice(0, 10);
+    try {
+      try {
+        const rows = new DayState(config.stateDir, day).load();
+        let recipientUncertain = false;
+        let liveList: { comment: string; recipients: Recipient[] } | undefined;
+        try {
+          liveList = loadLiveRecipients(config.stateDir);
+          recipientUncertain = liveList.recipients.some(
+            (r) => dayBlock(rows, r.address) === 'uncertain',
+          );
+        } catch (err) {
+          if (!(err instanceof CorruptRecipientsError)) {
+            throw err;
+          }
+          // Corrupt roster: fall through to payout (existing fail-closed path).
+        }
+        if (recipientUncertain || dayBlock(rows, '*halt*') === 'uncertain') {
+          return null;
+        }
+        if (liveList !== undefined) {
+          const remaining = liveList.recipients.some(
+            (r) => latestStatus(rows, r.address) === undefined,
+          );
+          if (!remaining) {
+            return null;
+          }
+        }
+      } catch {
+        // Corrupt/unreadable JSONL: fall through so runDay fail-closes.
+      }
+      const result = await payout(day, 'catchup');
+      console.warn(
+        JSON.stringify({
+          ts: clock().toISOString(),
+          event: 'spend.catchup',
+          day,
+          live: true,
+          exitCode: result.exitCode,
+        }),
+      );
+      return result;
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err.message : 'catchup';
+      console.warn(
+        JSON.stringify({
+          ts: clock().toISOString(),
+          event: 'spend.catchup',
+          day,
+          live: true,
+          error,
+        }),
+      );
+      return null;
+    }
+  };
+
+  /** Live-only; default 15 minutes; calls `startCatchup`; `stop()` clears the interval. */
+  const startRetryCatchup = (): { stop: () => void } => {
+    if (!live) {
+      return { stop: () => undefined };
+    }
+    const intervalMs = opts.retryCatchupMs ?? 15 * 60 * 1000;
+    const timer = setInterval(() => {
+      void startCatchup();
+    }, intervalMs);
+    return {
+      stop: () => {
+        clearInterval(timer);
+      },
+    };
+  };
+
   return {
     fetch: fetchHandler,
     startScheduler: () => {
@@ -453,42 +540,8 @@ export function createServer(opts: {
       }
       return startMidnightScheduler({ ...scheduler, now: opts.now });
     },
-    /**
-     * Live catch-up: pay remaining recipients for the current UTC day even
-     * outside the midnight window (JSONL skips already-paid rows).
-     */
-    startCatchup: async (): Promise<{ exitCode: number } | null> => {
-      if (!live) {
-        return null;
-      }
-      const clock = opts.now ?? (() => new Date());
-      const day = clock().toISOString().slice(0, 10);
-      try {
-        const result = await payout(day, 'catchup');
-        console.warn(
-          JSON.stringify({
-            ts: clock().toISOString(),
-            event: 'spend.catchup',
-            day,
-            live: true,
-            exitCode: result.exitCode,
-          }),
-        );
-        return result;
-      } catch (err: unknown) {
-        const error = err instanceof Error ? err.message : 'catchup';
-        console.warn(
-          JSON.stringify({
-            ts: clock().toISOString(),
-            event: 'spend.catchup',
-            day,
-            live: true,
-            error,
-          }),
-        );
-        return null;
-      }
-    },
+    startCatchup,
+    startRetryCatchup,
     runPayout: (day: string) => payout(day, 'scheduler'),
     drainPayouts: () => gate.run(async () => undefined),
   };
@@ -521,9 +574,11 @@ if (meta.main === true) {
       fetch: app.fetch,
     });
     const scheduler = app.startScheduler();
+    const retryCatchup = app.startRetryCatchup();
     void app.startCatchup();
     const shutdown = (): void => {
       scheduler.stop();
+      retryCatchup.stop();
       void app.drainPayouts().finally(() => {
         process.exit(0);
       });

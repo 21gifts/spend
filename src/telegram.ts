@@ -74,7 +74,7 @@ export function loadTelegram(
 /**
  * Whether a completed run should send a Telegram message for this source.
  *
- * Catch-up skips pure all-skip success (no spam on every container restart).
+ * Catch-up is silent when the run only skipped and has no `summary.reason` (already paid, `invoice_unreachable`, persisted failed — no spam on restart or 15-minute retry).
  *
  * @param source - Scheduler, catch-up, or CLI.
  * @param summary - Run outcome.

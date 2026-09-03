@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, parseBindAddr } from '../server';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
@@ -41,6 +41,10 @@ afterAll(() => {
   for (const dir of sessionDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('parseBindAddr', () => {
@@ -253,6 +257,139 @@ describe('createServer', () => {
     });
     await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it('startCatchup returns null without payout when the day JSONL has *halt* uncertain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-halt-catchup-'));
+    writeFileSync(
+      join(dir, '2026-08-27.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: '*halt*',
+        invoiceId: '',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-27T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      await expect(app.startCatchup()).resolves.toBeNull();
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startCatchup returns null without payout when a live recipient is uncertain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-recipient-uncertain-catchup-'));
+    writeFileSync(
+      join(dir, '2026-08-27.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'alice@walletofsatoshi.com',
+        invoiceId: '',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-27T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      await expect(app.startCatchup()).resolves.toBeNull();
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startCatchup returns null without payout when every live recipient already has a JSONL row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-failed-catchup-'));
+    writeFileSync(
+      join(dir, '2026-08-27.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'alice@walletofsatoshi.com',
+        invoiceId: '',
+        paymentHash: '',
+        status: 'failed',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-27T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      await expect(app.startCatchup()).resolves.toBeNull();
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startCatchup falls through to payout when the day JSONL is corrupt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-catchup-'));
+    writeFileSync(join(dir, '2026-08-27.jsonl'), 'not-json\n');
+    const runDay = vi.fn(async () => ({ exitCode: 4 }));
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-27T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
+      expect(runDay).toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup invokes catch-up on the interval when live', async () => {
+    vi.useFakeTimers();
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      retryCatchupMs: 20,
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const handle = app.startRetryCatchup();
+    expect(runDay).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    expect(runDay).toHaveBeenCalled();
+    handle.stop();
+  });
+
+  it('startRetryCatchup is a no-op without SPEND_LIVE', async () => {
+    vi.useFakeTimers();
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      retryCatchupMs: 20,
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const handle = app.startRetryCatchup();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(runDay).not.toHaveBeenCalled();
+    handle.stop();
   });
 
   it('fails closed on boot when only one Telegram env is set', () => {

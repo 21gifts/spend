@@ -4,7 +4,7 @@ import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
 import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
@@ -184,7 +184,9 @@ async function runDayLocked(
 
   let token = '';
   if (options.live) {
-    const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
+    const pending = config.recipients.filter(
+      (r) => dayBlock(rows, r.address) === undefined && latestStatus(rows, r.address) !== 'failed',
+    );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
       if (sats === undefined) {
@@ -243,6 +245,11 @@ async function runDayLocked(
       skipped.push({ ...lineBase, reason: prior });
       continue;
     }
+    if (latestStatus(rows, recipient.address) === 'failed') {
+      log('spend.skip', { address: recipient.address, reason: 'failed' });
+      skipped.push({ ...lineBase, reason: 'failed' });
+      continue;
+    }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
@@ -269,23 +276,42 @@ async function runDayLocked(
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;
-      const retryable = status === 0 || status >= 500;
-      const rowStatus: StateRow['status'] = retryable ? 'uncertain' : 'failed';
-      sawProblem = true;
-      if (retryable) {
+      const message = err instanceof Error ? err.message : 'invoice';
+      const parseFail =
+        message === 'malformed invoice response' || message === 'malformed paymentHash';
+      const unreachable = !parseFail && (status === 0 || status >= 500);
+      if (unreachable) {
+        log('spend.skip', { address: recipient.address, reason: 'invoice_unreachable' });
+        skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
+        continue;
+      }
+      if (parseFail) {
+        sawProblem = true;
         stopLive = true;
         haltDay();
-      }
-      log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
-        address: recipient.address,
-        amountSats,
-        error: err instanceof Error ? err.message : 'invoice',
-      });
-      if (rowStatus === 'failed') {
-        failed.push(lineBase);
-      } else {
+        log('spend.uncertain', {
+          address: recipient.address,
+          amountSats,
+          error: message,
+        });
         uncertain.push(lineBase);
+        if (!options.live) {
+          continue;
+        }
+        const failRow: StateRow = {
+          ts: now().toISOString(),
+          address: recipient.address,
+          invoiceId: '',
+          paymentHash: '',
+          status: 'uncertain',
+        };
+        state.append(failRow);
+        rows.push(failRow);
+        continue;
       }
+      sawProblem = true;
+      log('spend.failed', { address: recipient.address, amountSats, error: message });
+      failed.push(lineBase);
       if (!options.live) {
         continue;
       }
@@ -294,7 +320,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: '',
         paymentHash: '',
-        status: rowStatus,
+        status: 'failed',
       };
       state.append(failRow);
       rows.push(failRow);
@@ -450,11 +476,23 @@ async function runDayLocked(
     rows.push(paidRow);
   }
 
-  const blocked = config.recipients.every((r) => dayBlock(rows, r.address) !== undefined);
-  if (blocked || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
+  const settled = config.recipients.every(
+    (r) => dayBlock(rows, r.address) !== undefined || latestStatus(rows, r.address) === 'failed',
+  );
+  const halted =
+    dayBlock(rows, HALT_ADDRESS) === 'uncertain' ||
+    config.recipients.some((r) => dayBlock(rows, r.address) === 'uncertain');
+  const unfinished = skipped.some((line) => line.reason === 'invoice_unreachable');
+  if (halted) {
     state.markFinished();
+    log('spend.done', { ok: false });
+    return finish(4);
   }
-
+  if (unfinished) {
+    log('spend.done', { ok: false, reason: 'invoice_unreachable' });
+    return finish(3);
+  }
+  if (settled) state.markFinished();
   log('spend.done', { ok: !sawProblem });
   return finish(sawProblem ? 4 : 0);
 }
