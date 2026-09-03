@@ -8,7 +8,7 @@ Daily Lightning gift payouts plus a tiny HTTP dashboard. This process **does not
 
 Recipient amounts are **USD**. Each payout (midnight, catch-up, CLI) reads the live roster `STATE_DIR/recipients.json`, fetches Coinbase BTC-USD spot, and pays `round(usd / btcUsd * 1e8)` sats. Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in a seed JSON is a snapshot only — the process does not read it.
 
-The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`): already-`paid` JSONL rows are skipped, so a recipient added after midnight can still be paid on the next process start.
+The long-running server (`bun src/server.ts`) serves the dashboard and runs the UTC-midnight payout in-process. `SPEND_LIVE=true` pays; otherwise the scheduler is dry-run. On live boot it also runs a same-UTC-day catch-up (`spend.catchup`) that pays only recipients with no JSONL row for the day (so a recipient added after midnight can still be paid on the next process start). Live also starts a 15-minute retry timer that calls the same catch-up (serialized by the in-process payout gate). If today's JSONL already has a `*halt*` `uncertain` row, or any live recipient is `uncertain`, catch-up is a no-op (no second pay, no Telegram spam).
 
 `GET /` is the only UI page. It always shows the Spend block:
 
@@ -51,7 +51,7 @@ docker run -p 3000:3000 -v spend-state:/data \
   21gifts/spend:latest
 ```
 
-UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Exit `3` (lock/balance/spot) is retried on the next tick inside that window; exit `0`, `2`, or `4` ends the UTC day for this process. Same-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`) and `STATE_DIR/YYYY-MM-DD.finished` (the marker survives restart, so midnight will not re-enter; live catch-up still pays newly added recipients). One-shot CLI still supports `--at-utc-midnight` for the same window.
+UTC midnight: the server samples the clock every 30s. It calls the existing payout only when UTC hour is 0 and the minute is 0–5. Exit `3` (lock/balance/spot, or invoice-create 5xx/network as `invoice_unreachable`) is retried on the next tick inside that window and does **not** write `.finished`; exit `0`, `2`, or `4` ends the UTC day for this process. Same-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`) and `STATE_DIR/YYYY-MM-DD.finished` (the marker survives restart, so midnight will not re-enter; live catch-up (boot plus the 15-minute retry) pays recipients with no JSONL row for the day when there is no `*halt*` and no live recipient is `uncertain`). One-shot CLI still supports `--at-utc-midnight` for the same window.
 
 ## Fail-closed
 
@@ -60,13 +60,13 @@ UTC midnight: the server samples the clock every 30s. It calls the existing payo
 - JSONL appends are `fsync`'d so a restart does not lose a just-written `paid` row
 - Coinbase BTC-USD spot is required before any invoice. Recipients are USD; sats are computed at that spot
 - Balance preflight before the first pay (need remaining amount + `max(100 sats, 1%)` fee margin). LNDHub `balance` is sats as returned — not divided by 1000
-- Every run takes an exclusive `STATE_DIR/YYYY-MM-DD.lock` (`O_EXCL`) for the process lifetime. A concurrent second run exits `3`. After a normal exit the lock file is removed only if it still holds this process's token. A leftover lock is stolen when its owner pid is dead, when the pid is this process but the lock was written before this process started (container PID reuse), or when the file has no pid and is older than 10 minutes. Same-UTC-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`) and `YYYY-MM-DD.finished` (survives restart — midnight will not re-enter; catch-up still pays newly added recipients)
-- `uncertain` (network/5xx, missing preimage, proof failure, amount mismatch) is logged and **not** retried the same UTC day
-- After `uncertain`, later recipients in a live run (`--live` or `SPEND_LIVE=true`) are skipped and a `*halt*` JSONL row is appended so later runs that UTC day exit `4` without paying
+- Every run takes an exclusive `STATE_DIR/YYYY-MM-DD.lock` (`O_EXCL`) for the process lifetime. A concurrent second run exits `3`. After a normal exit the lock file is removed only if it still holds this process's token. A leftover lock is stolen when its owner pid is dead, when the pid is this process but the lock was written before this process started (container PID reuse), or when the file has no pid and is older than 10 minutes. Same-UTC-day re-entry is gated by JSONL (`paid` / `uncertain` / `*halt*`) and `YYYY-MM-DD.finished` (survives restart — midnight will not re-enter; live catch-up (boot plus the 15-minute retry) pays recipients with no JSONL row for the day when there is no `*halt*` and no live recipient is `uncertain`)
+- Invoice-create network/5xx **before any pay** (no invoice id) is `invoice_unreachable`: skipped, not persisted, no `*halt*`, no `.finished`, exit `3`. Later recipients in the same run are still attempted. Catch-up and the 15-minute retry (and midnight ticks while the window is open) retry the remaining recipients
+- `uncertain` is only after an invoice id / pay attempt (amount mismatch, lndhub.pay error, missing/mismatched preimage, proof failure). Those still halt the rest of a live run (`--live` or `SPEND_LIVE=true`), append a `*halt*` JSONL row, `markFinished`, exit `4`, and are **not** retried the same UTC day
 - If a live process crashes, the next run steals the leftover lock once the owner pid is gone, or when this process reused the pid but the lock timestamp predates this incarnation. A lock whose pid belongs to a different live process is never stolen. Steal is serialized by a virgin `O_EXCL` `{day}.taking` file; an existing taking file is never replaced. Remove a lock or taking file by hand only after checking that no spend is running and inspecting `STATE_DIR/YYYY-MM-DD.jsonl`
 - Unreadable JSONL (truncated/corrupt line) aborts with exit `4` (`corrupt_state`) so a damaged `paid`/`uncertain` row cannot be ignored
 - State: `STATE_DIR/YYYY-MM-DD.jsonl`, `STATE_DIR/YYYY-MM-DD.finished`, `STATE_DIR/YYYY-MM-DD.lock` while a run is in progress, and `STATE_DIR/YYYY-MM-DD.taking` (`O_EXCL`, owner pid) briefly while a leftover lock is stolen
 
-Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot, `4` failed, uncertain, or halted.
+Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot/invoice-create unreachable, `4` failed, payment-uncertain, or halted.
 
 Secrets stay in `.env` / the LNDHub URI. They are never logged.

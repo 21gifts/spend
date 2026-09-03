@@ -270,22 +270,18 @@ async function runDayLocked(
       }
       const status = err instanceof GiftsApiError ? err.status : 0;
       const retryable = status === 0 || status >= 500;
-      const rowStatus: StateRow['status'] = retryable ? 'uncertain' : 'failed';
       sawProblem = true;
       if (retryable) {
-        stopLive = true;
-        haltDay();
+        log('spend.skip', { address: recipient.address, reason: 'invoice_unreachable' });
+        skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
+        continue;
       }
-      log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
+      log('spend.failed', {
         address: recipient.address,
         amountSats,
         error: err instanceof Error ? err.message : 'invoice',
       });
-      if (rowStatus === 'failed') {
-        failed.push(lineBase);
-      } else {
-        uncertain.push(lineBase);
-      }
+      failed.push(lineBase);
       if (!options.live) {
         continue;
       }
@@ -294,7 +290,7 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: '',
         paymentHash: '',
-        status: rowStatus,
+        status: 'failed',
       };
       state.append(failRow);
       rows.push(failRow);
@@ -451,10 +447,20 @@ async function runDayLocked(
   }
 
   const blocked = config.recipients.every((r) => dayBlock(rows, r.address) !== undefined);
-  if (blocked || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
+  const halted =
+    dayBlock(rows, HALT_ADDRESS) === 'uncertain' ||
+    config.recipients.some((r) => dayBlock(rows, r.address) === 'uncertain');
+  const unfinished = skipped.some((line) => line.reason === 'invoice_unreachable');
+  if (halted) {
     state.markFinished();
+    log('spend.done', { ok: false });
+    return finish(4);
   }
-
+  if (unfinished) {
+    log('spend.done', { ok: false, reason: 'invoice_unreachable' });
+    return finish(3);
+  }
+  if (blocked) state.markFinished();
   log('spend.done', { ok: !sawProblem });
   return finish(sawProblem ? 4 : 0);
 }
