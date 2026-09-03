@@ -257,6 +257,54 @@ describe('runDay', () => {
     ]);
   });
 
+  it('does not count persisted failed recipients in the balance preflight', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      if (String(url).endsWith('/proof')) {
+        return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+      }
+      invoices += 1;
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 500_000 }),
+        { status: 200 },
+      );
+    });
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 600 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const prior = `${JSON.stringify({
+      ts: 't',
+      address: 'a@b.com',
+      invoiceId: '',
+      paymentHash: '',
+      status: 'failed',
+    })}\n`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts,
+      lndhub,
+      state: memoryState(prior),
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).not.toBe('insufficient_balance');
+    expect(invoices).toBe(1);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'failed' }),
+    ]);
+    expect(result.summary.paid).toEqual([
+      expect.objectContaining({ address: 'c@d.com' }),
+    ]);
+  });
+
   it('aborts on low balance', async () => {
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {

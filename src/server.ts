@@ -131,7 +131,7 @@ function parseAddress(raw: string | null): string | null {
 /**
  * HTTP app for the dashboard, recipient editor, and health probe.
  *
- * @param opts - Env, fetch, and clock.
+ * @param opts - Env, fetch, clock, and optional `retryCatchupMs`.
  * @returns Fetch handler, midnight scheduler starter, live catch-up starter, retry-catchup starter, payout runner, and payout drain.
  */
 export function createServer(opts: {
@@ -511,6 +511,7 @@ export function createServer(opts: {
     }
   };
 
+  /** Live-only; default 15 minutes; calls `startCatchup`; `stop()` clears the interval. */
   const startRetryCatchup = (): { stop: () => void } => {
     if (!live) {
       return { stop: () => undefined };

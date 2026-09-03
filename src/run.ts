@@ -184,7 +184,9 @@ async function runDayLocked(
 
   let token = '';
   if (options.live) {
-    const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
+    const pending = config.recipients.filter(
+      (r) => dayBlock(rows, r.address) === undefined && latestStatus(rows, r.address) !== 'failed',
+    );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
       if (sats === undefined) {
