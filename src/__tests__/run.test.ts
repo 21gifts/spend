@@ -238,11 +238,12 @@ describe('runDay', () => {
       paymentHash: '',
       status: 'failed',
     })}\n`;
+    const state = memoryState(prior);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts,
       lndhub,
-      state: memoryState(prior),
+      state,
       lock: openLock,
       btcUsd: async () => 100_000,
     });
@@ -255,6 +256,7 @@ describe('runDay', () => {
     expect(result.summary.paid).toEqual([
       expect.objectContaining({ address: 'c@d.com' }),
     ]);
+    expect(state.isFinished()).toBe(true);
   });
 
   it('does not count persisted failed recipients in the balance preflight', async () => {
@@ -285,11 +287,12 @@ describe('runDay', () => {
       paymentHash: '',
       status: 'failed',
     })}\n`;
+    const state = memoryState(prior);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts,
       lndhub,
-      state: memoryState(prior),
+      state,
       lock: openLock,
       btcUsd: async () => 100_000,
     });
@@ -303,6 +306,7 @@ describe('runDay', () => {
     expect(result.summary.paid).toEqual([
       expect.objectContaining({ address: 'c@d.com' }),
     ]);
+    expect(state.isFinished()).toBe(true);
   });
 
   it('aborts on low balance', async () => {
@@ -517,17 +521,19 @@ describe('runDay', () => {
       }
       return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
     });
+    const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(config, { live: true, day: '2026-08-23' }, {
       gifts,
       lndhub,
-      state: memoryState(),
+      state,
       lock: openLock,
       btcUsd: async () => 100_000,
     });
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
     expect(invoices).toBe(2);
+    expect(state.isFinished()).toBe(true);
   });
 
   it('treats dry-run gifts API 401 as failed with exit 4', async () => {

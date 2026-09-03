@@ -476,7 +476,9 @@ async function runDayLocked(
     rows.push(paidRow);
   }
 
-  const blocked = config.recipients.every((r) => dayBlock(rows, r.address) !== undefined);
+  const settled = config.recipients.every(
+    (r) => dayBlock(rows, r.address) !== undefined || latestStatus(rows, r.address) === 'failed',
+  );
   const halted =
     dayBlock(rows, HALT_ADDRESS) === 'uncertain' ||
     config.recipients.some((r) => dayBlock(rows, r.address) === 'uncertain');
@@ -490,7 +492,7 @@ async function runDayLocked(
     log('spend.done', { ok: false, reason: 'invoice_unreachable' });
     return finish(3);
   }
-  if (blocked) state.markFinished();
+  if (settled) state.markFinished();
   log('spend.done', { ok: !sawProblem });
   return finish(sawProblem ? 4 : 0);
 }
