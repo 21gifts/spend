@@ -155,6 +155,12 @@ describe('formatPayoutMessage', () => {
     expect(text).not.toContain('available=');
   });
 
+  it('formats an empty reason without a display-name parenthesis', () => {
+    const text = formatPayoutMessage(baseSummary({ reason: '' }), 'scheduler');
+    expect(text).toContain('reason=');
+    expect(text).not.toMatch(/reason= \(/);
+  });
+
   it('abbreviates Wallet of Satoshi on a paid line', () => {
     const text = formatPayoutMessage(
       baseSummary({
@@ -356,10 +362,25 @@ describe('telegramDedupeKey', () => {
     expect(telegramDedupeKey('catchup', baseSummary({ reason: '' }))).toBeNull();
   });
 
+  it('is null for failed-only without a reason', () => {
+    expect(
+      telegramDedupeKey('catchup', baseSummary({ failed: [{ address: 'a@b.com' }] })),
+    ).toBeNull();
+  });
+
   it('is day|reason for catchup and scheduler with empty bags', () => {
     const summary = baseSummary({ reason: 'insufficient_balance' });
     expect(telegramDedupeKey('catchup', summary)).toBe('2026-08-28|insufficient_balance');
     expect(telegramDedupeKey('scheduler', summary)).toBe('2026-08-28|insufficient_balance');
+  });
+
+  it('is day|reason for usd_to_sats even when failed mirrors the preflight', () => {
+    expect(
+      telegramDedupeKey(
+        'catchup',
+        baseSummary({ reason: 'usd_to_sats', failed: [{ address: 'a@b.com' }] }),
+      ),
+    ).toBe('2026-08-28|usd_to_sats');
   });
 
   it('ignores needed and available for the key', () => {
