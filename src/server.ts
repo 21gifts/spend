@@ -31,7 +31,7 @@ import {
   loadTelegram,
   minimalRunSummary,
   notifyPayout,
-  shouldNotify,
+  TelegramDedupe,
   type RunSummary,
   type TelegramSource,
 } from './telegram';
@@ -160,6 +160,7 @@ export function createServer(opts: {
     throw new Error(telegram.error);
   }
   const telegramTarget = telegram.target;
+  const notifyLog = new TelegramDedupe();
   const config = loaded.config;
   /* v8 ignore start — seed was already parsed by loadConfig; copy is best-effort. */
   try {
@@ -413,13 +414,14 @@ export function createServer(opts: {
             }),
           );
           const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
-          if (telegramTarget !== null && shouldNotify(source, summary)) {
-            await notifyPayout({
+          if (telegramTarget !== null && notifyLog.allow(source, summary)) {
+            const sent = await notifyPayout({
               target: telegramTarget,
               summary,
               source,
               fetchImpl,
             });
+            if (sent.ok) notifyLog.remember(source, summary);
           }
           return { exitCode: 4 };
         }
@@ -432,13 +434,14 @@ export function createServer(opts: {
       const withSummary = result as { exitCode: number; summary?: RunSummary };
       const summary =
         withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
-      if (telegramTarget !== null && shouldNotify(source, summary)) {
-        await notifyPayout({
+      if (telegramTarget !== null && notifyLog.allow(source, summary)) {
+        const sent = await notifyPayout({
           target: telegramTarget,
           summary,
           source,
           fetchImpl,
         });
+        if (sent.ok) notifyLog.remember(source, summary);
       }
       return { exitCode: result.exitCode };
     });
