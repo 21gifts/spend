@@ -96,6 +96,67 @@ export function shouldNotify(source: TelegramSource, summary: RunSummary): boole
   );
 }
 
+/**
+ * Dedupe key for scheduler/catch-up preflight notifies.
+ * `null` means always send (CLI, or any paid/uncertain/dry-run line).
+ * A non-empty `summary.reason` with empty paid/uncertain/dryRun is a preflight
+ * key even when `failed` mirrors the reason (e.g. `usd_to_sats`).
+ *
+ * @param source - Scheduler, catch-up, or CLI.
+ * @param summary - Run outcome.
+ * @returns Key string, or `null` when the notify must not be deduped.
+ */
+export function telegramDedupeKey(source: TelegramSource, summary: RunSummary): string | null {
+  if (source === 'cli') {
+    return null;
+  }
+  if (summary.paid.length + summary.uncertain.length + summary.dryRun.length > 0) {
+    return null;
+  }
+  if (typeof summary.reason === 'string' && summary.reason !== '') {
+    return `${summary.day}|${summary.reason}`;
+  }
+  return null;
+}
+
+/** In-memory per-process log of already-sent preflight reasons. */
+export class TelegramDedupe {
+  private readonly seen = new Set<string>();
+
+  /**
+   * Whether this source/summary may still send a Telegram message.
+   * Does not record the key — call {@link remember} only after a successful send.
+   *
+   * @param source - Scheduler, catch-up, or CLI.
+   * @param summary - Run outcome.
+   * @returns Whether to call {@link notifyPayout}.
+   */
+  allow(source: TelegramSource, summary: RunSummary): boolean {
+    if (!shouldNotify(source, summary)) {
+      return false;
+    }
+    const key = telegramDedupeKey(source, summary);
+    if (key === null) {
+      return true;
+    }
+    return !this.seen.has(key);
+  }
+
+  /**
+   * Record a successfully sent preflight reason. No-op when the key is null.
+   *
+   * @param source - Scheduler, catch-up, or CLI.
+   * @param summary - Run outcome that was sent.
+   */
+  remember(source: TelegramSource, summary: RunSummary): void {
+    const key = telegramDedupeKey(source, summary);
+    if (key === null) {
+      return;
+    }
+    this.seen.add(key);
+  }
+}
+
 function formatLine(line: PayoutLine): string {
   const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
@@ -108,6 +169,34 @@ function formatLine(line: PayoutLine): string {
     parts.push(`(${line.reason})`);
   }
   return parts.join('  ');
+}
+
+const REASON_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  insufficient_balance: 'insufficient balance',
+  locked: 'lock held',
+  halted: 'halted',
+  spot_unreadable: 'BTC-USD spot unreadable',
+  usd_to_sats: 'USD to sats failed',
+  balance_unreadable: 'wallet balance unreadable',
+  lndhub_preflight: 'LNDHub preflight failed',
+  bad_lndhub_uri: 'bad LNDHub URI',
+  corrupt_state: 'corrupt payout state',
+  corrupt_recipients: 'corrupt recipients file',
+  invoice_unreachable: 'invoice create unreachable',
+};
+
+/**
+ * Human-readable name for a payout `summary.reason` code.
+ * Known codes use the map below; anything else is the code with `_` replaced by spaces.
+ *
+ * @param reason - Machine reason code from {@link RunSummary.reason}.
+ * @returns Display name (never empty when `reason` is non-empty).
+ */
+export function reasonDisplayName(reason: string): string {
+  if (reason === '') {
+    return '';
+  }
+  return REASON_DISPLAY_NAMES[reason] ?? reason.replaceAll('_', ' ');
 }
 
 /**
@@ -124,6 +213,9 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
   ];
   if (summary.reason !== undefined) {
     let reasonLine = `reason=${summary.reason}`;
+    if (summary.reason !== '') {
+      reasonLine += ` (${reasonDisplayName(summary.reason)})`;
+    }
     if (summary.needed !== undefined) {
       reasonLine += ` needed=${summary.needed}`;
     }

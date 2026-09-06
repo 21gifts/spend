@@ -940,7 +940,7 @@ describe('recipient editor', () => {
     warn.mockRestore();
   });
 
-  it('notifies Telegram when live recipients are corrupt (runPayout and catch-up)', async () => {
+  it('notifies Telegram on corrupt recipients once; catch-up stays silent after runPayout', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
@@ -981,11 +981,275 @@ describe('recipient editor', () => {
     telegramBodies.length = 0;
     await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
     expect(runDay).not.toHaveBeenCalled();
+    expect(telegramBodies).toHaveLength(0);
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('notifies Telegram once when catch-up alone hits corrupt recipients', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-cu-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-08-28T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
+    expect(runDay).not.toHaveBeenCalled();
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
-      chat_id: '-1001234567890',
       text: expect.stringContaining('corrupt_recipients'),
-      disable_web_page_preview: true,
+    });
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('dedupes catch-up insufficient_balance Telegram until a paid run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-cu-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const telegramBodies: unknown[] = [];
+    const insufficient = {
+      exitCode: 3,
+      summary: {
+        day: '2026-09-06',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [] as Array<{ address: string; amountSats?: number }>,
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    };
+    const runDay = vi
+      .fn()
+      .mockResolvedValueOnce(insufficient)
+      .mockResolvedValueOnce({
+        ...insufficient,
+        summary: { ...insufficient.summary, needed: 1600, available: 5 },
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        summary: {
+          day: '2026-09-06',
+          live: true,
+          ok: true,
+          exitCode: 0,
+          paid: [{ address: 'a@b.com', amountSats: 1000 }],
+          skipped: [],
+          failed: [],
+          uncertain: [],
+          dryRun: [],
+        },
+      });
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      text: expect.stringContaining('insufficient_balance'),
+    });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 0 });
+    expect(telegramBodies).toHaveLength(2);
+    expect(telegramBodies[1]).toMatchObject({
+      text: expect.stringContaining('a@b.com'),
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('dedupes scheduler insufficient_balance Telegram across two runPayout calls', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-sched-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-09-06',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      text: expect.stringContaining('insufficient_balance'),
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('dedupes catch-up usd_to_sats Telegram even when failed mirrors the preflight', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-usd-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-09-06',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'usd_to_sats',
+        paid: [],
+        skipped: [],
+        failed: [{ address: 'a@b.com' }],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    expect(telegramBodies).toHaveLength(1);
+    expect(telegramBodies[0]).toMatchObject({
+      text: expect.stringContaining('usd_to_sats'),
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('retries Telegram after a failed send; remember only after HTTP ok', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-remember-fail-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const telegramOkBodies: unknown[] = [];
+    let telegramAttempts = 0;
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-09-06',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramAttempts += 1;
+          if (telegramAttempts === 1) {
+            return new Response('fail', { status: 500 });
+          }
+          telegramOkBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+    });
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    expect(telegramAttempts).toBe(1);
+    expect(telegramOkBodies).toHaveLength(0);
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    expect(telegramAttempts).toBe(2);
+    expect(telegramOkBodies).toHaveLength(1);
+    expect(telegramOkBodies[0]).toMatchObject({
+      text: expect.stringContaining('insufficient_balance'),
     });
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });

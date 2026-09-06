@@ -4,7 +4,10 @@ import {
   loadTelegram,
   minimalRunSummary,
   notifyPayout,
+  reasonDisplayName,
   shouldNotify,
+  telegramDedupeKey,
+  TelegramDedupe,
   type RunSummary,
   type TelegramTarget,
 } from '../telegram';
@@ -139,8 +142,23 @@ describe('formatPayoutMessage', () => {
       'cli',
     );
     expect(text).toContain('source=cli live=true ok=false exit=3');
-    expect(text).toContain('reason=insufficient_balance needed=1500 available=10');
+    expect(text).toContain(
+      'reason=insufficient_balance (insufficient balance) needed=1500 available=10',
+    );
     expect(text).toContain('alice@x  1000 sats  ($1)  (already_paid)');
+  });
+
+  it('formats locked reason with display name and no needed/available', () => {
+    const text = formatPayoutMessage(baseSummary({ reason: 'locked' }), 'scheduler');
+    expect(text).toContain('reason=locked (lock held)');
+    expect(text).not.toContain('needed=');
+    expect(text).not.toContain('available=');
+  });
+
+  it('formats an empty reason without a display-name parenthesis', () => {
+    const text = formatPayoutMessage(baseSummary({ reason: '' }), 'scheduler');
+    expect(text).toContain('reason=');
+    expect(text).not.toMatch(/reason= \(/);
   });
 
   it('abbreviates Wallet of Satoshi on a paid line', () => {
@@ -280,6 +298,30 @@ describe('notifyPayout', () => {
   });
 });
 
+describe('reasonDisplayName', () => {
+  it('maps every known payout reason code', () => {
+    expect(reasonDisplayName('insufficient_balance')).toBe('insufficient balance');
+    expect(reasonDisplayName('locked')).toBe('lock held');
+    expect(reasonDisplayName('halted')).toBe('halted');
+    expect(reasonDisplayName('spot_unreadable')).toBe('BTC-USD spot unreadable');
+    expect(reasonDisplayName('usd_to_sats')).toBe('USD to sats failed');
+    expect(reasonDisplayName('balance_unreadable')).toBe('wallet balance unreadable');
+    expect(reasonDisplayName('lndhub_preflight')).toBe('LNDHub preflight failed');
+    expect(reasonDisplayName('bad_lndhub_uri')).toBe('bad LNDHub URI');
+    expect(reasonDisplayName('corrupt_state')).toBe('corrupt payout state');
+    expect(reasonDisplayName('corrupt_recipients')).toBe('corrupt recipients file');
+    expect(reasonDisplayName('invoice_unreachable')).toBe('invoice create unreachable');
+  });
+
+  it('replaces underscores for unknown codes', () => {
+    expect(reasonDisplayName('foo_bar')).toBe('foo bar');
+  });
+
+  it('returns empty string for empty input', () => {
+    expect(reasonDisplayName('')).toBe('');
+  });
+});
+
 describe('minimalRunSummary', () => {
   it('builds empty bags from an exit code', () => {
     expect(minimalRunSummary('2026-08-28', false, 0)).toEqual({
@@ -293,5 +335,99 @@ describe('minimalRunSummary', () => {
       uncertain: [],
       dryRun: [],
     });
+  });
+});
+
+describe('telegramDedupeKey', () => {
+  it('is null for cli', () => {
+    expect(
+      telegramDedupeKey('cli', baseSummary({ reason: 'insufficient_balance' })),
+    ).toBeNull();
+  });
+
+  it('is null when there is paid activity', () => {
+    expect(
+      telegramDedupeKey(
+        'catchup',
+        baseSummary({
+          reason: 'insufficient_balance',
+          paid: [{ address: 'a@b.com', amountSats: 1 }],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('is null when reason is missing', () => {
+    expect(telegramDedupeKey('scheduler', baseSummary())).toBeNull();
+    expect(telegramDedupeKey('catchup', baseSummary({ reason: '' }))).toBeNull();
+  });
+
+  it('is null for failed-only without a reason', () => {
+    expect(
+      telegramDedupeKey('catchup', baseSummary({ failed: [{ address: 'a@b.com' }] })),
+    ).toBeNull();
+  });
+
+  it('is day|reason for catchup and scheduler with empty bags', () => {
+    const summary = baseSummary({ reason: 'insufficient_balance' });
+    expect(telegramDedupeKey('catchup', summary)).toBe('2026-08-28|insufficient_balance');
+    expect(telegramDedupeKey('scheduler', summary)).toBe('2026-08-28|insufficient_balance');
+  });
+
+  it('is day|reason for usd_to_sats even when failed mirrors the preflight', () => {
+    expect(
+      telegramDedupeKey(
+        'catchup',
+        baseSummary({ reason: 'usd_to_sats', failed: [{ address: 'a@b.com' }] }),
+      ),
+    ).toBe('2026-08-28|usd_to_sats');
+  });
+
+  it('ignores needed and available for the key', () => {
+    expect(
+      telegramDedupeKey(
+        'catchup',
+        baseSummary({ reason: 'insufficient_balance', needed: 1500, available: 10 }),
+      ),
+    ).toBe('2026-08-28|insufficient_balance');
+    expect(
+      telegramDedupeKey(
+        'scheduler',
+        baseSummary({ reason: 'insufficient_balance', needed: 9999, available: 1, btcUsd: 100_000 }),
+      ),
+    ).toBe('2026-08-28|insufficient_balance');
+  });
+});
+
+describe('TelegramDedupe', () => {
+  it('allows the same key until remember, then blocks it', () => {
+    const log = new TelegramDedupe();
+    const summary = baseSummary({ reason: 'insufficient_balance', needed: 100, available: 1 });
+    expect(log.allow('catchup', summary)).toBe(true);
+    expect(log.allow('catchup', summary)).toBe(true);
+    log.remember('catchup', summary);
+    expect(log.allow('catchup', summary)).toBe(false);
+    expect(log.allow('scheduler', summary)).toBe(false);
+  });
+
+  it('keeps allow true when remember is skipped after a failed send', () => {
+    const log = new TelegramDedupe();
+    const summary = baseSummary({ reason: 'insufficient_balance' });
+    expect(log.allow('scheduler', summary)).toBe(true);
+    // failed notifyPayout → no remember
+    expect(log.allow('scheduler', summary)).toBe(true);
+  });
+
+  it('still allows a later paid summary after remembering insufficient_balance', () => {
+    const log = new TelegramDedupe();
+    const preflight = baseSummary({ reason: 'insufficient_balance' });
+    log.remember('catchup', preflight);
+    expect(log.allow('catchup', preflight)).toBe(false);
+    expect(
+      log.allow(
+        'catchup',
+        baseSummary({ paid: [{ address: 'a@b.com', amountSats: 1 }] }),
+      ),
+    ).toBe(true);
   });
 });
