@@ -1154,12 +1154,12 @@ describe('recipient editor', () => {
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({
-      exitCode: 2,
+      exitCode: 3,
       summary: {
         day: '2026-09-06',
         live: true,
         ok: false,
-        exitCode: 2,
+        exitCode: 3,
         reason: 'usd_to_sats',
         paid: [],
         skipped: [],
@@ -1187,8 +1187,8 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 2 });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 2 });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
       text: expect.stringContaining('usd_to_sats'),
