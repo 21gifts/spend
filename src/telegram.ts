@@ -160,13 +160,44 @@ export class TelegramDedupe {
 function formatLine(line: PayoutLine): string {
   const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
-    parts.push(`${line.amountSats} sats`);
+    parts.push(`${line.amountSats} sat`);
   }
   if (line.amountUsd !== undefined) {
     parts.push(`($${line.amountUsd})`);
   }
   if (line.reason !== undefined) {
     parts.push(`(${line.reason})`);
+  }
+  return parts.join('  ');
+}
+
+/** Sum paid+dryRun amounts into a `total` line, or null when neither bag has amounts. */
+function formatTotalLine(paid: PayoutLine[], dryRun: PayoutLine[]): string | null {
+  let sumSats = 0;
+  let hasSats = false;
+  let sumUsd = 0;
+  let hasUsd = false;
+  for (const line of [...paid, ...dryRun]) {
+    if (line.amountSats !== undefined) {
+      sumSats += line.amountSats;
+      hasSats = true;
+    }
+    if (line.amountUsd !== undefined) {
+      sumUsd += line.amountUsd;
+      hasUsd = true;
+    }
+  }
+  if (!hasSats && !hasUsd) {
+    return null;
+  }
+  const parts: string[] = ['total'];
+  if (hasSats) {
+    parts.push(`${sumSats} sat`);
+  }
+  if (hasUsd) {
+    // Guard binary-float artifacts; roster USD steps are at most one decimal.
+    const usd = Math.round(sumUsd * 10) / 10;
+    parts.push(`($${usd})`);
   }
   return parts.join('  ');
 }
@@ -230,6 +261,16 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
   lines.push(
     `paid ${summary.paid.length}  skipped ${summary.skipped.length}  failed ${summary.failed.length}  uncertain ${summary.uncertain.length}  dry-run ${summary.dryRun.length}`,
   );
+  const hasRecipients =
+    summary.paid.length +
+      summary.dryRun.length +
+      summary.failed.length +
+      summary.uncertain.length +
+      summary.skipped.length >
+    0;
+  if (hasRecipients) {
+    lines.push('');
+  }
   for (const line of summary.paid) {
     lines.push(formatLine(line));
   }
@@ -244,6 +285,11 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
   }
   for (const line of summary.skipped) {
     lines.push(formatLine(line));
+  }
+  const totalLine = formatTotalLine(summary.paid, summary.dryRun);
+  if (totalLine !== null) {
+    lines.push('');
+    lines.push(totalLine);
   }
   return lines.join('\n');
 }
