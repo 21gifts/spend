@@ -157,16 +157,63 @@ export class TelegramDedupe {
   }
 }
 
+/**
+ * Format a finite amount with Swiss grouping: `'` thousands, `,` decimals.
+ * Deterministic (no `toLocaleString`); integers keep no trailing fraction.
+ */
+function formatSwissNumber(n: number): string {
+  const raw = String(n);
+  const negative = raw.startsWith('-');
+  const body = negative ? raw.slice(1) : raw;
+  const dot = body.indexOf('.');
+  const intPart = dot === -1 ? body : body.slice(0, dot);
+  const fracPart = dot === -1 ? undefined : body.slice(dot + 1);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  const formatted = fracPart !== undefined ? `${grouped},${fracPart}` : grouped;
+  return negative ? `-${formatted}` : formatted;
+}
+
 function formatLine(line: PayoutLine): string {
   const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
-    parts.push(`${line.amountSats} sats`);
+    parts.push(`${formatSwissNumber(line.amountSats)} sat`);
   }
   if (line.amountUsd !== undefined) {
-    parts.push(`($${line.amountUsd})`);
+    parts.push(`($${formatSwissNumber(line.amountUsd)})`);
   }
   if (line.reason !== undefined) {
     parts.push(`(${line.reason})`);
+  }
+  return parts.join('  ');
+}
+
+/** Sum paid+dryRun amounts into a `total` line, or null when neither bag has amounts. */
+function formatTotalLine(paid: PayoutLine[], dryRun: PayoutLine[]): string | null {
+  let sumSats = 0;
+  let hasSats = false;
+  let sumUsd = 0;
+  let hasUsd = false;
+  for (const line of [...paid, ...dryRun]) {
+    if (line.amountSats !== undefined) {
+      sumSats += line.amountSats;
+      hasSats = true;
+    }
+    if (line.amountUsd !== undefined) {
+      sumUsd += line.amountUsd;
+      hasUsd = true;
+    }
+  }
+  if (!hasSats && !hasUsd) {
+    return null;
+  }
+  const parts: string[] = ['total'];
+  if (hasSats) {
+    parts.push(`${formatSwissNumber(sumSats)} sat`);
+  }
+  if (hasUsd) {
+    // Guard binary-float artifacts; roster USD steps are at most one decimal.
+    const usd = Math.round(sumUsd * 10) / 10;
+    parts.push(`($${formatSwissNumber(usd)})`);
   }
   return parts.join('  ');
 }
@@ -217,19 +264,29 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
       reasonLine += ` (${reasonDisplayName(summary.reason)})`;
     }
     if (summary.needed !== undefined) {
-      reasonLine += ` needed=${summary.needed}`;
+      reasonLine += ` needed=${formatSwissNumber(summary.needed)}`;
     }
     if (summary.available !== undefined) {
-      reasonLine += ` available=${summary.available}`;
+      reasonLine += ` available=${formatSwissNumber(summary.available)}`;
     }
     lines.push(reasonLine);
   }
   if (summary.btcUsd !== undefined) {
-    lines.push(`btcUsd=${summary.btcUsd}`);
+    lines.push(`btcUsd=${formatSwissNumber(summary.btcUsd)}`);
   }
   lines.push(
     `paid ${summary.paid.length}  skipped ${summary.skipped.length}  failed ${summary.failed.length}  uncertain ${summary.uncertain.length}  dry-run ${summary.dryRun.length}`,
   );
+  const hasRecipients =
+    summary.paid.length +
+      summary.dryRun.length +
+      summary.failed.length +
+      summary.uncertain.length +
+      summary.skipped.length >
+    0;
+  if (hasRecipients) {
+    lines.push('');
+  }
   for (const line of summary.paid) {
     lines.push(formatLine(line));
   }
@@ -244,6 +301,11 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
   }
   for (const line of summary.skipped) {
     lines.push(formatLine(line));
+  }
+  const totalLine = formatTotalLine(summary.paid, summary.dryRun);
+  if (totalLine !== null) {
+    lines.push('');
+    lines.push(totalLine);
   }
   return lines.join('\n');
 }

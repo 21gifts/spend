@@ -122,11 +122,95 @@ describe('formatPayoutMessage', () => {
       [
         '21gifts spend 2026-08-28 UTC',
         'source=scheduler live=true ok=true exit=0',
-        'btcUsd=100000',
+        "btcUsd=100'000",
         'paid 1  skipped 0  failed 0  uncertain 0  dry-run 0',
-        'alice@x  1000 sats  ($1)',
+        '',
+        "alice@x  1'000 sat  ($1)",
+        '',
+        "total  1'000 sat  ($1)",
       ].join('\n'),
     );
+  });
+
+  it('sums two paid lines including a 3.5 USD amount', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [
+          { address: 'a@walletofsatoshi.com', amountSats: 3794, amountUsd: 3.5 },
+          { address: 'b@walletofsatoshi.com', amountSats: 5058, amountUsd: 4 },
+        ],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain(
+      "paid 2  skipped 0  failed 0  uncertain 0  dry-run 0\n\na@w...  3'794 sat  ($3,5)",
+    );
+    expect(text).toContain("b@w...  5'058 sat  ($4)");
+    expect(text).toContain("\n\ntotal  8'852 sat  ($7,5)");
+    expect(text).not.toContain('$7.50');
+    expect(text).not.toContain('$7.5');
+    expect(text).not.toContain('$3.5');
+    expect(text).not.toMatch(/\d+ sats\b/);
+  });
+
+  it('totals dry-run only, not skipped', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        dryRun: [{ address: 'dry@x', amountSats: 2000, amountUsd: 2 }],
+        skipped: [{ address: 'skip@x', amountSats: 9999, amountUsd: 9, reason: 'already_paid' }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain(
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 1\n\ndry@x  2'000 sat  ($2)",
+    );
+    expect(text).toContain("skip@x  9'999 sat  ($9)  (already_paid)");
+    expect(text).toContain("\n\ntotal  2'000 sat  ($2)");
+    expect(text).not.toContain('total  11999');
+    const dryIdx = text.indexOf('dry@x');
+    const skipIdx = text.indexOf('skip@x');
+    expect(dryIdx).toBeGreaterThan(-1);
+    expect(skipIdx).toBeGreaterThan(dryIdx);
+  });
+
+  it('sums mixed paid and dry-run into total', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'paid@x', amountSats: 1000, amountUsd: 1 }],
+        dryRun: [{ address: 'dry@x', amountSats: 500, amountUsd: 0.5 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain("paid@x  1'000 sat  ($1)");
+    expect(text).toContain('dry@x  500 sat  ($0,5)');
+    expect(text).toContain("total  1'500 sat  ($1,5)");
+  });
+
+  it('skipped-only with amounts: blank after counts, no total', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [{ address: 'alice@x', amountSats: 1000, amountUsd: 1, reason: 'already_paid' }],
+      }),
+      'cli',
+    );
+    expect(text).toContain(
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1'000 sat  ($1)  (already_paid)",
+    );
+    expect(text).not.toMatch(/^total /m);
+    expect(text).not.toContain('total  ');
+  });
+
+  it('empty bags: no extra blank, no total', () => {
+    const text = formatPayoutMessage(baseSummary(), 'scheduler');
+    expect(text).toBe(
+      [
+        '21gifts spend 2026-08-28 UTC',
+        'source=scheduler live=true ok=true exit=0',
+        'paid 0  skipped 0  failed 0  uncertain 0  dry-run 0',
+      ].join('\n'),
+    );
+    expect(text).not.toContain('total  ');
+    expect(text.endsWith('\n')).toBe(false);
   });
 
   it('formats reason with needed and available', () => {
@@ -143,9 +227,13 @@ describe('formatPayoutMessage', () => {
     );
     expect(text).toContain('source=cli live=true ok=false exit=3');
     expect(text).toContain(
-      'reason=insufficient_balance (insufficient balance) needed=1500 available=10',
+      "reason=insufficient_balance (insufficient balance) needed=1'500 available=10",
     );
-    expect(text).toContain('alice@x  1000 sats  ($1)  (already_paid)');
+    expect(text).toContain("alice@x  1'000 sat  ($1)  (already_paid)");
+    expect(text).toContain(
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1'000 sat  ($1)  (already_paid)",
+    );
+    expect(text).not.toMatch(/^total /m);
   });
 
   it('formats locked reason with display name and no needed/available', () => {
@@ -168,7 +256,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('alice@w...  1000 sats  ($1)');
+    expect(text).toContain("alice@w...  1'000 sat  ($1)");
     expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
   });
 
@@ -190,7 +278,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('9643e3@lightning.space  500 sats  ($0.5)');
+    expect(text).toContain('9643e3@lightning.space  500 sat  ($0,5)');
   });
 
   it('does not abbreviate a Wallet of Satoshi suffix trap', () => {
@@ -200,7 +288,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('user@walletofsatoshi.com.evil  100 sats  ($0.1)');
+    expect(text).toContain('user@walletofsatoshi.com.evil  100 sat  ($0,1)');
   });
 
   it('abbreviates Wallet of Satoshi on skipped lines', () => {
@@ -217,8 +305,89 @@ describe('formatPayoutMessage', () => {
       }),
       'cli',
     );
-    expect(text).toContain('alice@w...  1000 sats  ($1)  (already_paid)');
+    expect(text).toContain("alice@w...  1'000 sat  ($1)  (already_paid)");
     expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
+    expect(text).toContain(
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@w...  1'000 sat  ($1)  (already_paid)",
+    );
+    expect(text).not.toMatch(/^total /m);
+  });
+
+  it('guards binary-float usd total (0.1 + 0.2)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [
+          { address: 'a@x', amountSats: 1, amountUsd: 0.1 },
+          { address: 'b@x', amountSats: 1, amountUsd: 0.2 },
+        ],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('($0,3)');
+    expect(text).not.toContain('($0.3)');
+    expect(text).not.toContain('0.30000000000000004');
+  });
+
+  it('formats integer usd total without a trailing .0', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountSats: 63230, amountUsd: 50 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain("total  63'230 sat  ($50)");
+    expect(text).not.toContain('$50.0');
+  });
+
+  it('excludes failed and uncertain amounts from total', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'paid@x', amountSats: 1000, amountUsd: 1 }],
+        failed: [{ address: 'fail@x', amountSats: 500, amountUsd: 0.5 }],
+        uncertain: [{ address: 'unc@x', amountSats: 400, amountUsd: 0.4 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain("total  1'000 sat  ($1)");
+    expect(text).not.toContain('total  1900');
+    expect(text).not.toContain('($1.9)');
+  });
+
+  it('formats a sat-only total without usd', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountSats: 1000 }],
+      }),
+      'scheduler',
+    );
+    const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
+    expect(totalLine).toBe("total  1'000 sat");
+    expect(totalLine).not.toContain('($');
+  });
+
+  it('formats a usd-only total without sats', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountUsd: 3 }],
+      }),
+      'scheduler',
+    );
+    const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
+    expect(totalLine).toBe('total  ($3)');
+    expect(totalLine).not.toMatch(/\bsat\b/);
+  });
+
+  it('formats fractional btcUsd with Swiss decimals when printed', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        btcUsd: 79074.825,
+        paid: [{ address: 'alice@x', amountSats: 1000, amountUsd: 1 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain("btcUsd=79'074,825");
+    expect(text).toContain("1'000 sat");
+    expect(text).not.toContain('1000 sat');
   });
 });
 
