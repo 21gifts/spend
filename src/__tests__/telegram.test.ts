@@ -122,12 +122,12 @@ describe('formatPayoutMessage', () => {
       [
         '21gifts spend 2026-08-28 UTC',
         'source=scheduler live=true ok=true exit=0',
-        'btcUsd=100000',
+        "btcUsd=100'000",
         'paid 1  skipped 0  failed 0  uncertain 0  dry-run 0',
         '',
-        'alice@x  1000 sat  ($1)',
+        "alice@x  1'000 sat  ($1)",
         '',
-        'total  1000 sat  ($1)',
+        "total  1'000 sat  ($1)",
       ].join('\n'),
     );
   });
@@ -143,11 +143,13 @@ describe('formatPayoutMessage', () => {
       'scheduler',
     );
     expect(text).toContain(
-      'paid 2  skipped 0  failed 0  uncertain 0  dry-run 0\n\na@w...  3794 sat  ($3.5)',
+      "paid 2  skipped 0  failed 0  uncertain 0  dry-run 0\n\na@w...  3'794 sat  ($3,5)",
     );
-    expect(text).toContain('b@w...  5058 sat  ($4)');
-    expect(text).toContain('\n\ntotal  8852 sat  ($7.5)');
+    expect(text).toContain("b@w...  5'058 sat  ($4)");
+    expect(text).toContain("\n\ntotal  8'852 sat  ($7,5)");
     expect(text).not.toContain('$7.50');
+    expect(text).not.toContain('$7.5');
+    expect(text).not.toContain('$3.5');
     expect(text).not.toMatch(/\d+ sats\b/);
   });
 
@@ -160,10 +162,10 @@ describe('formatPayoutMessage', () => {
       'scheduler',
     );
     expect(text).toContain(
-      'paid 0  skipped 1  failed 0  uncertain 0  dry-run 1\n\ndry@x  2000 sat  ($2)',
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 1\n\ndry@x  2'000 sat  ($2)",
     );
-    expect(text).toContain('skip@x  9999 sat  ($9)  (already_paid)');
-    expect(text).toContain('\n\ntotal  2000 sat  ($2)');
+    expect(text).toContain("skip@x  9'999 sat  ($9)  (already_paid)");
+    expect(text).toContain("\n\ntotal  2'000 sat  ($2)");
     expect(text).not.toContain('total  11999');
     const dryIdx = text.indexOf('dry@x');
     const skipIdx = text.indexOf('skip@x');
@@ -179,9 +181,9 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('paid@x  1000 sat  ($1)');
-    expect(text).toContain('dry@x  500 sat  ($0.5)');
-    expect(text).toContain('total  1500 sat  ($1.5)');
+    expect(text).toContain("paid@x  1'000 sat  ($1)");
+    expect(text).toContain('dry@x  500 sat  ($0,5)');
+    expect(text).toContain("total  1'500 sat  ($1,5)");
   });
 
   it('skipped-only with amounts: blank after counts, no total', () => {
@@ -192,7 +194,7 @@ describe('formatPayoutMessage', () => {
       'cli',
     );
     expect(text).toContain(
-      'paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1000 sat  ($1)  (already_paid)',
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1'000 sat  ($1)  (already_paid)",
     );
     expect(text).not.toMatch(/^total /m);
     expect(text).not.toContain('total  ');
@@ -225,11 +227,11 @@ describe('formatPayoutMessage', () => {
     );
     expect(text).toContain('source=cli live=true ok=false exit=3');
     expect(text).toContain(
-      'reason=insufficient_balance (insufficient balance) needed=1500 available=10',
+      "reason=insufficient_balance (insufficient balance) needed=1'500 available=10",
     );
-    expect(text).toContain('alice@x  1000 sat  ($1)  (already_paid)');
+    expect(text).toContain("alice@x  1'000 sat  ($1)  (already_paid)");
     expect(text).toContain(
-      'paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1000 sat  ($1)  (already_paid)',
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@x  1'000 sat  ($1)  (already_paid)",
     );
     expect(text).not.toMatch(/^total /m);
   });
@@ -254,7 +256,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('alice@w...  1000 sat  ($1)');
+    expect(text).toContain("alice@w...  1'000 sat  ($1)");
     expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
   });
 
@@ -276,7 +278,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('9643e3@lightning.space  500 sat  ($0.5)');
+    expect(text).toContain('9643e3@lightning.space  500 sat  ($0,5)');
   });
 
   it('does not abbreviate a Wallet of Satoshi suffix trap', () => {
@@ -286,7 +288,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('user@walletofsatoshi.com.evil  100 sat  ($0.1)');
+    expect(text).toContain('user@walletofsatoshi.com.evil  100 sat  ($0,1)');
   });
 
   it('abbreviates Wallet of Satoshi on skipped lines', () => {
@@ -303,10 +305,10 @@ describe('formatPayoutMessage', () => {
       }),
       'cli',
     );
-    expect(text).toContain('alice@w...  1000 sat  ($1)  (already_paid)');
+    expect(text).toContain("alice@w...  1'000 sat  ($1)  (already_paid)");
     expect(text.toLowerCase()).not.toContain('walletofsatoshi.com');
     expect(text).toContain(
-      'paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@w...  1000 sat  ($1)  (already_paid)',
+      "paid 0  skipped 1  failed 0  uncertain 0  dry-run 0\n\nalice@w...  1'000 sat  ($1)  (already_paid)",
     );
     expect(text).not.toMatch(/^total /m);
   });
@@ -321,7 +323,8 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('($0.3)');
+    expect(text).toContain('($0,3)');
+    expect(text).not.toContain('($0.3)');
     expect(text).not.toContain('0.30000000000000004');
   });
 
@@ -332,7 +335,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('total  63230 sat  ($50)');
+    expect(text).toContain("total  63'230 sat  ($50)");
     expect(text).not.toContain('$50.0');
   });
 
@@ -345,7 +348,7 @@ describe('formatPayoutMessage', () => {
       }),
       'scheduler',
     );
-    expect(text).toContain('total  1000 sat  ($1)');
+    expect(text).toContain("total  1'000 sat  ($1)");
     expect(text).not.toContain('total  1900');
     expect(text).not.toContain('($1.9)');
   });
@@ -358,7 +361,7 @@ describe('formatPayoutMessage', () => {
       'scheduler',
     );
     const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
-    expect(totalLine).toBe('total  1000 sat');
+    expect(totalLine).toBe("total  1'000 sat");
     expect(totalLine).not.toContain('($');
   });
 
@@ -372,6 +375,19 @@ describe('formatPayoutMessage', () => {
     const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
     expect(totalLine).toBe('total  ($3)');
     expect(totalLine).not.toMatch(/\bsat\b/);
+  });
+
+  it('formats fractional btcUsd with Swiss decimals when printed', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        btcUsd: 79074.825,
+        paid: [{ address: 'alice@x', amountSats: 1000, amountUsd: 1 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain("btcUsd=79'074,825");
+    expect(text).toContain("1'000 sat");
+    expect(text).not.toContain('1000 sat');
   });
 });
 

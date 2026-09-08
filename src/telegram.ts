@@ -157,13 +157,29 @@ export class TelegramDedupe {
   }
 }
 
+/**
+ * Format a finite amount with Swiss grouping: `'` thousands, `,` decimals.
+ * Deterministic (no `toLocaleString`); integers keep no trailing fraction.
+ */
+function formatSwissNumber(n: number): string {
+  const raw = String(n);
+  const negative = raw.startsWith('-');
+  const body = negative ? raw.slice(1) : raw;
+  const dot = body.indexOf('.');
+  const intPart = dot === -1 ? body : body.slice(0, dot);
+  const fracPart = dot === -1 ? undefined : body.slice(dot + 1);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  const formatted = fracPart !== undefined ? `${grouped},${fracPart}` : grouped;
+  return negative ? `-${formatted}` : formatted;
+}
+
 function formatLine(line: PayoutLine): string {
   const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
-    parts.push(`${line.amountSats} sat`);
+    parts.push(`${formatSwissNumber(line.amountSats)} sat`);
   }
   if (line.amountUsd !== undefined) {
-    parts.push(`($${line.amountUsd})`);
+    parts.push(`($${formatSwissNumber(line.amountUsd)})`);
   }
   if (line.reason !== undefined) {
     parts.push(`(${line.reason})`);
@@ -192,12 +208,12 @@ function formatTotalLine(paid: PayoutLine[], dryRun: PayoutLine[]): string | nul
   }
   const parts: string[] = ['total'];
   if (hasSats) {
-    parts.push(`${sumSats} sat`);
+    parts.push(`${formatSwissNumber(sumSats)} sat`);
   }
   if (hasUsd) {
     // Guard binary-float artifacts; roster USD steps are at most one decimal.
     const usd = Math.round(sumUsd * 10) / 10;
-    parts.push(`($${usd})`);
+    parts.push(`($${formatSwissNumber(usd)})`);
   }
   return parts.join('  ');
 }
@@ -248,15 +264,15 @@ export function formatPayoutMessage(summary: RunSummary, source: TelegramSource)
       reasonLine += ` (${reasonDisplayName(summary.reason)})`;
     }
     if (summary.needed !== undefined) {
-      reasonLine += ` needed=${summary.needed}`;
+      reasonLine += ` needed=${formatSwissNumber(summary.needed)}`;
     }
     if (summary.available !== undefined) {
-      reasonLine += ` available=${summary.available}`;
+      reasonLine += ` available=${formatSwissNumber(summary.available)}`;
     }
     lines.push(reasonLine);
   }
   if (summary.btcUsd !== undefined) {
-    lines.push(`btcUsd=${summary.btcUsd}`);
+    lines.push(`btcUsd=${formatSwissNumber(summary.btcUsd)}`);
   }
   lines.push(
     `paid ${summary.paid.length}  skipped ${summary.skipped.length}  failed ${summary.failed.length}  uncertain ${summary.uncertain.length}  dry-run ${summary.dryRun.length}`,
