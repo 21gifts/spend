@@ -230,6 +230,7 @@ const REASON_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   corrupt_state: 'corrupt payout state',
   corrupt_recipients: 'corrupt recipients file',
   invoice_unreachable: 'invoice create unreachable',
+  passkey_unreachable: 'passkey lookup unreachable',
 };
 
 /**

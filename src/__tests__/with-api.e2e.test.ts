@@ -19,8 +19,91 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
       createApp: (deps?: {
         spendApiToken?: string;
         fetchImpl?: typeof fetch;
+        authStore?: {
+          createAccount: (account: {
+            id: string;
+            linkingKey: string | null;
+            role: string;
+            name: string | null;
+            lightningAddress: string | null;
+            lightningAddressVerified: boolean;
+            forumLawsDismissed: boolean;
+            viewKey: string;
+            createdAt: number;
+            rulesAgreedAt: number | null;
+          }) => Promise<void>;
+          createPasskeyCredential: (credential: {
+            credentialId: string;
+            publicKey: Uint8Array;
+            signCount: number;
+            accountId: string;
+            createdAt: number;
+          }) => Promise<boolean>;
+        };
       }) => { fetch: (req: Request) => Promise<Response> };
     };
+    const storeMod = (await import(pathToFileURL(join(dir, 'src/lib/auth/store.ts')).href)) as {
+      InMemoryAuthStore: new () => {
+        createAccount: (account: {
+          id: string;
+          linkingKey: string | null;
+          role: string;
+          name: string | null;
+          lightningAddress: string | null;
+          lightningAddressVerified: boolean;
+          forumLawsDismissed: boolean;
+          viewKey: string;
+          createdAt: number;
+          rulesAgreedAt: number | null;
+        }) => Promise<void>;
+        createPasskeyCredential: (credential: {
+          credentialId: string;
+          publicKey: Uint8Array;
+          signCount: number;
+          accountId: string;
+          createdAt: number;
+        }) => Promise<boolean>;
+      };
+    };
+    const authStore = new storeMod.InMemoryAuthStore();
+    await authStore.createAccount({
+      id: 'alice',
+      linkingKey: null,
+      role: 'basis',
+      name: 'Alice',
+      lightningAddress: 'alice@walletofsatoshi.com',
+      lightningAddressVerified: true,
+      forumLawsDismissed: false,
+      viewKey: 'a'.repeat(64),
+      createdAt: 1,
+      rulesAgreedAt: 1,
+    });
+    await authStore.createPasskeyCredential({
+      credentialId: 'cred-alice',
+      publicKey: new Uint8Array([1]),
+      signCount: 0,
+      accountId: 'alice',
+      createdAt: 1,
+    });
+    await authStore.createAccount({
+      id: 'bob',
+      linkingKey: null,
+      role: 'basis',
+      name: 'Bob',
+      lightningAddress: 'bob@walletofsatoshi.com',
+      lightningAddressVerified: true,
+      forumLawsDismissed: false,
+      viewKey: 'b'.repeat(64),
+      createdAt: 1,
+      rulesAgreedAt: 1,
+    });
+    await authStore.createPasskeyCredential({
+      credentialId: 'cred-bob',
+      publicKey: new Uint8Array([2]),
+      signCount: 0,
+      accountId: 'bob',
+      createdAt: 1,
+    });
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/.well-known/lnurlp/')) {
@@ -39,7 +122,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         headers: { 'content-type': 'application/json' },
       });
     };
-    const api = mod.createApp({ spendApiToken: 'e2e-spend-token', fetchImpl });
+    const api = mod.createApp({ spendApiToken: 'e2e-spend-token', fetchImpl, authStore });
     const stateDir = mkdtempSync(join(tmpdir(), 'spend-e2e-'));
     const seed = join(stateDir, 'seed.json');
     writeFileSync(
