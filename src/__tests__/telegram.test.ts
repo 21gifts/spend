@@ -310,6 +310,69 @@ describe('formatPayoutMessage', () => {
     );
     expect(text).not.toMatch(/^total /m);
   });
+
+  it('guards binary-float usd total (0.1 + 0.2)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [
+          { address: 'a@x', amountSats: 1, amountUsd: 0.1 },
+          { address: 'b@x', amountSats: 1, amountUsd: 0.2 },
+        ],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('($0.3)');
+    expect(text).not.toContain('0.30000000000000004');
+  });
+
+  it('formats integer usd total without a trailing .0', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountSats: 63230, amountUsd: 50 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('total  63230 sat  ($50)');
+    expect(text).not.toContain('$50.0');
+  });
+
+  it('excludes failed and uncertain amounts from total', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'paid@x', amountSats: 1000, amountUsd: 1 }],
+        failed: [{ address: 'fail@x', amountSats: 500, amountUsd: 0.5 }],
+        uncertain: [{ address: 'unc@x', amountSats: 400, amountUsd: 0.4 }],
+      }),
+      'scheduler',
+    );
+    expect(text).toContain('total  1000 sat  ($1)');
+    expect(text).not.toContain('total  1900');
+    expect(text).not.toContain('($1.9)');
+  });
+
+  it('formats a sat-only total without usd', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountSats: 1000 }],
+      }),
+      'scheduler',
+    );
+    const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
+    expect(totalLine).toBe('total  1000 sat');
+    expect(totalLine).not.toContain('($');
+  });
+
+  it('formats a usd-only total without sats', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        paid: [{ address: 'alice@x', amountUsd: 3 }],
+      }),
+      'scheduler',
+    );
+    const totalLine = text.split('\n').find((l) => l.startsWith('total  '));
+    expect(totalLine).toBe('total  ($3)');
+    expect(totalLine).not.toMatch(/\bsat\b/);
+  });
 });
 
 describe('notifyPayout', () => {
