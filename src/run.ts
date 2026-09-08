@@ -175,6 +175,25 @@ async function runDayLocked(
     satsByAddress.set(recipient.address, sats);
   }
 
+  const noPasskey = new Set<string>();
+  for (const recipient of config.recipients) {
+    if (dayBlock(rows, recipient.address) !== undefined) {
+      continue;
+    }
+    if (latestStatus(rows, recipient.address) === 'failed') {
+      continue;
+    }
+    try {
+      const eligible = await gifts.hasPasskey(recipient.address);
+      if (!eligible) {
+        noPasskey.add(recipient.address);
+      }
+    } catch {
+      log('spend.done', { ok: false, reason: 'passkey_unreachable' });
+      return finish(3, { reason: 'passkey_unreachable' });
+    }
+  }
+
   log('spend.start', {
     live: options.live,
     day: options.day,
@@ -185,7 +204,10 @@ async function runDayLocked(
   let token = '';
   if (options.live) {
     const pending = config.recipients.filter(
-      (r) => dayBlock(rows, r.address) === undefined && latestStatus(rows, r.address) !== 'failed',
+      (r) =>
+        dayBlock(rows, r.address) === undefined &&
+        latestStatus(rows, r.address) !== 'failed' &&
+        !noPasskey.has(r.address),
     );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
@@ -250,6 +272,11 @@ async function runDayLocked(
       skipped.push({ ...lineBase, reason: 'failed' });
       continue;
     }
+    if (noPasskey.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
+      skipped.push({ ...lineBase, reason: 'no_passkey' });
+      continue;
+    }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
@@ -273,6 +300,15 @@ async function runDayLocked(
         };
         state.append(claimed);
         rows.push(claimed);
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Passkey required'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
+        skipped.push({ ...lineBase, reason: 'no_passkey' });
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;

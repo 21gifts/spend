@@ -18,7 +18,7 @@ export class GiftsApiError extends Error {
 }
 
 /**
- * Client for `POST /invoices` and `POST /invoices/proof`.
+ * Client for `GET /invoices/passkey`, `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
   constructor(
@@ -26,6 +26,22 @@ export class GiftsApi {
     private readonly token: string,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
+
+  /**
+   * Whether 21.gifts reports a passkey for this Lightning Address.
+   *
+   * @param address - LUD-16 address.
+   * @returns `true` when the address has a passkey.
+   */
+  async hasPasskey(address: string): Promise<boolean> {
+    const path = `/invoices/passkey?address=${encodeURIComponent(address)}`;
+    const json = await this.getJson(path);
+    const has = json['hasPasskey'];
+    if (typeof has !== 'boolean') {
+      throw new GiftsApiError(0, 'malformed passkey response');
+    }
+    return has;
+  }
 
   /**
    * Fetch a BOLT11 from 21.gifts for one recipient.
@@ -65,16 +81,31 @@ export class GiftsApi {
     await this.postJson('/invoices/proof', { id, preimage });
   }
 
+  private async getJson(path: string): Promise<Record<string, unknown>> {
+    return this.requestJson(path, { method: 'GET' });
+  }
+
   private async postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
+    return this.requestJson(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  private async requestJson(
+    path: string,
+    init: { method: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Record<string, unknown>> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        method: 'POST',
+        method: init.method,
         headers: {
           authorization: `Bearer ${this.token}`,
-          'content-type': 'application/json',
+          ...(init.headers ?? {}),
         },
-        body: JSON.stringify(body),
+        ...(init.body !== undefined ? { body: init.body } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'network error';

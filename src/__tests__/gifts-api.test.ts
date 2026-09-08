@@ -57,4 +57,38 @@ describe('GiftsApi', () => {
     );
     await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
   });
+
+  it('hasPasskey returns true', async () => {
+    let seenUrl = '';
+    let auth = '';
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      seenUrl = String(url);
+      auth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+    });
+    await expect(api.hasPasskey('a@b.com')).resolves.toBe(true);
+    expect(seenUrl).toBe('https://api.21.gifts/invoices/passkey?address=a%40b.com');
+    expect(auth).toBe('Bearer tok');
+  });
+
+  it('hasPasskey returns false', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPasskey: false }), { status: 200 }),
+    );
+    await expect(api.hasPasskey('a@b.com')).resolves.toBe(false);
+  });
+
+  it('hasPasskey throws on 503', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
+    );
+    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('hasPasskey maps network failure to status 0', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
+      throw new Error('offline');
+    });
+    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 0 });
+  });
 });
