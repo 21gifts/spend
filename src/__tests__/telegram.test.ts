@@ -313,6 +313,42 @@ describe('formatPayoutMessage', () => {
     expect(text).not.toMatch(/^total /m);
   });
 
+  it('renders no_passkey skip as (kein Passwort)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'no_passkey',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('(kein Passwort)');
+    expect(text).not.toContain('(no_passkey)');
+  });
+
+  it('renders no_post skip as (hat sich nicht vorgestellt)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@x',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'no_post',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('(hat sich nicht vorgestellt)');
+    expect(text).not.toContain('(no_post)');
+  });
+
   it('guards binary-float usd total (0.1 + 0.2)', () => {
     const text = formatPayoutMessage(
       baseSummary({
