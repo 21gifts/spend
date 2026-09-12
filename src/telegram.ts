@@ -231,6 +231,7 @@ const REASON_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   corrupt_recipients: 'corrupt recipients file',
   invoice_unreachable: 'invoice create unreachable',
   passkey_unreachable: 'passkey lookup unreachable',
+  posted_unreachable: 'forum post lookup unreachable',
 };
 
 /**

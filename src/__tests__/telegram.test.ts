@@ -481,6 +481,7 @@ describe('reasonDisplayName', () => {
     expect(reasonDisplayName('corrupt_recipients')).toBe('corrupt recipients file');
     expect(reasonDisplayName('invoice_unreachable')).toBe('invoice create unreachable');
     expect(reasonDisplayName('passkey_unreachable')).toBe('passkey lookup unreachable');
+    expect(reasonDisplayName('posted_unreachable')).toBe('forum post lookup unreachable');
   });
 
   it('replaces underscores for unknown codes', () => {

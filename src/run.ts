@@ -176,6 +176,7 @@ async function runDayLocked(
   }
 
   const noPasskey = new Set<string>();
+  const noPost = new Set<string>();
   for (const recipient of config.recipients) {
     if (dayBlock(rows, recipient.address) !== undefined) {
       continue;
@@ -184,13 +185,23 @@ async function runDayLocked(
       continue;
     }
     try {
-      const eligible = await gifts.hasPasskey(recipient.address);
-      if (!eligible) {
+      const eligiblePasskey = await gifts.hasPasskey(recipient.address);
+      if (!eligiblePasskey) {
         noPasskey.add(recipient.address);
+        continue;
       }
     } catch {
       log('spend.done', { ok: false, reason: 'passkey_unreachable' });
       return finish(3, { reason: 'passkey_unreachable' });
+    }
+    try {
+      const eligiblePosted = await gifts.hasPosted(recipient.address);
+      if (!eligiblePosted) {
+        noPost.add(recipient.address);
+      }
+    } catch {
+      log('spend.done', { ok: false, reason: 'posted_unreachable' });
+      return finish(3, { reason: 'posted_unreachable' });
     }
   }
 
@@ -207,7 +218,8 @@ async function runDayLocked(
       (r) =>
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
-        !noPasskey.has(r.address),
+        !noPasskey.has(r.address) &&
+        !noPost.has(r.address),
     );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
@@ -277,6 +289,11 @@ async function runDayLocked(
       skipped.push({ ...lineBase, reason: 'no_passkey' });
       continue;
     }
+    if (noPost.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'no_post' });
+      skipped.push({ ...lineBase, reason: 'no_post' });
+      continue;
+    }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
@@ -309,6 +326,15 @@ async function runDayLocked(
       ) {
         log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
         skipped.push({ ...lineBase, reason: 'no_passkey' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Forum post required'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'no_post' });
+        skipped.push({ ...lineBase, reason: 'no_post' });
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;
