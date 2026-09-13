@@ -173,6 +173,12 @@ function formatSwissNumber(n: number): string {
   return negative ? `-${formatted}` : formatted;
 }
 
+/** German why-text for recipient skip/fail codes; other reasons stay the raw code. */
+const SKIP_REASON_DISPLAY: Readonly<Record<string, string>> = {
+  no_passkey: 'kein Passwort',
+  no_post: 'hat sich nicht vorgestellt',
+};
+
 function formatLine(line: PayoutLine): string {
   const parts: string[] = [displayLightningAddress(line.address)];
   if (line.amountSats !== undefined) {
@@ -182,7 +188,7 @@ function formatLine(line: PayoutLine): string {
     parts.push(`($${formatSwissNumber(line.amountUsd)})`);
   }
   if (line.reason !== undefined) {
-    parts.push(`(${line.reason})`);
+    parts.push(`(${SKIP_REASON_DISPLAY[line.reason] ?? line.reason})`);
   }
   return parts.join('  ');
 }
@@ -231,6 +237,7 @@ const REASON_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   corrupt_recipients: 'corrupt recipients file',
   invoice_unreachable: 'invoice create unreachable',
   passkey_unreachable: 'passkey lookup unreachable',
+  posted_unreachable: 'forum post lookup unreachable',
 };
 
 /**

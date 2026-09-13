@@ -18,7 +18,7 @@ export class GiftsApiError extends Error {
 }
 
 /**
- * Client for `GET /invoices/passkey`, `POST /invoices`, and `POST /invoices/proof`.
+ * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
   constructor(
@@ -39,6 +39,22 @@ export class GiftsApi {
     const has = json['hasPasskey'];
     if (typeof has !== 'boolean') {
       throw new GiftsApiError(0, 'malformed passkey response');
+    }
+    return has;
+  }
+
+  /**
+   * Whether 21.gifts reports a live forum post for this Lightning Address.
+   *
+   * @param address - LUD-16 address.
+   * @returns `true` when the address has a live non-profile forum post.
+   */
+  async hasPosted(address: string): Promise<boolean> {
+    const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
+    const json = await this.getJson(path);
+    const has = json['hasPosted'];
+    if (typeof has !== 'boolean') {
+      throw new GiftsApiError(0, 'malformed posted response');
     }
     return has;
   }
