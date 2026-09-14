@@ -15,6 +15,12 @@ export interface RunOptions {
   day: string;
   /** When set, only these live-roster addresses are attempted (case-insensitive). */
   onlyAddresses?: string[];
+  /**
+   * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
+   * Ping sets this for the one pinged address. CLI / runs without a map fall back to
+   * `hasPosted().messageId` when the api returns one.
+   */
+  messageIdByAddress?: Record<string, string>;
 }
 
 /** Outcome of {@link runDay}. */
@@ -72,9 +78,11 @@ function selectTargets(
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
  *
  * `markFinished` still requires every live-roster recipient to be settled.
+ * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
+ * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run, the day key, and optional address filter.
+ * @param options - Live vs dry-run, the day key, optional address filter, and optional post-id map.
  * @param deps - Injected clients (tests).
  * @returns Process exit code and a structured summary for Telegram notify.
  */
@@ -194,6 +202,7 @@ async function runDayLocked(
 
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
+  const postedMessageId = new Map<string, string | null>();
   for (const recipient of targets) {
     if (dayBlock(rows, recipient.address) !== undefined) {
       continue;
@@ -212,10 +221,11 @@ async function runDayLocked(
       return finish(3, { reason: 'passkey_unreachable' });
     }
     try {
-      const eligiblePosted = await gifts.hasPosted(recipient.address);
-      if (!eligiblePosted) {
+      const posted = await gifts.hasPosted(recipient.address);
+      if (!posted.hasPosted) {
         noPost.add(recipient.address);
       }
+      postedMessageId.set(recipient.address, posted.messageId);
     } catch {
       log('spend.done', { ok: false, reason: 'posted_unreachable' });
       return finish(3, { reason: 'posted_unreachable' });
@@ -318,9 +328,16 @@ async function runDayLocked(
     }
 
     const comment = recipient.comment ?? config.comment;
+    const mappedId = options.messageIdByAddress?.[recipient.address.toLowerCase()];
+    const postedId = postedMessageId.get(recipient.address);
+    const invoiceMessageId =
+      typeof mappedId === 'string' ? mappedId : typeof postedId === 'string' ? postedId : undefined;
     let invoice;
     try {
-      invoice = await gifts.createInvoice(recipient.address, amountSats * 1000, comment);
+      invoice =
+        invoiceMessageId === undefined
+          ? await gifts.createInvoice(recipient.address, amountSats * 1000, comment)
+          : await gifts.createInvoice(recipient.address, amountSats * 1000, comment, invoiceMessageId);
     } catch (err) {
       if (err instanceof GiftsApiError && err.status === 409) {
         log('spend.skip', { address: recipient.address, reason: 'already_paid' });

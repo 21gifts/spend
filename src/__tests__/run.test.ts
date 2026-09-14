@@ -290,6 +290,110 @@ describe('runDay', () => {
     expect(state.isFinished()).toBe(false);
   });
 
+  it('forwards hasPosted messageId on the invoice POST body', async () => {
+    let invoiceBody: unknown;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      comment: '21gifts daily',
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
+  it('forwards RunOptions.messageIdByAddress to createInvoice over posted id', async () => {
+    let invoiceBody: unknown;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            messageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      {
+        live: false,
+        day: '2026-08-23',
+        messageIdByAddress: {
+          'a@b.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        },
+      },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      comment: '21gifts daily',
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
   it('skips addresses already paid', async () => {
     let invoices = 0;
     const gifts = new GiftsApi(
