@@ -62,7 +62,7 @@ function renderRow(row: Recipient): string {
 function renderTotalRow(recipients: Recipient[]): string {
   const sum = recipients.reduce((acc, r) => acc + r.amountUsd, 0);
   const usd = slot(formatUsdTotal(sum));
-  return `<li class="row total" aria-label="Total USD">
+  return `<li class="row total">
               <span class="addr">Total</span>
               <span class="inline">
                 <span class="usd-total">${usd}</span>

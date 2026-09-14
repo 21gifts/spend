@@ -78,6 +78,7 @@ describe('renderRecipientsHtml', () => {
     expect(totalLi).not.toContain('action="/recipients/update"');
     expect(totalLi).not.toContain('action="/recipients/delete"');
     expect(totalLi).not.toContain('name="amountUsd"');
+    expect(totalLi).not.toContain('aria-label="Total USD"');
     expect(html).toContain('action="/recipients/update"');
     expect(html).toContain('action="/recipients/delete"');
     expect(html).toContain('name="amountUsd"');
