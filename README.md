@@ -64,6 +64,18 @@ docker run -p 3000:3000 -v spend-state:/data \
   21gifts/spend:latest
 ```
 
+## CI / CD
+
+| Workflow          | Trigger                   | Action                                                                 |
+| ----------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `ci.yml`          | PR; push `main`/`develop` | typecheck + test                                                       |
+| `deploy-dev.yaml` | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy    |
+| `deploy-prd.yaml` | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy  |
+
+Images target `linux/arm64`.
+
+Deploy workflows require GitHub Actions secrets `DOCKER_USERNAME`, `DOCKER_PASSWORD`, `DISPATCH_TOKEN` (PAT to dispatch `image-published` and read that run), and `DISPATCH_REPO` (target `owner/repo` that receives `image-published`). If `DISPATCH_TOKEN` or `DISPATCH_REPO` is missing, deploy fails loud (the image may already be on Hub). After `image-published`, the job waits for the infrastructure run whose title is `image-published 21gifts/spend:<tag> <sha>` and fails if that run does not succeed.
+
 ## Fail-closed
 
 - One payout at a time in-process (concurrent pings share a queue). SIGTERM waits for the in-flight run (55s cap)
