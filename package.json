@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Daily Lightning gift payouts: invoices from 21.gifts api, pay via lightning.space",
+  "description": "Ping-triggered Lightning gift payouts: invoices from 21.gifts api, pay via lightning.space",
   "license": "UNLICENSED",
   "scripts": {
     "start": "bun src/server.ts",

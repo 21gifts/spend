@@ -9,10 +9,12 @@ import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
 
-/** CLI options for one run. */
+/** CLI / ping options for one run. */
 export interface RunOptions {
   live: boolean;
   day: string;
+  /** When set, only these live-roster addresses are attempted (case-insensitive). */
+  onlyAddresses?: string[];
 }
 
 /** Outcome of {@link runDay}. */
@@ -55,11 +57,24 @@ function makeSummary(
   };
 }
 
+function selectTargets(
+  recipients: SpendConfig['recipients'],
+  onlyAddresses: string[] | undefined,
+): SpendConfig['recipients'] {
+  if (onlyAddresses === undefined) {
+    return recipients;
+  }
+  const wanted = new Set(onlyAddresses.map((address) => address.trim().toLowerCase()));
+  return recipients.filter((recipient) => wanted.has(recipient.address.toLowerCase()));
+}
+
 /**
- * Run one UTC day's gifts.
+ * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
+ *
+ * `markFinished` still requires every live-roster recipient to be settled.
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run and the day key.
+ * @param options - Live vs dry-run, the day key, and optional address filter.
  * @param deps - Injected clients (tests).
  * @returns Process exit code and a structured summary for Telegram notify.
  */
@@ -158,8 +173,10 @@ async function runDayLocked(
   }
   btcUsd = rate;
 
+  const targets = selectTargets(config.recipients, options.onlyAddresses);
+
   const satsByAddress = new Map<string, number>();
-  for (const recipient of config.recipients) {
+  for (const recipient of targets) {
     const sats = usdToSats(recipient.amountUsd, rate);
     if (sats === null) {
       log('spend.done', {
@@ -177,7 +194,7 @@ async function runDayLocked(
 
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
-  for (const recipient of config.recipients) {
+  for (const recipient of targets) {
     if (dayBlock(rows, recipient.address) !== undefined) {
       continue;
     }
@@ -208,13 +225,13 @@ async function runDayLocked(
   log('spend.start', {
     live: options.live,
     day: options.day,
-    recipients: config.recipients.length,
+    recipients: targets.length,
     btcUsd: rate,
   });
 
   let token = '';
   if (options.live) {
-    const pending = config.recipients.filter(
+    const pending = targets.filter(
       (r) =>
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
@@ -266,7 +283,7 @@ async function runDayLocked(
     rows.push(halt);
   };
 
-  for (const recipient of config.recipients) {
+  for (const recipient of targets) {
     const amountSats = satsByAddress.get(recipient.address);
     if (amountSats === undefined) {
       throw new Error('satsByAddress incomplete');

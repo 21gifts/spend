@@ -43,10 +43,19 @@ describe('parseArgs', () => {
     }
   });
 
-  it('reads --live, --date, and --at-utc-midnight', () => {
+  it('reads --live, --address, --date, and --at-utc-midnight', () => {
     expect(
       parseArgs(
-        ['bun', 'cli', '--live', '--at-utc-midnight', '--date', '2026-08-23'],
+        [
+          'bun',
+          'cli',
+          '--live',
+          '--address',
+          'a@b.com',
+          '--at-utc-midnight',
+          '--date',
+          '2026-08-23',
+        ],
         new Date('2026-08-25T00:00:00.000Z'),
       ),
     ).toEqual({
@@ -54,7 +63,32 @@ describe('parseArgs', () => {
       live: true,
       day: '2026-08-23',
       atUtcMidnight: true,
+      onlyAddresses: ['a@b.com'],
     });
+  });
+
+  it('rejects --live without --address', () => {
+    const flags = parseArgs(['bun', 'cli', '--live']);
+    expect(flags.ok).toBe(false);
+  });
+
+  it('sets onlyAddresses from --live --address', () => {
+    expect(
+      parseArgs(['bun', 'cli', '--live', '--address', 'a@b.com'], new Date('2026-08-25T00:00:00.000Z')),
+    ).toEqual({
+      ok: true,
+      live: true,
+      day: '2026-08-25',
+      atUtcMidnight: false,
+      onlyAddresses: ['a@b.com'],
+    });
+  });
+
+  it('rejects --address without a value or with a non-address', () => {
+    expect(parseArgs(['bun', 'cli', '--address']).ok).toBe(false);
+    expect(parseArgs(['bun', 'cli', '--address', 'not-an-address']).ok).toBe(false);
+    expect(parseArgs(['bun', 'cli', '--live', '--address']).ok).toBe(false);
+    expect(parseArgs(['bun', 'cli', '--live', '--address', 'not-an-address']).ok).toBe(false);
   });
 
   it('defaults the day from the injected clock', () => {
@@ -91,23 +125,34 @@ describe('isUtcMidnightWindow', () => {
 });
 
 describe('main --at-utc-midnight', () => {
-  it('exits 0 outside the window without loading config', async () => {
+  it('exits 2 for --live --at-utc-midnight without --address before the window check', async () => {
     const code = await main({}, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
       new Date('2026-08-24T22:00:00.000Z'),
+    );
+    expect(code).toBe(2);
+  });
+
+  it('exits 0 outside the window without loading config when --address is set', async () => {
+    const code = await main(
+      {},
+      ['bun', 'cli', '--live', '--at-utc-midnight', '--address', 'a@b.com'],
+      () => new Date('2026-08-24T22:00:00.000Z'),
     );
     expect(code).toBe(0);
   });
 
-  it('still loads config when --at-utc-midnight is omitted', async () => {
+  it('exits 2 for --live without --address', async () => {
     const code = await main({}, ['bun', 'cli', '--live'], () =>
       new Date('2026-08-24T22:00:00.000Z'),
     );
     expect(code).toBe(2);
   });
 
-  it('loads config after the window opens', async () => {
-    const code = await main({}, ['bun', 'cli', '--live', '--at-utc-midnight'], () =>
-      new Date('2026-08-25T00:00:00.000Z'),
+  it('loads config after the window opens when --address is set', async () => {
+    const code = await main(
+      {},
+      ['bun', 'cli', '--live', '--at-utc-midnight', '--address', 'a@b.com'],
+      () => new Date('2026-08-25T00:00:00.000Z'),
     );
     expect(code).toBe(2);
   });

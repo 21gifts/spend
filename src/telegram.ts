@@ -1,7 +1,7 @@
 import { displayLightningAddress } from './html-shell';
 
 /** Who triggered the payout that may notify Telegram. */
-export type TelegramSource = 'scheduler' | 'catchup' | 'cli';
+export type TelegramSource = 'scheduler' | 'catchup' | 'cli' | 'ping';
 
 /** Resolved bot credentials for {@link notifyPayout}. */
 export interface TelegramTarget {
@@ -74,9 +74,9 @@ export function loadTelegram(
 /**
  * Whether a completed run should send a Telegram message for this source.
  *
- * Catch-up is silent when the run only skipped and has no `summary.reason` (already paid, `invoice_unreachable`, persisted failed — no spam on restart or 15-minute retry).
+ * Catch-up and ping are silent when the run only skipped and has no `summary.reason` (already paid, `invoice_unreachable`, persisted failed — no spam on a skip-only ping).
  *
- * @param source - Scheduler, catch-up, or CLI.
+ * @param source - Scheduler, catch-up, ping, or CLI.
  * @param summary - Run outcome.
  * @returns Whether to call {@link notifyPayout}.
  */
@@ -97,12 +97,12 @@ export function shouldNotify(source: TelegramSource, summary: RunSummary): boole
 }
 
 /**
- * Dedupe key for scheduler/catch-up preflight notifies.
+ * Dedupe key for ping/scheduler/catch-up preflight notifies.
  * `null` means always send (CLI, or any paid/uncertain/dry-run line).
  * A non-empty `summary.reason` with empty paid/uncertain/dryRun is a preflight
  * key even when `failed` mirrors the reason (e.g. `usd_to_sats`).
  *
- * @param source - Scheduler, catch-up, or CLI.
+ * @param source - Scheduler, catch-up, ping, or CLI.
  * @param summary - Run outcome.
  * @returns Key string, or `null` when the notify must not be deduped.
  */
@@ -127,7 +127,7 @@ export class TelegramDedupe {
    * Whether this source/summary may still send a Telegram message.
    * Does not record the key — call {@link remember} only after a successful send.
    *
-   * @param source - Scheduler, catch-up, or CLI.
+   * @param source - Scheduler, catch-up, ping, or CLI.
    * @param summary - Run outcome.
    * @returns Whether to call {@link notifyPayout}.
    */
@@ -145,7 +145,7 @@ export class TelegramDedupe {
   /**
    * Record a successfully sent preflight reason. No-op when the key is null.
    *
-   * @param source - Scheduler, catch-up, or CLI.
+   * @param source - Scheduler, catch-up, ping, or CLI.
    * @param summary - Run outcome that was sent.
    */
   remember(source: TelegramSource, summary: RunSummary): void {
