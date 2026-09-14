@@ -29,6 +29,7 @@ test('recipients-one', async ({ page }) => {
   await expect(page.locator('body')).toContainText('alice@w...');
   await expect(page.locator('body')).toContainText('500000 sats');
   await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
+  await expect(page.locator('body')).toContainText('Payment comment');
   await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
 });
 
@@ -39,5 +40,6 @@ test('recipients-empty', async ({ page }) => {
   await expect(page).toHaveURL('/');
   await page.locator('li.row:has(input[name="address"][value="alice@walletofsatoshi.com"]) form[action="/recipients/delete"] button').click();
   await expect(page.locator('body')).toContainText('No recipients');
+  await expect(page.locator('body')).toContainText('Payment comment');
   await expect(page).toHaveScreenshot('recipients-empty.png', SHOT);
 });

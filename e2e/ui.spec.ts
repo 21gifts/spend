@@ -54,4 +54,17 @@ test('public / contains Log in and not the roster until logged in', async ({ req
   expect(html).toContain('action="/"');
   expect(html).not.toContain('alice@w...');
   expect(html).not.toContain('action="/recipients/add"');
+  expect(html).not.toContain('action="/recipients/comment"');
+});
+
+test('login and edit the payment comment', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('input[name=password]', 'test-password');
+  await page.click('button[type=submit]');
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('textarea[name=comment]')).toHaveValue('21gifts daily');
+  await page.locator('form[action="/recipients/comment"] textarea[name=comment]').fill('hello gifts');
+  await page.locator('form[action="/recipients/comment"] button').click();
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('textarea[name=comment]')).toHaveValue('hello gifts');
 });

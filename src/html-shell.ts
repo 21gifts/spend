@@ -49,14 +49,15 @@ h2{font-size:0.85rem;font-weight:600;letter-spacing:0.06em;text-transform:upperc
 form.card p,.card > p{margin:0}
 label.field{display:flex;flex-direction:column;gap:0.5rem;margin:0}
 label.field > span{font-size:0.75rem;letter-spacing:0.04em;color:rgba(255,255,255,0.55);line-height:1.2}
-input[type=text],input[type=password]{
+input[type=text],input[type=password],textarea{
   width:100%;box-sizing:border-box;
   background:#141218;color:#f5f5f4;
   border:1px solid rgba(255,255,255,0.14);
-  border-radius:10px;padding:0.55rem 0.7rem;font:inherit;
-  height:2.75rem
+  border-radius:10px;padding:0.55rem 0.7rem;font:inherit
 }
-input[type=text]:focus,input[type=password]:focus{outline:none;border-color:#f7931a;box-shadow:0 0 0 1px #f7931a}
+input[type=text],input[type=password]{height:2.75rem}
+textarea{min-height:4.5rem;resize:vertical}
+input[type=text]:focus,input[type=password]:focus,textarea:focus{outline:none;border-color:#f7931a;box-shadow:0 0 0 1px #f7931a}
 button.primary{
   background:#f7931a;color:#0a090c;border:0;border-radius:999px;
   font:inherit;font-weight:600;padding:0.55rem 1.1rem;cursor:pointer
@@ -122,6 +123,8 @@ button.icon svg{display:block}
 .login-form .grow,.add-grid .grow{flex:1 1 12rem;min-width:0}
 .add-grid .usd{flex:0 0 6.5rem}
 .login-form button.primary,.add-grid button.primary{box-sizing:border-box;height:2.75rem;flex:0 0 auto;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
+.comment-form{display:flex;flex-direction:column;gap:0.75rem;align-items:stretch}
+.comment-form button.primary{box-sizing:border-box;height:2.75rem;align-self:flex-start;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}`;
 
 /**

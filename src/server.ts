@@ -128,6 +128,14 @@ function parseAddress(raw: string | null): string | null {
   return address;
 }
 
+function parseComment(raw: string | null): { ok: true; comment: string } | { ok: false } {
+  const comment = (raw ?? '').replace(/\r\n|\n|\r/g, ' ').trim();
+  if (comment.length > 500) {
+    return { ok: false };
+  }
+  return { ok: true, comment };
+}
+
 /**
  * HTTP app for the dashboard, recipient editor, and health probe.
  *
@@ -263,7 +271,11 @@ export function createServer(opts: {
         if (!loadedLive.ok) {
           return loadedLive.response;
         }
-        return combinedPage({ kind: 'editor', recipients: loadedLive.recipients });
+        return combinedPage({
+          kind: 'editor',
+          recipients: loadedLive.recipients,
+          comment: loadedLive.comment,
+        });
       }
       return combinedPage({ kind: 'login' });
     }
@@ -313,7 +325,8 @@ export function createServer(opts: {
       req.method === 'POST' &&
       (url.pathname === '/recipients/add' ||
         url.pathname === '/recipients/update' ||
-        url.pathname === '/recipients/delete')
+        url.pathname === '/recipients/delete' ||
+        url.pathname === '/recipients/comment')
     ) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
@@ -333,6 +346,21 @@ export function createServer(opts: {
         const comment = loadedLive.comment;
         let recipients = loadedLive.recipients.map((r) => ({ ...r }));
 
+        if (url.pathname === '/recipients/comment') {
+          const raw = form.get('comment');
+          const parsed = parseComment(raw);
+          if (!parsed.ok) {
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              comment: raw ?? '',
+              error: 'Invalid comment',
+            });
+          }
+          saveLiveRecipients(config.stateDir, { comment: parsed.comment, recipients });
+          return redirect('/');
+        }
+
         if (url.pathname === '/recipients/add') {
           const address = parseAddress(form.get('address'));
           const amountUsd = parseAmountUsd(form.get('amountUsd'));
@@ -340,6 +368,7 @@ export function createServer(opts: {
             return combinedPage({
               kind: 'editor',
               recipients,
+              comment,
               error: 'Invalid address or amount',
             });
           }
@@ -347,6 +376,7 @@ export function createServer(opts: {
             return combinedPage({
               kind: 'editor',
               recipients,
+              comment,
               error: 'Address already listed',
             });
           }
@@ -359,22 +389,38 @@ export function createServer(opts: {
           const address = parseAddress(form.get('address'));
           const amountUsd = parseAmountUsd(form.get('amountUsd'));
           if (address === null) {
-            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              comment,
+              error: 'Unknown address',
+            });
           }
           const idx = recipients.findIndex((r) => r.address === address);
           if (idx < 0) {
-            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              comment,
+              error: 'Unknown address',
+            });
           }
           if (amountUsd === null) {
             return combinedPage({
               kind: 'editor',
               recipients,
+              comment,
               error: 'Invalid address or amount',
             });
           }
           const current = recipients[idx];
           if (current === undefined) {
-            return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
+            return combinedPage({
+              kind: 'editor',
+              recipients,
+              comment,
+              error: 'Unknown address',
+            });
           }
           recipients[idx] = { ...current, amountUsd };
           saveLiveRecipients(config.stateDir, { comment, recipients });
@@ -383,11 +429,21 @@ export function createServer(opts: {
 
         const address = parseAddress(form.get('address'));
         if (address === null) {
-          return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
+          return combinedPage({
+            kind: 'editor',
+            recipients,
+            comment,
+            error: 'Unknown address',
+          });
         }
         const next = recipients.filter((r) => r.address !== address);
         if (next.length === recipients.length) {
-          return combinedPage({ kind: 'editor', recipients, error: 'Unknown address' });
+          return combinedPage({
+            kind: 'editor',
+            recipients,
+            comment,
+            error: 'Unknown address',
+          });
         }
         saveLiveRecipients(config.stateDir, { comment, recipients: next });
         return redirect('/');

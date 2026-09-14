@@ -13,9 +13,15 @@ describe('renderLoginHtml', () => {
     const loginBody = form.slice(form.indexOf('<body>'));
     expect(loginBody).not.toContain('<br>');
     expect(loginBody).not.toContain('add-grid');
+    expect(form).not.toContain('action="/recipients/comment"');
+    expect(form).not.toContain('name="comment"');
+    expect(form).not.toContain('Payment comment');
     expect(renderLoginHtml({ error: 'Invalid password' })).toContain('Invalid password');
     expect(renderLoginHtml({ disabled: true })).toContain('Recipient editor is not configured');
     expect(renderLoginHtml({ disabled: true })).not.toContain('name="password"');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('action="/recipients/comment"');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('name="comment"');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('Payment comment');
   });
 });
 
@@ -23,6 +29,7 @@ describe('renderRecipientsHtml', () => {
   it('renders rows, escapes HTML, and the empty state', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com', amountUsd: 1.5 }],
+      comment: '21gifts daily',
       error: 'Address already listed',
     });
     expect(html).toContain('<title>21.gifts spend</title>');
@@ -32,16 +39,31 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('action="/recipients/delete"');
     expect(html).toContain('action="/recipients/add"');
     expect(html).toContain('action="/logout"');
+    expect(html).toContain('Payment comment');
+    expect(html).toContain('action="/recipients/comment"');
+    expect(html).toContain('name="comment"');
+    expect(html).toContain('Save');
+    expect(html).toContain('>21gifts daily</textarea>');
     expect(html).toContain('Address already listed');
     expect(html).not.toContain('href="/"');
     expect(html).toMatch(/class="addr"[^>]*>a@b\.com</);
     const escaped = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com"><img>', amountUsd: 1 }],
+      comment: '</textarea><script>alert(1)</script>&"',
     });
     expect(escaped).toContain('&quot;');
     expect(escaped).toContain('&lt;img&gt;');
-    const empty = renderRecipientsHtml({ recipients: [] });
+    expect(escaped).toContain(
+      '&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;&quot;',
+    );
+    expect(escaped).not.toContain('</textarea><script>');
+    const empty = renderRecipientsHtml({ recipients: [], comment: '21gifts daily' });
     expect(empty).toContain('No recipients');
+    expect(empty).toContain('Payment comment');
+    expect(empty).toContain('action="/recipients/comment"');
+    expect(empty).toContain('name="comment"');
+    expect(empty).toContain('Save');
+    expect(empty).toContain('>21gifts daily</textarea>');
     expect(empty).toContain('class="card add-grid"');
     expect(empty).toContain('<span>Address</span>');
     expect(empty).toContain('<span>USD</span>');
@@ -52,6 +74,7 @@ describe('renderRecipientsHtml', () => {
   it('abbreviates Wallet of Satoshi in .addr and uses icon buttons', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      comment: '21gifts daily',
     });
     expect(html).toMatch(/class="addr"[^>]*>alice@w\.\.\.</);
     expect(html).toContain('title="alice@walletofsatoshi.com"');
@@ -125,5 +148,8 @@ describe('renderUnconfiguredHtml', () => {
     expect(html).toContain('10 sats');
     expect(html).toContain('x@y.com');
     expect(html).not.toContain('name="password"');
+    expect(html).not.toContain('action="/recipients/comment"');
+    expect(html).not.toContain('name="comment"');
+    expect(html).not.toContain('Payment comment');
   });
 });

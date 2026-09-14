@@ -68,6 +68,13 @@ describe('SHELL_STYLE', () => {
     expect(SHELL_STYLE).toContain('label.field');
   });
 
+  it('styles textarea and the comment form', () => {
+    expect(SHELL_STYLE).toContain('textarea');
+    expect(SHELL_STYLE).toContain('.comment-form');
+    expect(SHELL_STYLE).toContain('min-height:4.5rem');
+    expect(SHELL_STYLE).toContain('resize:vertical');
+  });
+
   it('does not use outline-offset for focus rings', () => {
     expect(SHELL_STYLE).not.toContain('outline-offset');
   });
