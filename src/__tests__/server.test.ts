@@ -467,6 +467,56 @@ describe('createServer', () => {
     }
   });
 
+  it('POST /ping is 200 skipped uncertain when another live recipient is uncertain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-halt-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [
+          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+        ],
+      })}\n`,
+    );
+    writeFileSync(join(dir, 'recipients.json'), readFileSync(seed, 'utf8'));
+    writeFileSync(
+      join(dir, '2026-08-25.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'bob@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('POST /ping is 202 accepted and queues runDay with onlyAddresses without Origin', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

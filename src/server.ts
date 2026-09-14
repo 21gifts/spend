@@ -363,7 +363,10 @@ export function createServer(opts: {
           logPing('skipped', 'paid');
           return json(200, { status: 'skipped', reason: 'paid' });
         }
-        if (block === 'uncertain' || dayBlock(rows, '*halt*') === 'uncertain') {
+        if (
+          dayBlock(rows, '*halt*') === 'uncertain' ||
+          liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain')
+        ) {
           logPing('skipped', 'uncertain');
           return json(200, { status: 'skipped', reason: 'uncertain' });
         }
