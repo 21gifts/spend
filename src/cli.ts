@@ -1,5 +1,6 @@
 import { loadConfig } from './config';
 import { GiftsApi } from './gifts-api';
+import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot } from './price';
 import {
@@ -12,21 +13,6 @@ import { loadTelegram, minimalRunSummary, notifyPayout, shouldNotify } from './t
 import { isUtcMidnightWindow } from './utc-window';
 
 export { isUtcMidnightWindow } from './utc-window';
-
-/**
- * Trim and require a Lightning Address of the form `local@domain`.
- *
- * @param raw - Candidate address.
- * @returns Trimmed address, or `null`.
- */
-function parseCliAddress(raw: string): string | null {
-  const address = raw.trim();
-  const at = address.indexOf('@');
-  if (at <= 0 || at === address.length - 1) {
-    return null;
-  }
-  return address;
-}
 
 /**
  * Parse argv for `--live`, `--date YYYY-MM-DD`, `--address`, and `--at-utc-midnight`.
@@ -66,7 +52,7 @@ export function parseArgs(
       if (value === undefined) {
         return { ok: false, error: '--address requires a Lightning Address (name@domain)' };
       }
-      const parsed = parseCliAddress(value);
+      const parsed = parseLightningAddress(value);
       if (parsed === null) {
         return { ok: false, error: '--address requires a Lightning Address (name@domain)' };
       }

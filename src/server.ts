@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
 import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
+import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
 import { fetchBtcUsdSpot } from './price';
@@ -116,27 +117,13 @@ function parseAmountUsd(raw: string | null): number | null {
   return value;
 }
 
+// Dashboard editor is looser than ping/CLI: any non-empty string containing `@`.
 function parseAddress(raw: string | null): string | null {
   if (raw === null) {
     return null;
   }
   const address = raw.trim();
   if (address === '' || !address.includes('@')) {
-    return null;
-  }
-  return address;
-}
-
-/**
- * Trim and require a Lightning Address of the form `local@domain`.
- *
- * @param raw - Candidate address.
- * @returns Trimmed address, or `null`.
- */
-function parseLightningAddress(raw: string): string | null {
-  const address = raw.trim();
-  const at = address.indexOf('@');
-  if (at <= 0 || at === address.length - 1) {
     return null;
   }
   return address;

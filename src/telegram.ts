@@ -97,7 +97,7 @@ export function shouldNotify(source: TelegramSource, summary: RunSummary): boole
 }
 
 /**
- * Dedupe key for scheduler/catch-up preflight notifies.
+ * Dedupe key for ping/scheduler/catch-up preflight notifies.
  * `null` means always send (CLI, or any paid/uncertain/dry-run line).
  * A non-empty `summary.reason` with empty paid/uncertain/dryRun is a preflight
  * key even when `failed` mirrors the reason (e.g. `usd_to_sats`).
