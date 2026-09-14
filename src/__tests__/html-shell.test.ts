@@ -86,4 +86,15 @@ describe('SHELL_STYLE', () => {
     const rule = SHELL_STYLE.slice(start, end);
     expect(rule).toContain('box-sizing:border-box');
   });
+
+  it('styles the roster total row', () => {
+    expect(SHELL_STYLE).toContain('.row.total');
+    expect(SHELL_STYLE).toContain('.row.total .usd-total');
+    const body = /\.row\.total \.usd-total\{([^}]+)\}/.exec(SHELL_STYLE)?.[1] ?? '';
+    expect(body).not.toContain('background');
+    expect(body).not.toContain('border:');
+    expect(body).not.toContain('border-radius');
+    expect(body).toContain('width:4.75rem');
+    expect(body).toContain('text-align:right');
+  });
 });

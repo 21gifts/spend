@@ -62,6 +62,55 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('aria-label="Delete alice@walletofsatoshi.com"');
     expect(html).toContain('aria-label="USD amount for alice@walletofsatoshi.com"');
   });
+
+  it('appends a non-editable Total row summing USD amounts', () => {
+    const html = renderRecipientsHtml({
+      recipients: [
+        { address: 'a@b.com', amountUsd: 1.5 },
+        { address: 'c@d.com', amountUsd: 2 },
+      ],
+    });
+    expect(html).toContain('class="row total"');
+    expect(html).toContain('>Total</span>');
+    expect(html).toContain('class="usd-total">3.5<');
+    const totalStart = html.indexOf('class="row total"');
+    const totalLi = html.slice(totalStart, html.indexOf('</li>', totalStart));
+    expect(totalLi).not.toContain('action="/recipients/update"');
+    expect(totalLi).not.toContain('action="/recipients/delete"');
+    expect(totalLi).not.toContain('name="amountUsd"');
+    expect(totalLi).not.toContain('aria-label="Total USD"');
+    expect(html).toContain('action="/recipients/update"');
+    expect(html).toContain('action="/recipients/delete"');
+    expect(html).toContain('name="amountUsd"');
+  });
+
+  it('rounds binary float sums to cents', () => {
+    const html = renderRecipientsHtml({
+      recipients: [
+        { address: 'a@b.com', amountUsd: 0.1 },
+        { address: 'c@d.com', amountUsd: 0.2 },
+      ],
+    });
+    expect(html).toContain('class="usd-total">0.3<');
+    expect(html).not.toContain('0.30000000000000004');
+  });
+
+  it('drops trailing zeros on integer totals', () => {
+    const html = renderRecipientsHtml({
+      recipients: [
+        { address: 'a@b.com', amountUsd: 1 },
+        { address: 'c@d.com', amountUsd: 2 },
+      ],
+    });
+    expect(html).toContain('class="usd-total">3<');
+    expect(html).not.toContain('class="usd-total">3.00<');
+  });
+
+  it('omits the Total row when the roster is empty', () => {
+    const empty = renderRecipientsHtml({ recipients: [] });
+    expect(empty).toContain('No recipients');
+    expect(empty).not.toContain('class="row total"');
+  });
 });
 
 describe('renderUnconfiguredHtml', () => {
