@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
+import { bearerMatchesDebugToken } from './debug-token';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
 import { fetchBtcUsdSpot } from './price';
@@ -140,7 +141,7 @@ function parseComment(raw: string | null): { ok: true; comment: string } | { ok:
 }
 
 /**
- * HTTP app for the dashboard, recipient editor, and health probe.
+ * HTTP app for the dashboard, recipient editor, health probe, and operator debug.
  *
  * @param opts - Env, fetch, clock, and optional `retryCatchupMs`.
  * @returns Fetch handler, midnight scheduler starter, live catch-up starter, retry-catchup starter, payout runner, and payout drain.
@@ -182,6 +183,7 @@ export function createServer(opts: {
   /* v8 ignore stop */
   const fetchImpl = opts.fetchImpl ?? fetch;
   const live = opts.env['SPEND_LIVE'] === 'true';
+  const debugToken = opts.env['DEBUG_TOKEN'];
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
     throw new Error('LNDHUB_URI must be an lndhub:// URI');
@@ -258,6 +260,35 @@ export function createServer(opts: {
         status: 200,
         headers: { 'content-type': 'application/json; charset=utf-8' },
       });
+    }
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/debug/recipients') {
+      const json = (status: number, payload: unknown): Response =>
+        new Response(req.method === 'HEAD' ? null : JSON.stringify(payload), {
+          status,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      if (debugToken === undefined || debugToken.trim() === '') {
+        return json(503, { error: 'Debug is not configured' });
+      }
+      if (!bearerMatchesDebugToken(debugToken, req.headers.get('authorization') ?? undefined)) {
+        return json(401, { error: 'Unauthorized' });
+      }
+      try {
+        const liveList = loadLiveRecipients(config.stateDir);
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.debug.recipients',
+            count: liveList.recipients.length,
+          }),
+        );
+        return json(200, { comment: liveList.comment, recipients: liveList.recipients });
+      } catch (err) {
+        if (err instanceof CorruptRecipientsError) {
+          return json(500, { error: 'Recipient list is unreadable' });
+        }
+        throw err;
+      }
     }
     if (req.method === 'HEAD' && url.pathname === '/') {
       return new Response(null, {

@@ -1559,3 +1559,141 @@ describe('recipient editor', () => {
     expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
   });
 });
+
+describe('GET /debug/recipients', () => {
+  it('is 503 when DEBUG_TOKEN is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Debug is not configured' });
+  });
+
+  it('boots and is 503 when DEBUG_TOKEN is empty', async () => {
+    const app = createServer({
+      env: { ...env, DEBUG_TOKEN: '' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Debug is not configured' });
+  });
+
+  it('is 401 when the token is set but the header is missing', async () => {
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('is 401 when the token is set but the bearer is wrong', async () => {
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/debug/recipients', { headers: { authorization: 'Bearer nope' } }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('returns the live comment and roster without a session cookie', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/debug/recipients', {
+        headers: { authorization: 'Bearer secret-debug' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: '21gifts daily',
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    });
+    const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('spend.debug.recipients');
+    expect(logged).toContain('"count":1');
+    expect(logged).not.toContain('21gifts daily');
+    expect(logged).not.toContain('secret-debug');
+    expect(logged).not.toContain('alice@walletofsatoshi.com');
+    warn.mockRestore();
+  });
+
+  it('HEAD with a matching Bearer is 200 with an empty JSON body', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/debug/recipients', {
+        method: 'HEAD',
+        headers: { authorization: 'Bearer secret-debug' },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
+    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    warn.mockRestore();
+  });
+
+  it('is 500 when the live file is corrupt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-debug-bad-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+    const app = createServer({
+      env: {
+        ...env,
+        STATE_DIR: dir,
+        RECIPIENTS_FILE: seed,
+        DEBUG_TOKEN: 'secret-debug',
+      },
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    writeFileSync(join(dir, 'recipients.json'), '{');
+    const res = await app.fetch(
+      req('http://127.0.0.1/debug/recipients', {
+        headers: { authorization: 'Bearer secret-debug' },
+      }),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('HEAD is 503 with an empty body when the token is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/debug/recipients', { method: 'HEAD' }));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe('');
+  });
+});
+
