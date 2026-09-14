@@ -105,6 +105,7 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 1.5 },
         { address: 'c@d.com', amountUsd: 2 },
       ],
+      comment: '21gifts daily',
     });
     expect(html).toContain('class="row total"');
     expect(html).toContain('>Total</span>');
@@ -126,6 +127,7 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 0.1 },
         { address: 'c@d.com', amountUsd: 0.2 },
       ],
+      comment: '21gifts daily',
     });
     expect(html).toContain('class="usd-total">0.3<');
     expect(html).not.toContain('0.30000000000000004');
@@ -137,13 +139,14 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 1 },
         { address: 'c@d.com', amountUsd: 2 },
       ],
+      comment: '21gifts daily',
     });
     expect(html).toContain('class="usd-total">3<');
     expect(html).not.toContain('class="usd-total">3.00<');
   });
 
   it('omits the Total row when the roster is empty', () => {
-    const empty = renderRecipientsHtml({ recipients: [] });
+    const empty = renderRecipientsHtml({ recipients: [], comment: '21gifts daily' });
     expect(empty).toContain('No recipients');
     expect(empty).not.toContain('class="row total"');
   });
