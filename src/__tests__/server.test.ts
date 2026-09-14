@@ -468,7 +468,7 @@ describe('createServer', () => {
   });
 
   it('POST /ping is 200 skipped uncertain when another live recipient is uncertain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-halt-'));
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-uncertain-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
       seed,
