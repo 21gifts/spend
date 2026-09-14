@@ -129,7 +129,10 @@ function parseAddress(raw: string | null): string | null {
 }
 
 function parseComment(raw: string | null): { ok: true; comment: string } | { ok: false } {
-  const comment = (raw ?? '').replace(/\r\n|\n|\r/g, ' ').trim();
+  if (raw === null) {
+    return { ok: false };
+  }
+  const comment = raw.replace(/\r\n|\n|\r/g, ' ').trim();
   if (comment.length > 500) {
     return { ok: false };
   }

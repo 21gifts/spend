@@ -1392,6 +1392,32 @@ describe('recipient editor', () => {
     expect(live.comment).toBe('');
   });
 
+  it('POST /recipients/comment rejects a missing comment field without writing', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: '',
+      }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Invalid comment');
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+    };
+    expect(live.comment).toBe('21gifts daily');
+  });
+
   it('POST /recipients/comment rejects a 501-character comment without writing', async () => {
     const sess = sessionEnv();
     const app = createServer({

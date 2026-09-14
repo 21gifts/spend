@@ -99,7 +99,7 @@ function renderLoginPanel(error?: string): string {
  *
  * @param recipients - Current recipient list
  * @param comment - File-level LUD-12 payment comment
- * @param error - Optional error shown above the roster
+ * @param error - Optional error shown above the payment comment heading
  * @returns Inner HTML fragment
  */
 function renderEditorPanel(recipients: Recipient[], comment: string, error?: string): string {
@@ -114,7 +114,8 @@ function renderEditorPanel(recipients: Recipient[], comment: string, error?: str
             ${renderTotalRow(recipients)}
           </ul>
         </div>`;
-  return `<h2>Payment comment</h2>
+  return `${errorHtml}
+  <h2>Payment comment</h2>
   <form class="card comment-form" method="post" action="/recipients/comment">
     <label class="field grow">
       <span>Comment</span>
@@ -123,7 +124,6 @@ function renderEditorPanel(recipients: Recipient[], comment: string, error?: str
     <button class="primary" type="submit">Save</button>
   </form>
   <h2>Recipients</h2>
-  ${errorHtml}
   ${roster}
   <h2>Add recipient</h2>
   <form class="card add-grid" method="post" action="/recipients/add">
@@ -237,7 +237,7 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
  *
  * @param opts.recipients - Current recipient list
  * @param opts.comment - File-level LUD-12 payment comment
- * @param opts.error - Optional error message shown above the roster
+ * @param opts.error - Optional error message shown above the payment comment heading
  * @returns Complete HTML document.
  */
 export function renderRecipientsHtml(opts: {

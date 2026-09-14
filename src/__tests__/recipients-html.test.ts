@@ -71,6 +71,19 @@ describe('renderRecipientsHtml', () => {
     expect(addForm).not.toContain('<br>');
   });
 
+  it('renders Invalid comment above the payment comment form', () => {
+    const html = renderRecipientsHtml({
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      comment: '21gifts daily',
+      error: 'Invalid comment',
+    });
+    const errorAt = html.indexOf('Invalid comment');
+    expect(errorAt).toBeGreaterThan(-1);
+    expect(errorAt).toBeLessThan(html.indexOf('action="/recipients/comment"'));
+    expect(errorAt).toBeLessThan(html.indexOf('<h2>Payment comment</h2>'));
+    expect(errorAt).toBeLessThan(html.indexOf('<h2>Recipients</h2>'));
+  });
+
   it('abbreviates Wallet of Satoshi in .addr and uses icon buttons', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
