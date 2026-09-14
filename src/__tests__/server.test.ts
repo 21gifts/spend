@@ -1696,4 +1696,3 @@ describe('GET /debug/recipients', () => {
     expect(await res.text()).toBe('');
   });
 });
-
