@@ -40,6 +40,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
             createdAt: number;
           }) => Promise<boolean>;
         };
+        messageStore?: unknown;
       }) => { fetch: (req: Request) => Promise<Response> };
     };
     const storeMod = (await import(pathToFileURL(join(dir, 'src/lib/auth/store.ts')).href)) as {
@@ -64,6 +65,12 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           createdAt: number;
         }) => Promise<boolean>;
       };
+    };
+    const msgStoreMod = (await import(pathToFileURL(join(dir, 'src/lib/message-store.ts')).href)) as {
+      InMemoryMessageStore: new (seed?: readonly unknown[]) => unknown;
+    };
+    const messageMod = (await import(pathToFileURL(join(dir, 'src/lib/message.ts')).href)) as {
+      unsignedNostrDefaults: () => Record<string, unknown>;
     };
     const authStore = new storeMod.InMemoryAuthStore();
     await authStore.createAccount({
@@ -104,6 +111,26 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
       accountId: 'bob',
       createdAt: 1,
     });
+    const messageStore = new msgStoreMod.InMemoryMessageStore([
+      {
+        id: 'post-alice',
+        accountId: 'alice',
+        name: 'Alice',
+        text: 'first',
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        hasPhoto: false,
+        ...messageMod.unsignedNostrDefaults(),
+      },
+      {
+        id: 'post-bob',
+        accountId: 'bob',
+        name: 'Bob',
+        text: 'first',
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        hasPhoto: false,
+        ...messageMod.unsignedNostrDefaults(),
+      },
+    ]);
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/.well-known/lnurlp/')) {
@@ -122,7 +149,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         headers: { 'content-type': 'application/json' },
       });
     };
-    const api = mod.createApp({ spendApiToken: 'e2e-spend-token', fetchImpl, authStore });
+    const api = mod.createApp({ spendApiToken: 'e2e-spend-token', fetchImpl, authStore, messageStore });
     const stateDir = mkdtempSync(join(tmpdir(), 'spend-e2e-'));
     const seed = join(stateDir, 'seed.json');
     writeFileSync(
