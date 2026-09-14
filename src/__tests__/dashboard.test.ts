@@ -126,6 +126,7 @@ describe('renderDashboardHtml', () => {
       {
         kind: 'editor',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: '21gifts daily',
       },
     );
     expect(html).toContain('Log out');

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -147,6 +147,9 @@ describe('createServer', () => {
     expect(html).toContain('Log in');
     expect(html).toContain('action="/"');
     expect(html).toContain('unavailable');
+    expect(html).not.toContain('action="/recipients/comment"');
+    expect(html).not.toContain('name="comment"');
+    expect(html).not.toContain('Payment comment');
   });
 
   it('HEAD / is 200 with empty body and does not load the dashboard', async () => {
@@ -650,6 +653,8 @@ describe('recipient editor', () => {
     const html = await res.text();
     expect(html).toContain('alice@walletofsatoshi.com');
     expect(html).toContain('Log out');
+    expect(html).toContain('>21gifts daily</textarea>');
+    expect(html).toContain('Payment comment');
   });
 
   it('GET /recipients without a cookie redirects to /', async () => {
@@ -1306,5 +1311,251 @@ describe('recipient editor', () => {
       }),
     );
     expect(await res.text()).toContain('Unknown address');
+  });
+
+  it('POST /recipients/comment saves the comment and leaves recipients unchanged', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'comment=hello+gifts',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
+    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(listed.status).toBe(200);
+    expect(await listed.text()).toContain('>hello gifts</textarea>');
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+      recipients: Array<{ address: string; amountUsd: number }>;
+    };
+    expect(live.comment).toBe('hello gifts');
+    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
+  });
+
+  it('POST /recipients/comment collapses whitespace and newlines', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'comment=%0A%20foo%0Abar%20',
+      }),
+    );
+    expect(res.status).toBe(303);
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+    };
+    expect(live.comment).toBe('foo bar');
+  });
+
+  it('POST /recipients/comment allows an empty comment', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'comment=',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+    };
+    expect(live.comment).toBe('');
+  });
+
+  it('POST /recipients/comment rejects a missing comment field without writing', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: '',
+      }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Invalid comment');
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+    };
+    expect(live.comment).toBe('21gifts daily');
+  });
+
+  it('POST /recipients/comment rejects a 501-character comment without writing', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const tooLong = 'x'.repeat(501);
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: `comment=${tooLong}`,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Invalid comment');
+    expect(html).toContain(tooLong);
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+      recipients: Array<{ address: string }>;
+    };
+    expect(live.comment).toBe('21gifts daily');
+    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
+  });
+
+  it('unauthenticated POST /recipients/comment redirects to /', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'comment=hello+gifts',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('POST /recipients/comment without Origin is 403', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const headers = new Headers();
+    headers.set('host', '127.0.0.1');
+    headers.set('content-type', 'application/x-www-form-urlencoded');
+    headers.set('cookie', `spend_session=${token}`);
+    const res = await app.fetch(
+      new Request('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers,
+        body: 'comment=hello+gifts',
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /recipients/comment is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'comment=hello+gifts',
+      }),
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('add, update, and delete preserve the file comment', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    await app.fetch(
+      req('http://127.0.0.1/recipients/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'comment=hello+gifts',
+      }),
+    );
+    await app.fetch(
+      req('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(
+      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
+        .comment,
+    ).toBe('hello gifts');
+    await app.fetch(
+      req('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      }),
+    );
+    expect(
+      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
+        .comment,
+    ).toBe('hello gifts');
+    await app.fetch(
+      req('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com',
+      }),
+    );
+    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+      comment: string;
+      recipients: Array<{ address: string }>;
+    };
+    expect(live.comment).toBe('hello gifts');
+    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
   });
 });

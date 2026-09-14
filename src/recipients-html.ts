@@ -22,11 +22,11 @@ const TRASH_SVG =
  * Optional panel below the Spend block on the combined page.
  *
  * - `login` — password form when the editor is configured but there is no session
- * - `editor` — recipient roster when the session is valid
+ * - `editor` — payment comment + recipient roster when the session is valid
  */
 export type SpendPanel =
   | { kind: 'login'; error?: string }
-  | { kind: 'editor'; recipients: Recipient[]; error?: string };
+  | { kind: 'editor'; recipients: Recipient[]; comment: string; error?: string };
 
 function formatSats(sats: number | null): string {
   return sats === null ? 'unavailable' : `${sats} sats`;
@@ -95,13 +95,14 @@ function renderLoginPanel(error?: string): string {
 }
 
 /**
- * Recipient roster + add form panel (below the Spend block).
+ * Payment comment + recipient roster + add form panel (below the Spend block).
  *
  * @param recipients - Current recipient list
- * @param error - Optional error shown above the roster
+ * @param comment - File-level LUD-12 payment comment
+ * @param error - Optional error shown above the payment comment heading
  * @returns Inner HTML fragment
  */
-function renderEditorPanel(recipients: Recipient[], error?: string): string {
+function renderEditorPanel(recipients: Recipient[], comment: string, error?: string): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   const roster =
@@ -113,8 +114,16 @@ function renderEditorPanel(recipients: Recipient[], error?: string): string {
             ${renderTotalRow(recipients)}
           </ul>
         </div>`;
-  return `<h2>Recipients</h2>
-  ${errorHtml}
+  return `${errorHtml}
+  <h2>Payment comment</h2>
+  <form class="card comment-form" method="post" action="/recipients/comment">
+    <label class="field grow">
+      <span>Comment</span>
+      <textarea name="comment" rows="3" aria-label="Payment comment">${slot(comment)}</textarea>
+    </label>
+    <button class="primary" type="submit">Save</button>
+  </form>
+  <h2>Recipients</h2>
   ${roster}
   <h2>Add recipient</h2>
   <form class="card add-grid" method="post" action="/recipients/add">
@@ -157,7 +166,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.recipients, panel.error)}
+  ${renderEditorPanel(panel.recipients, panel.comment, panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {
@@ -227,17 +236,19 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
  * Recipients wrapper around the combined renderer (null dashboard + editor panel).
  *
  * @param opts.recipients - Current recipient list
- * @param opts.error - Optional error message shown above the roster
+ * @param opts.comment - File-level LUD-12 payment comment
+ * @param opts.error - Optional error message shown above the payment comment heading
  * @returns Complete HTML document.
  */
 export function renderRecipientsHtml(opts: {
   recipients: Recipient[];
+  comment: string;
   error?: string;
 }): string {
   return renderDashboardHtml(
     NULL_DASHBOARD,
     opts.error === undefined
-      ? { kind: 'editor', recipients: opts.recipients }
-      : { kind: 'editor', recipients: opts.recipients, error: opts.error },
+      ? { kind: 'editor', recipients: opts.recipients, comment: opts.comment }
+      : { kind: 'editor', recipients: opts.recipients, comment: opts.comment, error: opts.error },
   );
 }
