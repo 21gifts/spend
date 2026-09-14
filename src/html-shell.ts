@@ -106,10 +106,7 @@ button.icon svg{display:block}
 }
 .row.total .inline{display:flex;align-items:center;gap:0.35rem;margin:0}
 .row.total .usd-total{
-  width:4.75rem;text-align:right;box-sizing:border-box;
-  background:#141218;color:#f5f5f4;
-  border:1px solid rgba(255,255,255,0.14);
-  border-radius:10px;padding:0.4rem 0.5rem;font:inherit
+  width:4.75rem;text-align:right;box-sizing:border-box;padding:0.4rem 0.5rem;font:inherit
 }
 .row.total .icon-spacer{
   width:2.1rem;height:2.1rem;flex:0 0 2.1rem
