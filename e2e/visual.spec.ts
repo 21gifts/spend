@@ -28,6 +28,7 @@ test('recipients-one', async ({ page }) => {
   await expect(page).toHaveURL('/');
   await expect(page.locator('body')).toContainText('alice@w...');
   await expect(page.locator('body')).toContainText('500000 sats');
+  await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
   await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
 });
 

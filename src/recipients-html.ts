@@ -36,6 +36,11 @@ function formatUsd(usd: number | null): string {
   return usd === null ? 'unavailable' : `${usd.toFixed(2)} USD`;
 }
 
+function formatUsdTotal(sum: number): string {
+  const rounded = Math.round(sum * 100) / 100;
+  return String(rounded);
+}
+
 function renderRow(row: Recipient): string {
   const full = slot(row.address);
   const display = slot(displayLightningAddress(row.address));
@@ -51,6 +56,21 @@ function renderRow(row: Recipient): string {
                 <input type="hidden" name="address" value="${full}">
                 <button class="icon danger" type="submit" aria-label="Delete ${full}" title="Delete">${TRASH_SVG}</button>
               </form>
+            </li>`;
+}
+
+function renderTotalRow(recipients: Recipient[]): string {
+  const sum = recipients.reduce((acc, r) => acc + r.amountUsd, 0);
+  const usd = slot(formatUsdTotal(sum));
+  return `<li class="row total" aria-label="Total USD">
+              <span class="addr">Total</span>
+              <span class="inline">
+                <span class="usd-total">${usd}</span>
+                <span class="icon-spacer" aria-hidden="true"></span>
+              </span>
+              <span class="inline">
+                <span class="icon-spacer" aria-hidden="true"></span>
+              </span>
             </li>`;
 }
 
@@ -90,6 +110,7 @@ function renderEditorPanel(recipients: Recipient[], error?: string): string {
       : `<div class="card">
           <ul class="roster">
             ${recipients.map(renderRow).join('\n            ')}
+            ${renderTotalRow(recipients)}
           </ul>
         </div>`;
   return `<h2>Recipients</h2>

@@ -16,7 +16,7 @@ The long-running server (`bun src/server.ts`) serves the dashboard and runs the 
 - the same balance in USD (Coinbase BTC-USD spot)
 - the configured **Lightning Address** (`SPEND_LIGHTNING_ADDRESS`) and a `lightning:` QR
 
-Under that: when `SPEND_DASHBOARD_PASSWORD` is set and there is no session, a compact login form (`POST /`, still accepted at `POST /login`); when the session is valid, the recipient roster plus add and Log out; when the password is unset, the dashboard only (no login form).
+Under that: when `SPEND_DASHBOARD_PASSWORD` is set and there is no session, a compact login form (`POST /`, still accepted at `POST /login`); when the session is valid, the recipient roster plus add and Log out; when the password is unset, the dashboard only (no login form). The roster ends with a Total row summing USD amounts.
 
 `GET /login` and `GET /recipients` redirect to `/` when the editor is configured. When the password is unset or blank, those paths return 503 (Spend block plus a muted notice) and payouts still run. `GET /healthz` is the liveness probe (`HEAD /` and `HEAD /healthz` return 200 with an empty body). Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, 12h; `Secure` when the request is HTTPS or `X-Forwarded-Proto: https`. Mutations are POST-only (`/recipients/add`, `/recipients/update`, `/recipients/delete`, `/logout`); after login, logout, and mutations the response redirects to `/`.
 

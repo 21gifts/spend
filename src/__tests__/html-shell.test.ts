@@ -86,4 +86,8 @@ describe('SHELL_STYLE', () => {
     const rule = SHELL_STYLE.slice(start, end);
     expect(rule).toContain('box-sizing:border-box');
   });
+
+  it('styles the roster total row', () => {
+    expect(SHELL_STYLE).toContain('.row.total');
+  });
 });

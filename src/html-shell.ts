@@ -98,6 +98,22 @@ button.icon{
 }
 button.icon.danger{color:#ff8a8a}
 button.icon svg{display:block}
+.row.total{
+  font-weight:600;
+  border-top:1px solid rgba(255,255,255,0.10);
+  padding-top:0.45rem;
+  margin-top:0.25rem
+}
+.row.total .inline{display:flex;align-items:center;gap:0.35rem;margin:0}
+.row.total .usd-total{
+  width:4.75rem;text-align:right;box-sizing:border-box;
+  background:#141218;color:#f5f5f4;
+  border:1px solid rgba(255,255,255,0.14);
+  border-radius:10px;padding:0.4rem 0.5rem;font:inherit
+}
+.row.total .icon-spacer{
+  width:2.1rem;height:2.1rem;flex:0 0 2.1rem
+}
 .qr{
   display:inline-flex;background:#fff;border-radius:16px;padding:0.75rem;margin-top:1rem
 }
