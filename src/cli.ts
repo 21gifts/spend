@@ -14,7 +14,24 @@ import { isUtcMidnightWindow } from './utc-window';
 export { isUtcMidnightWindow } from './utc-window';
 
 /**
- * Parse argv for `--live`, `--date YYYY-MM-DD`, and `--at-utc-midnight`.
+ * Trim and require a Lightning Address of the form `local@domain`.
+ *
+ * @param raw - Candidate address.
+ * @returns Trimmed address, or `null`.
+ */
+function parseCliAddress(raw: string): string | null {
+  const address = raw.trim();
+  const at = address.indexOf('@');
+  if (at <= 0 || at === address.length - 1) {
+    return null;
+  }
+  return address;
+}
+
+/**
+ * Parse argv for `--live`, `--date YYYY-MM-DD`, `--address`, and `--at-utc-midnight`.
+ *
+ * `--live` without `--address` is rejected so a one-shot cannot pay the whole roster.
  *
  * @param argv - Process arguments including argv0.
  * @param now - Instant used for the default UTC day (must match the window clock).
@@ -24,11 +41,12 @@ export function parseArgs(
   argv: string[],
   now: Date = new Date(),
 ):
-  | { ok: true; live: boolean; day: string; atUtcMidnight: boolean }
+  | { ok: true; live: boolean; day: string; atUtcMidnight: boolean; onlyAddresses?: string[] }
   | { ok: false; error: string } {
   let live = false;
   let atUtcMidnight = false;
   let day = now.toISOString().slice(0, 10);
+  const onlyAddresses: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--live') {
       live = true;
@@ -43,8 +61,31 @@ export function parseArgs(
       }
       day = value;
     }
+    if (argv[i] === '--address') {
+      const value = argv[i + 1];
+      if (value === undefined) {
+        return { ok: false, error: '--address requires a Lightning Address (name@domain)' };
+      }
+      const parsed = parseCliAddress(value);
+      if (parsed === null) {
+        return { ok: false, error: '--address requires a Lightning Address (name@domain)' };
+      }
+      onlyAddresses.push(parsed);
+    }
   }
-  return { ok: true, live, day, atUtcMidnight };
+  if (live && onlyAddresses.length === 0) {
+    return {
+      ok: false,
+      error: '--live requires --address so a one-shot cannot pay the whole roster',
+    };
+  }
+  return {
+    ok: true,
+    live,
+    day,
+    atUtcMidnight,
+    ...(onlyAddresses.length > 0 ? { onlyAddresses } : {}),
+  };
 }
 
 /**
@@ -95,7 +136,11 @@ export async function main(
     const lndhubTarget = parseLndhubUri(loaded.config.lndhubUri);
     const result = await runDay(
       { ...loaded.config, recipients: liveList.recipients, comment: liveList.comment },
-      { live: flags.live, day: flags.day },
+      {
+        live: flags.live,
+        day: flags.day,
+        ...(flags.onlyAddresses !== undefined ? { onlyAddresses: flags.onlyAddresses } : {}),
+      },
       lndhubTarget === null
         ? undefined
         : {

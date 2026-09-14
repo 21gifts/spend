@@ -235,6 +235,61 @@ describe('runDay', () => {
     expect(state.isFinished()).toBe(true);
   });
 
+  it('invoices only onlyAddresses and does not skip-log other roster members', async () => {
+    const invoiced: string[] = [];
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(
+        async (url, init) => {
+          if (url.endsWith('/proof')) {
+            return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+          }
+          const body = JSON.parse(String(init?.body ?? '{}')) as { address?: string };
+          if (typeof body.address === 'string') {
+            invoiced.push(body.address);
+          }
+          return new Response(
+            JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+            { status: 200 },
+          );
+        },
+        { 'bob@walletofsatoshi.com': 'throw' },
+      ),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      {
+        ...config,
+        recipients: [
+          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+          { address: 'bob@walletofsatoshi.com', amountUsd: 0.5 },
+        ],
+      },
+      { live: true, day: '2026-08-23', onlyAddresses: ['alice@walletofsatoshi.com'] },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoiced).toEqual(['alice@walletofsatoshi.com']);
+    expect(result.summary.paid).toEqual([
+      expect.objectContaining({ address: 'alice@walletofsatoshi.com' }),
+    ]);
+    expect(result.summary.skipped).toEqual([]);
+    expect(state.load().some((row) => row.address === 'bob@walletofsatoshi.com')).toBe(false);
+    expect(state.isFinished()).toBe(false);
+  });
+
   it('skips addresses already paid', async () => {
     let invoices = 0;
     const gifts = new GiftsApi(

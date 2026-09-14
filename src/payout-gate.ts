@@ -1,5 +1,5 @@
 /**
- * Serialize payout runs in one process (midnight tick + catch-up).
+ * Serialize payout runs in one process (ping queue and CLI share this gate in the HTTP server).
  *
  * @returns Gate whose `run` callbacks execute one after another.
  */

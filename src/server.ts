@@ -1,8 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
-import { bearerMatchesDebugToken } from './debug-token';
+import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
 import { fetchBtcUsdSpot } from './price';
@@ -17,8 +16,7 @@ import {
   renderUnconfiguredHtml,
   type SpendPanel,
 } from './recipients-html';
-import { runDay } from './run';
-import { startMidnightScheduler } from './scheduler';
+import { runDay, type RunOptions } from './run';
 import {
   SESSION_TTL_SEC,
   clearSessionCookie,
@@ -27,7 +25,7 @@ import {
   sessionCookieHeader,
   sessionCookieValid,
 } from './session';
-import { DayState, dayBlock, latestStatus } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus } from './state';
 import {
   loadTelegram,
   minimalRunSummary,
@@ -129,6 +127,21 @@ function parseAddress(raw: string | null): string | null {
   return address;
 }
 
+/**
+ * Trim and require a Lightning Address of the form `local@domain`.
+ *
+ * @param raw - Candidate address.
+ * @returns Trimmed address, or `null`.
+ */
+function parseLightningAddress(raw: string): string | null {
+  const address = raw.trim();
+  const at = address.indexOf('@');
+  if (at <= 0 || at === address.length - 1) {
+    return null;
+  }
+  return address;
+}
+
 function parseComment(raw: string | null): { ok: true; comment: string } | { ok: false } {
   if (raw === null) {
     return { ok: false };
@@ -141,10 +154,10 @@ function parseComment(raw: string | null): { ok: true; comment: string } | { ok:
 }
 
 /**
- * HTTP app for the dashboard, recipient editor, health probe, and operator debug.
+ * HTTP app for the dashboard, recipient editor, health probe, operator debug, and ping-triggered payouts.
  *
- * @param opts - Env, fetch, clock, and optional `retryCatchupMs`.
- * @returns Fetch handler, midnight scheduler starter, live catch-up starter, retry-catchup starter, payout runner, and payout drain.
+ * @param opts - Env, fetch, clock, and optional `retryCatchupMs` (kept for tests; boot does not start a retry timer).
+ * @returns Fetch handler, no-op scheduler/catch-up starters (kept for tests), payout runner, and payout drain.
  */
 export function createServer(opts: {
   env: Record<string, string | undefined>;
@@ -153,7 +166,7 @@ export function createServer(opts: {
   retryCatchupMs?: number;
   runDay?: (
     config: SpendConfig,
-    options: { live: boolean; day: string },
+    options: RunOptions,
   ) => Promise<{ exitCode: number }>;
 }): {
   fetch: (req: Request) => Promise<Response>;
@@ -178,7 +191,7 @@ export function createServer(opts: {
   try {
     ensureLiveRecipients(config.stateDir, config.recipientsFile);
   } catch {
-    // Seed copy is best-effort; payout/catch-up still fail closed on a bad live file.
+    // Seed copy is best-effort; payout still fail-closes on a bad live file.
   }
   /* v8 ignore stop */
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -289,6 +302,103 @@ export function createServer(opts: {
         }
         throw err;
       }
+    }
+    if (req.method === 'POST' && url.pathname === '/ping') {
+      const json = (status: number, payload: unknown): Response =>
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      if (!bearerMatchesToken(config.giftsApiToken, req.headers.get('authorization') ?? undefined)) {
+        return json(401, { error: 'Unauthorized' });
+      }
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return json(400, { error: 'Expected a JSON body with address' });
+      }
+      if (
+        body === null ||
+        typeof body !== 'object' ||
+        Array.isArray(body) ||
+        !('address' in body) ||
+        typeof (body as { address: unknown }).address !== 'string'
+      ) {
+        return json(400, { error: 'Expected a JSON body with address' });
+      }
+      const parsed = parseLightningAddress((body as { address: string }).address);
+      if (parsed === null) {
+        return json(400, { error: 'Not a valid Lightning Address (expected name@domain)' });
+      }
+      const logPing = (status: string, reason?: string): void => {
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.ping',
+            address: parsed,
+            status,
+            ...(reason !== undefined ? { reason } : {}),
+          }),
+        );
+      };
+      let liveList: { comment: string; recipients: Recipient[] };
+      try {
+        liveList = loadLiveRecipients(config.stateDir);
+      } catch (err) {
+        if (err instanceof CorruptRecipientsError) {
+          return json(500, { error: 'Recipient list is unreadable' });
+        }
+        throw err;
+      }
+      const listed = liveList.recipients.find(
+        (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
+      );
+      if (listed === undefined) {
+        logPing('skipped', 'not_listed');
+        return json(200, { status: 'skipped', reason: 'not_listed' });
+      }
+      const storedAddress = listed.address;
+      const clock = opts.now ?? (() => new Date());
+      const day = clock().toISOString().slice(0, 10);
+      let rows;
+      try {
+        rows = new DayState(config.stateDir, day).load();
+      } catch (err) {
+        if (!(err instanceof CorruptStateError)) {
+          throw err;
+        }
+        rows = undefined;
+      }
+      if (rows !== undefined) {
+        const block = dayBlock(rows, storedAddress);
+        if (block === 'paid') {
+          logPing('skipped', 'paid');
+          return json(200, { status: 'skipped', reason: 'paid' });
+        }
+        if (block === 'uncertain' || dayBlock(rows, '*halt*') === 'uncertain') {
+          logPing('skipped', 'uncertain');
+          return json(200, { status: 'skipped', reason: 'uncertain' });
+        }
+        if (latestStatus(rows, storedAddress) === 'failed') {
+          logPing('skipped', 'failed');
+          return json(200, { status: 'skipped', reason: 'failed' });
+        }
+      }
+      logPing('accepted');
+      void payout(day, 'ping', [storedAddress]).catch((err: unknown) => {
+        const error = err instanceof Error ? err.message : 'ping';
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.ping',
+            address: storedAddress,
+            status: 'error',
+            error,
+          }),
+        );
+      });
+      return json(202, { status: 'accepted' });
     }
     if (req.method === 'HEAD' && url.pathname === '/') {
       return new Response(null, {
@@ -488,7 +598,11 @@ export function createServer(opts: {
   };
 
   const gate = createPayoutGate();
-  const payout = (day: string, source: TelegramSource): Promise<{ exitCode: number }> =>
+  const payout = (
+    day: string,
+    source: TelegramSource,
+    onlyAddresses?: string[],
+  ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
       let liveList: { comment: string; recipients: Recipient[] };
       try {
@@ -517,9 +631,11 @@ export function createServer(opts: {
         }
         throw err;
       }
+      const runOptions: RunOptions =
+        onlyAddresses === undefined ? { live, day } : { live, day, onlyAddresses };
       const result = await (opts.runDay ?? runDay)(
         { ...config, recipients: liveList.recipients, comment: liveList.comment },
-        { live, day },
+        runOptions,
       );
       const withSummary = result as { exitCode: number; summary?: RunSummary };
       const summary =
@@ -537,102 +653,22 @@ export function createServer(opts: {
     });
 
   /**
-   * Live catch-up: pay recipients with no JSONL row for the current UTC day
-   * even outside the midnight window. No-op on `*halt*` uncertain or a live
-   * recipient that is `uncertain`, and when every live recipient already has a
-   * row (`paid` / `failed` / `uncertain` / `dry-run`).
+   * No-op. Payouts are ping-triggered; boot must not pay the roster.
+   *
+   * @returns `null` without calling `runDay`.
    */
-  const startCatchup = async (): Promise<{ exitCode: number } | null> => {
-    if (!live) {
-      return null;
-    }
-    const clock = opts.now ?? (() => new Date());
-    const day = clock().toISOString().slice(0, 10);
-    try {
-      try {
-        const rows = new DayState(config.stateDir, day).load();
-        let recipientUncertain = false;
-        let liveList: { comment: string; recipients: Recipient[] } | undefined;
-        try {
-          liveList = loadLiveRecipients(config.stateDir);
-          recipientUncertain = liveList.recipients.some(
-            (r) => dayBlock(rows, r.address) === 'uncertain',
-          );
-        } catch (err) {
-          if (!(err instanceof CorruptRecipientsError)) {
-            throw err;
-          }
-          // Corrupt roster: fall through to payout (existing fail-closed path).
-        }
-        if (recipientUncertain || dayBlock(rows, '*halt*') === 'uncertain') {
-          return null;
-        }
-        if (liveList !== undefined) {
-          const remaining = liveList.recipients.some(
-            (r) => latestStatus(rows, r.address) === undefined,
-          );
-          if (!remaining) {
-            return null;
-          }
-        }
-      } catch {
-        // Corrupt/unreadable JSONL: fall through so runDay fail-closes.
-      }
-      const result = await payout(day, 'catchup');
-      console.warn(
-        JSON.stringify({
-          ts: clock().toISOString(),
-          event: 'spend.catchup',
-          day,
-          live: true,
-          exitCode: result.exitCode,
-        }),
-      );
-      return result;
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err.message : 'catchup';
-      console.warn(
-        JSON.stringify({
-          ts: clock().toISOString(),
-          event: 'spend.catchup',
-          day,
-          live: true,
-          error,
-        }),
-      );
-      return null;
-    }
-  };
+  const startCatchup = async (): Promise<{ exitCode: number } | null> => null;
 
-  /** Live-only; default 15 minutes; calls `startCatchup`; `stop()` clears the interval. */
-  const startRetryCatchup = (): { stop: () => void } => {
-    if (!live) {
-      return { stop: () => undefined };
-    }
-    const intervalMs = opts.retryCatchupMs ?? 15 * 60 * 1000;
-    const timer = setInterval(() => {
-      void startCatchup();
-    }, intervalMs);
-    return {
-      stop: () => {
-        clearInterval(timer);
-      },
-    };
-  };
+  /**
+   * No-op. Kept so tests can still call `startRetryCatchup().stop()`.
+   *
+   * @returns Handle whose `stop` does nothing.
+   */
+  const startRetryCatchup = (): { stop: () => void } => ({ stop: () => undefined });
 
   return {
     fetch: fetchHandler,
-    startScheduler: () => {
-      const scheduler = {
-        live,
-        run: (day: string) => payout(day, 'scheduler'),
-        isDayFinished: (day: string) => existsSync(join(config.stateDir, `${day}.finished`)),
-      };
-      if (opts.now === undefined) {
-        return startMidnightScheduler(scheduler);
-      }
-      return startMidnightScheduler({ ...scheduler, now: opts.now });
-    },
+    startScheduler: () => ({ stop: () => undefined }),
     startCatchup,
     startRetryCatchup,
     runPayout: (day: string) => payout(day, 'scheduler'),
@@ -666,12 +702,7 @@ if (meta.main === true) {
       port: bind.port,
       fetch: app.fetch,
     });
-    const scheduler = app.startScheduler();
-    const retryCatchup = app.startRetryCatchup();
-    void app.startCatchup();
     const shutdown = (): void => {
-      scheduler.stop();
-      retryCatchup.stop();
       void app.drainPayouts().finally(() => {
         process.exit(0);
       });

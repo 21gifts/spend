@@ -85,17 +85,22 @@ describe('shouldNotify', () => {
     expect(shouldNotify('cli', allSkip)).toBe(true);
   });
 
-  it('is false for catch-up when the run only skipped', () => {
+  it('is false for catch-up and ping when the run only skipped', () => {
     const allSkip = baseSummary({
       skipped: [{ address: 'a@b.com', reason: 'paid' }],
     });
     expect(shouldNotify('catchup', allSkip)).toBe(false);
+    expect(shouldNotify('ping', allSkip)).toBe(false);
   });
 
-  it('is true for catch-up on reason or any paid/failed/uncertain/dry-run', () => {
+  it('is true for catch-up and ping on reason or any paid/failed/uncertain/dry-run', () => {
     expect(shouldNotify('catchup', baseSummary({ reason: 'locked' }))).toBe(true);
+    expect(shouldNotify('ping', baseSummary({ reason: 'locked' }))).toBe(true);
     expect(
       shouldNotify('catchup', baseSummary({ paid: [{ address: 'a@b.com', amountSats: 1 }] })),
+    ).toBe(true);
+    expect(
+      shouldNotify('ping', baseSummary({ paid: [{ address: 'a@b.com', amountSats: 1 }] })),
     ).toBe(true);
     expect(
       shouldNotify('catchup', baseSummary({ failed: [{ address: 'a@b.com' }] })),

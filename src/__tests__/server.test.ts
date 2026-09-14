@@ -36,6 +36,15 @@ function req(url: string, init?: RequestInit): Request {
   return new Request(url, { ...init, headers });
 }
 
+/** `POST /ping` without Origin — the route is api-to-api and must not require it. */
+function pingReq(init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('host')) {
+    headers.set('host', '127.0.0.1');
+  }
+  return new Request('http://127.0.0.1/ping', { ...init, method: 'POST', headers });
+}
+
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
   for (const dir of sessionDirs) {
@@ -164,235 +173,75 @@ describe('createServer', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('passes SPEND_LIVE to the midnight run', async () => {
+  it('startScheduler is a no-op and does not invoke runDay', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
+    const live = createServer({
       env: { ...env, SPEND_LIVE: 'true' },
       now: () => new Date('2026-08-25T00:00:00.000Z'),
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    const handle = app.startScheduler();
+    const liveHandle = live.startScheduler();
     await Promise.resolve();
-    expect(runDay).toHaveBeenCalledWith(
-      expect.anything(),
-      { live: true, day: '2026-08-25' },
-    );
-    handle.stop();
-  });
-
-  it('defaults the midnight run to dry-run without SPEND_LIVE', async () => {
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
+    liveHandle.stop();
+    const dry = createServer({
       env,
       now: () => new Date('2026-08-25T00:00:00.000Z'),
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    const handle = app.startScheduler();
+    const dryHandle = dry.startScheduler();
     await Promise.resolve();
-    expect(runDay).toHaveBeenCalledWith(
-      expect.anything(),
-      { live: false, day: '2026-08-25' },
-    );
-    handle.stop();
+    dryHandle.stop();
+    expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('startCatchup pays remaining live recipients outside midnight', async () => {
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-27T00:43:00.000Z'),
-      runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
-    });
-    const result = await app.startCatchup();
-    expect(result).toEqual({ exitCode: 0 });
-    expect(runDay).toHaveBeenCalledWith(expect.anything(), { live: true, day: '2026-08-27' });
-  });
-
-  it('startCatchup logs and returns null when payout throws', async () => {
+  it('startCatchup always resolves null and does not invoke runDay', async () => {
     const runDay = vi.fn(async () => {
       throw new Error('boom');
     });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const app = createServer({
+    const live = createServer({
       env: { ...env, SPEND_LIVE: 'true' },
       now: () => new Date('2026-08-27T00:43:00.000Z'),
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    await expect(app.startCatchup()).resolves.toBeNull();
-    expect(JSON.stringify(warn.mock.calls)).toContain('spend.catchup');
-    expect(JSON.stringify(warn.mock.calls)).toContain('boom');
-    warn.mockRestore();
-  });
-
-  it('drainPayouts waits for an in-flight catch-up', async () => {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const runDay = vi.fn(async () => {
-      await blocked;
-      return { exitCode: 0 };
-    });
-    const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-27T12:00:00.000Z'),
-      runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
-    });
-    const catchup = app.startCatchup();
-    const drained = app.drainPayouts();
-    release();
-    await expect(catchup).resolves.toEqual({ exitCode: 0 });
-    await expect(drained).resolves.toBeUndefined();
-  });
-
-  it('startCatchup is a no-op without SPEND_LIVE', async () => {
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
+    await expect(live.startCatchup()).resolves.toBeNull();
+    const dry = createServer({
       env,
       now: () => new Date('2026-08-27T00:43:00.000Z'),
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    await expect(app.startCatchup()).resolves.toBeNull();
+    await expect(dry.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('startCatchup returns null without payout when the day JSONL has *halt* uncertain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-halt-catchup-'));
-    writeFileSync(
-      join(dir, '2026-08-27.jsonl'),
-      `${JSON.stringify({
-        ts: 't',
-        address: '*halt*',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'uncertain',
-      })}\n`,
-    );
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-27T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
-      });
-      await expect(app.startCatchup()).resolves.toBeNull();
-      expect(runDay).not.toHaveBeenCalled();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('startCatchup returns null without payout when a live recipient is uncertain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-recipient-uncertain-catchup-'));
-    writeFileSync(
-      join(dir, '2026-08-27.jsonl'),
-      `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'uncertain',
-      })}\n`,
-    );
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-27T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
-      });
-      await expect(app.startCatchup()).resolves.toBeNull();
-      expect(runDay).not.toHaveBeenCalled();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('startCatchup returns null without payout when every live recipient already has a JSONL row', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-failed-catchup-'));
-    writeFileSync(
-      join(dir, '2026-08-27.jsonl'),
-      `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'failed',
-      })}\n`,
-    );
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-27T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
-      });
-      await expect(app.startCatchup()).resolves.toBeNull();
-      expect(runDay).not.toHaveBeenCalled();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('startCatchup falls through to payout when the day JSONL is corrupt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-catchup-'));
-    writeFileSync(join(dir, '2026-08-27.jsonl'), 'not-json\n');
-    const runDay = vi.fn(async () => ({ exitCode: 4 }));
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-27T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
-      });
-      await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
-      expect(runDay).toHaveBeenCalled();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('startRetryCatchup invokes catch-up on the interval when live', async () => {
+  it('startRetryCatchup is a no-op and does not invoke runDay', async () => {
     vi.useFakeTimers();
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
+    const live = createServer({
       env: { ...env, SPEND_LIVE: 'true' },
       now: () => new Date('2026-08-27T12:00:00.000Z'),
       retryCatchupMs: 20,
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    const handle = app.startRetryCatchup();
-    expect(runDay).not.toHaveBeenCalled();
+    const liveHandle = live.startRetryCatchup();
     await vi.advanceTimersByTimeAsync(20);
     await Promise.resolve();
-    expect(runDay).toHaveBeenCalled();
-    handle.stop();
-  });
-
-  it('startRetryCatchup is a no-op without SPEND_LIVE', async () => {
-    vi.useFakeTimers();
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const app = createServer({
+    liveHandle.stop();
+    const dry = createServer({
       env,
       now: () => new Date('2026-08-27T12:00:00.000Z'),
       retryCatchupMs: 20,
       runDay,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
-    const handle = app.startRetryCatchup();
+    const dryHandle = dry.startRetryCatchup();
     await vi.advanceTimersByTimeAsync(20);
+    dryHandle.stop();
     expect(runDay).not.toHaveBeenCalled();
-    handle.stop();
   });
 
   it('fails closed on boot when only one Telegram env is set', () => {
@@ -406,8 +255,7 @@ describe('createServer', () => {
     ).toThrow(/TELEGRAM_CHAT_ID/);
   });
 
-  it('scheduler notifies Telegram after payout when configured', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('startScheduler does not notify Telegram', async () => {
     const telegramCalls: string[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 0,
@@ -433,27 +281,21 @@ describe('createServer', () => {
       now: () => new Date('2026-08-25T00:00:00.000Z'),
       runDay,
       fetchImpl: async (url) => {
-        const path = String(url);
-        if (path.includes('api.telegram.org')) {
-          telegramCalls.push(path);
+        if (String(url).includes('api.telegram.org')) {
+          telegramCalls.push(String(url));
           return new Response('{"ok":true}', { status: 200 });
         }
         return new Response('{}', { status: 200 });
       },
     });
     const handle = app.startScheduler();
-    await vi.waitFor(() => {
-      expect(telegramCalls.length).toBe(1);
-    });
-    expect(telegramCalls[0]).toContain('api.telegram.org/bot');
-    const warnPayload = JSON.stringify(warn.mock.calls);
-    expect(warnPayload).toContain('spend.telegram');
-    expect(warnPayload).not.toContain('123456:AA-testtoken_notreal_xxxxxx');
+    await Promise.resolve();
+    expect(runDay).not.toHaveBeenCalled();
+    expect(telegramCalls).toEqual([]);
     handle.stop();
-    warn.mockRestore();
   });
 
-  it('catch-up does not notify Telegram on a pure all-skip success', async () => {
+  it('startCatchup does not notify Telegram', async () => {
     const telegramCalls: string[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 0,
@@ -486,8 +328,205 @@ describe('createServer', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 0 });
+    await expect(app.startCatchup()).resolves.toBeNull();
+    expect(runDay).not.toHaveBeenCalled();
     expect(telegramCalls).toEqual([]);
+  });
+
+  it('POST /ping is 401 without Bearer or with a wrong Bearer', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const missing = await app.fetch(
+      pingReq({
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+      }),
+    );
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toEqual({ error: 'Unauthorized' });
+    const wrong = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer nope', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+      }),
+    );
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('POST /ping is 400 for bad JSON or a missing address', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const badJson = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: 'not-json',
+      }),
+    );
+    expect(badJson.status).toBe(400);
+    expect(await badJson.json()).toEqual({ error: 'Expected a JSON body with address' });
+    const missing = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ error: 'Expected a JSON body with address' });
+  });
+
+  it('POST /ping is 400 for an invalid address', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'not-an-address' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Not a valid Lightning Address (expected name@domain)',
+    });
+  });
+
+  it('POST /ping is 200 skipped not_listed when the address is off the roster', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'bob@walletofsatoshi.com' }),
+      }),
+    );
+    warn.mockRestore();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+  });
+
+  it('POST /ping is 200 skipped paid when today JSONL already has a paid row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-paid-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'alice@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'paid',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping is 202 accepted and queues runDay with onlyAddresses without Origin', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        live: true,
+        day: '2026-08-25',
+        onlyAddresses: ['alice@walletofsatoshi.com'],
+      }),
+    );
+    await app.drainPayouts();
+    warn.mockRestore();
+  });
+
+  it('drainPayouts waits for an in-flight ping payout', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runDay = vi.fn(async () => {
+      await blocked;
+      return { exitCode: 0 };
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    const drained = app.drainPayouts();
+    release();
+    await expect(drained).resolves.toBeUndefined();
+    expect(runDay).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('runPayout notifies with a minimal summary when runDay omits summary', async () => {
@@ -984,14 +1023,14 @@ describe('recipient editor', () => {
     expect(String((telegramBodies[0] as { text: string }).text)).toContain('ok=false');
 
     telegramBodies.length = 0;
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
+    await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
     expect(telegramBodies).toHaveLength(0);
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('notifies Telegram once when catch-up alone hits corrupt recipients', async () => {
+  it('startCatchup is a no-op when live recipients are corrupt', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-cu-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
@@ -1018,17 +1057,14 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 4 });
+    await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
-    expect(telegramBodies).toHaveLength(1);
-    expect(telegramBodies[0]).toMatchObject({
-      text: expect.stringContaining('corrupt_recipients'),
-    });
+    expect(telegramBodies).toHaveLength(0);
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('dedupes catch-up insufficient_balance Telegram until a paid run', async () => {
+  it('dedupes ping insufficient_balance Telegram until a paid run', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-cu-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
@@ -1071,6 +1107,7 @@ describe('recipient editor', () => {
           dryRun: [],
         },
       });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
@@ -1090,17 +1127,40 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
-    expect(telegramBodies).toHaveLength(1);
+    const ping = (): Promise<Response> =>
+      app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'a@b.com' }),
+        }),
+      );
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(telegramBodies).toHaveLength(1);
+    });
     expect(telegramBodies[0]).toMatchObject({
       text: expect.stringContaining('insufficient_balance'),
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 0 });
-    expect(telegramBodies).toHaveLength(2);
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(2);
+    });
+    expect(telegramBodies).toHaveLength(1);
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(3);
+    });
+    await vi.waitFor(() => {
+      expect(telegramBodies).toHaveLength(2);
+    });
     expect(telegramBodies[1]).toMatchObject({
       text: expect.stringContaining('a@b.com'),
     });
+    await app.drainPayouts();
+    warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1153,7 +1213,7 @@ describe('recipient editor', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('dedupes catch-up usd_to_sats Telegram even when failed mirrors the preflight', async () => {
+  it('dedupes ping usd_to_sats Telegram even when failed mirrors the preflight', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-usd-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
@@ -1173,6 +1233,7 @@ describe('recipient editor', () => {
         dryRun: [],
       },
     }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
@@ -1192,12 +1253,30 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
-    await expect(app.startCatchup()).resolves.toEqual({ exitCode: 3 });
+    const ping = (): Promise<Response> =>
+      app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'a@b.com' }),
+        }),
+      );
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(telegramBodies).toHaveLength(1);
+    });
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(2);
+    });
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
       text: expect.stringContaining('usd_to_sats'),
     });
+    await app.drainPayouts();
+    warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
