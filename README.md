@@ -76,11 +76,12 @@ docker run -p 3000:3000 -v spend-state:/data \
 
 ## CI / CD
 
-| Workflow          | Trigger                   | Action                                                                 |
-| ----------------- | ------------------------- | ---------------------------------------------------------------------- |
-| `ci.yml`          | PR; push `main`/`develop` | typecheck + test                                                       |
-| `deploy-dev.yaml` | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy    |
-| `deploy-prd.yaml` | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy  |
+| Workflow               | Trigger                   | Action                                                                 |
+| ---------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `ci.yml`               | PR; push `main`/`develop` | typecheck + test                                                       |
+| `deploy-dev.yaml`      | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy    |
+| `deploy-prd.yaml`      | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy  |
+| `auto-release-pr.yaml` | push to `develop`         | Auto-create Release PR (`develop → main`)                              |
 
 Images target `linux/arm64`.
 
