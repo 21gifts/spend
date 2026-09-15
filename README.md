@@ -39,7 +39,7 @@ Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId`
 
 ## Branches
 
-Open every PR against **`develop`**, not `main`.
+Open every feature PR against **`develop`**, not `main`.
 
 - Merge to `develop` → Deploy DEV (`21gifts/spend:beta`)
 - Push to `develop` also opens `Release: develop -> main` when `main` is behind
