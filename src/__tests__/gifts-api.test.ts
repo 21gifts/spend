@@ -57,4 +57,146 @@ describe('GiftsApi', () => {
     );
     await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
   });
+
+  it('hasPasskey returns true', async () => {
+    let seenUrl = '';
+    let auth = '';
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      seenUrl = String(url);
+      auth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+    });
+    await expect(api.hasPasskey('a@b.com')).resolves.toBe(true);
+    expect(seenUrl).toBe('https://api.21.gifts/invoices/passkey?address=a%40b.com');
+    expect(auth).toBe('Bearer tok');
+  });
+
+  it('hasPasskey returns false', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPasskey: false }), { status: 200 }),
+    );
+    await expect(api.hasPasskey('a@b.com')).resolves.toBe(false);
+  });
+
+  it('hasPasskey throws on 503', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
+    );
+    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('hasPasskey maps network failure to status 0', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
+      throw new Error('offline');
+    });
+    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('hasPosted returns true', async () => {
+    let seenUrl = '';
+    let auth = '';
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      seenUrl = String(url);
+      auth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+    });
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: true, messageId: null });
+    expect(seenUrl).toBe('https://api.21.gifts/invoices/posted?address=a%40b.com');
+    expect(auth).toBe('Bearer tok');
+  });
+
+  it('hasPosted returns false', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPosted: false }), { status: 200 }),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: false, messageId: null });
+  });
+
+  it('hasPosted returns messageId when the JSON includes a valid UUID', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({ hasPosted: true, messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }),
+        { status: 200 },
+      ),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
+  it('hasPosted returns messageId: null for missing / non-string / invalid uuid', async () => {
+    const payloads: unknown[] = [
+      { hasPosted: true },
+      { hasPosted: true, messageId: 1 },
+      { hasPosted: true, messageId: null },
+      { hasPosted: true, messageId: '' },
+      { hasPosted: true, messageId: 'nope' },
+      { hasPosted: true, messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa' },
+    ];
+    for (const payload of payloads) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+      await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: true, messageId: null });
+    }
+  });
+
+  it('createInvoice JSON includes messageId when the 4th argument is passed', async () => {
+    let sent: unknown;
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
+      sent = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({ id: '1', pr: 'lnbc1', paymentHash: 'aa'.repeat(32), amountMsat: 1000 }),
+        { status: 200 },
+      );
+    });
+    await api.createInvoice('a@b.com', 1000, 'hi', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    expect(sent).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1000,
+      comment: 'hi',
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
+  it('createInvoice JSON omits messageId when it is not passed', async () => {
+    let sent: unknown;
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
+      sent = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({ id: '1', pr: 'lnbc1', paymentHash: 'aa'.repeat(32), amountMsat: 1000 }),
+        { status: 200 },
+      );
+    });
+    await api.createInvoice('a@b.com', 1000, 'hi');
+    expect(sent).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1000,
+      comment: 'hi',
+    });
+    expect(sent).not.toHaveProperty('messageId');
+  });
+
+  it('hasPosted throws on 503', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
+    );
+    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('hasPosted maps network failure to status 0', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
+      throw new Error('offline');
+    });
+    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('hasPosted rejects a malformed 200 body', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => new Response('{}', { status: 200 }));
+    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({
+      status: 0,
+      message: 'malformed posted response',
+    });
+  });
 });

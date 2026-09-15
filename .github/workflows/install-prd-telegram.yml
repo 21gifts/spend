@@ -1,0 +1,81 @@
+# Encrypt SPEND_TELEGRAM_* with the infra transport public key and fire
+# repository_dispatch install-21gifts-spend-telegram. Ciphertext only —
+# never put the token or chat id in the payload. Manual run after the
+# matching infra workflow is on the default branch.
+
+name: Install PRD Telegram
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-prd-telegram
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Encrypt and dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Encrypt and notify infrastructure
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          DISPATCH_REPO: ${{ secrets.DISPATCH_REPO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.SPEND_TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.SPEND_TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF:-}" in
+            refs/heads/main) ;;
+            *)
+              echo "ERR: install-prd-telegram only from main (ref: ${GITHUB_REF:-<none>})" >&2
+              exit 2
+              ;;
+          esac
+          repo="${DISPATCH_REPO:-}"
+          pub=".github/telegram-install-transport.pub"
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${repo:-}" ]; then
+            echo "ERR: DISPATCH_TOKEN or DISPATCH_REPO unset" >&2
+            exit 1
+          fi
+          if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "ERR: DISPATCH_REPO must be owner/repo" >&2
+            exit 1
+          fi
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "ERR: SPEND_TELEGRAM_BOT_TOKEN or SPEND_TELEGRAM_CHAT_ID unset" >&2
+            exit 1
+          fi
+          case "$TELEGRAM_BOT_TOKEN" in
+            *[[:space:]]*) echo "ERR: telegram token contains whitespace" >&2; exit 1 ;;
+          esac
+          case "$TELEGRAM_CHAT_ID" in
+            *[[:space:]]*) echo "ERR: telegram chat id contains whitespace" >&2; exit 1 ;;
+          esac
+          if [ ! -f "$pub" ]; then
+            echo "ERR: missing transport public key" >&2
+            exit 1
+          fi
+          umask 077
+          plain=$(mktemp)
+          cipher=$(mktemp)
+          cleanup() { rm -f "$plain" "$cipher"; }
+          trap cleanup EXIT
+          printf '%s\n%s\n' "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" >"$plain"
+          openssl pkeyutl -encrypt -pubin -inkey "$pub" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -pkeyopt rsa_mgf1_md:sha256 \
+            -in "$plain" -out "$cipher"
+          ciphertext=$(python3 -c 'import sys,base64; sys.stdout.write(base64.b64encode(sys.stdin.buffer.read()).decode())' <"$cipher")
+          [ -n "$ciphertext" ]
+          DISPATCH_EVENT_REPO="$repo" DISPATCH_CIPHERTEXT="$ciphertext" python3 -c 'import json,os,subprocess; payload={"event_type":"install-21gifts-spend-telegram","client_payload":{"ciphertext":os.environ["DISPATCH_CIPHERTEXT"]}}; subprocess.run(["gh","api","repos/"+os.environ["DISPATCH_EVENT_REPO"]+"/dispatches","--input","-"],input=json.dumps(payload),text=True,check=True)'
+          echo "dispatched install-21gifts-spend-telegram"
