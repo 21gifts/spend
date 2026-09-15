@@ -37,6 +37,14 @@ Body: JSON `{ "address": string, "messageId": string }`. Invalid JSON or missing
 
 Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId` on that invoice create so the api can show the gift as a reply under the post.
 
+## Branches
+
+Open every PR against **`develop`**, not `main`.
+
+- Merge to `develop` → Deploy DEV (`21gifts/spend:beta`)
+- Push to `develop` also opens `Release: develop -> main` when `main` is behind
+- Merge that release PR to `main` → Deploy PRD (`21gifts/spend:latest`)
+
 ## Setup
 
 ```bash
