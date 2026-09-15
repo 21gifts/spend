@@ -46,10 +46,10 @@ export class GiftsApi {
   }
 
   /**
-   * Whether 21.gifts reports a live forum post for this Lightning Address.
+   * Live forum-post flag and post UUID for this Lightning Address.
    *
    * @param address - LUD-16 address.
-   * @returns `hasPosted` and a forum post UUID when the api returns a valid one; invalid or missing `messageId` is `null`.
+   * @returns `{ hasPosted, messageId }` — `messageId` is a UUID, or `null` when missing or invalid.
    */
   async hasPosted(address: string): Promise<{ hasPosted: boolean; messageId: string | null }> {
     const path = `/invoices/posted?address=${encodeURIComponent(address)}`;

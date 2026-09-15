@@ -35,7 +35,7 @@ Body: JSON `{ "address": string, "messageId": string }`. Invalid JSON or missing
 - Today's JSONL already `uncertain` for the pinged address, any other live recipient, or `*halt*` → `200` `{ "status": "skipped", "reason": "uncertain" }`
 - Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning; queues a single-recipient payout. `SPEND_LIVE` still controls live vs dry-run.
 
-Payout is still LNURL via `POST /invoices` plus proof. Spend forwards `messageId` on that invoice create so the api can show the gift as a reply under the post.
+Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId` on that invoice create so the api can show the gift as a reply under the post.
 
 ## Setup
 
