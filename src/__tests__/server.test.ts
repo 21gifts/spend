@@ -45,6 +45,8 @@ function pingReq(init?: RequestInit): Request {
   return new Request('http://127.0.0.1/ping', { ...init, method: 'POST', headers });
 }
 
+const PING_MESSAGE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
   for (const dir of sessionDirs) {
@@ -343,7 +345,7 @@ describe('createServer', () => {
     const missing = await app.fetch(
       pingReq({
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
     expect(missing.status).toBe(401);
@@ -351,7 +353,7 @@ describe('createServer', () => {
     const wrong = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer nope', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
     expect(wrong.status).toBe(401);
@@ -383,6 +385,44 @@ describe('createServer', () => {
     expect(await missing.json()).toEqual({ error: 'Expected a JSON body with address' });
   });
 
+  it('POST /ping is 400 without messageId', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Expected a JSON body with address and messageId',
+    });
+  });
+
+  it('POST /ping is 400 for an invalid messageId', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: 'nope' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Expected a JSON body with address and messageId',
+    });
+  });
+
   it('POST /ping is 400 for an invalid address', async () => {
     const app = createServer({
       env,
@@ -393,7 +433,7 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'not-an-address' }),
+        body: JSON.stringify({ address: 'not-an-address', messageId: PING_MESSAGE_ID }),
       }),
     );
     expect(res.status).toBe(400);
@@ -413,7 +453,7 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com' }),
+        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
     warn.mockRestore();
@@ -455,7 +495,7 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
       expect(res.status).toBe(200);
@@ -505,7 +545,7 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
       expect(res.status).toBe(200);
@@ -529,7 +569,7 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
     expect(res.status).toBe(202);
@@ -543,6 +583,9 @@ describe('createServer', () => {
         live: true,
         day: '2026-08-25',
         onlyAddresses: ['alice@walletofsatoshi.com'],
+        messageIdByAddress: {
+          'alice@walletofsatoshi.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        },
       }),
     );
     await app.drainPayouts();
@@ -568,7 +611,7 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
     expect(res.status).toBe(202);
@@ -1181,7 +1224,7 @@ describe('recipient editor', () => {
       app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com' }),
+          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
         }),
       );
     expect((await ping()).status).toBe(202);
@@ -1307,7 +1350,7 @@ describe('recipient editor', () => {
       app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com' }),
+          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
         }),
       );
     expect((await ping()).status).toBe(202);

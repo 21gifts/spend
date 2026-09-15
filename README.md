@@ -28,12 +28,14 @@ Live roster: `STATE_DIR/recipients.json`. On first boot the seed at `RECIPIENTS_
 
 Auth: `Authorization: Bearer` matching `GIFTS_API_TOKEN`. Missing or mismatch → `401` `{ "error": "Unauthorized" }`. No Origin / same-origin check.
 
-Body: JSON `{ "address": string }`. Invalid JSON or missing `address` → `400` `{ "error": "Expected a JSON body with address" }`. The address is trimmed; it must look like `name@domain`, else `400` `{ "error": "Not a valid Lightning Address (expected name@domain)" }`. Match the live roster case-insensitively; use the roster-stored address as the payout key. A corrupt roster → `500` `{ "error": "Recipient list is unreadable" }`.
+Body: JSON `{ "address": string, "messageId": string }`. Invalid JSON or missing `address` → `400` `{ "error": "Expected a JSON body with address" }`. Missing or invalid `messageId` (must be a UUID) → `400` `{ "error": "Expected a JSON body with address and messageId" }`. The address is trimmed; it must look like `name@domain`, else `400` `{ "error": "Not a valid Lightning Address (expected name@domain)" }`. Match the live roster case-insensitively; use the roster-stored address as the payout key. A corrupt roster → `500` `{ "error": "Recipient list is unreadable" }`.
 
 - Not on the live roster → `200` `{ "status": "skipped", "reason": "not_listed" }`
 - Today's JSONL already `paid` or persisted `failed` for the pinged address → `200` skipped with that reason
 - Today's JSONL already `uncertain` for the pinged address, any other live recipient, or `*halt*` → `200` `{ "status": "skipped", "reason": "uncertain" }`
 - Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning; queues a single-recipient payout. `SPEND_LIVE` still controls live vs dry-run.
+
+Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId` on that invoice create so the api can show the gift as a reply under the post.
 
 ## Setup
 

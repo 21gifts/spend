@@ -37,6 +37,7 @@ import {
 } from './telegram';
 
 const SERVICE_NAME = 'spend';
+const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Parse `BIND_ADDR` (`host:port`).
@@ -314,7 +315,12 @@ export function createServer(opts: {
       ) {
         return json(400, { error: 'Expected a JSON body with address' });
       }
-      const parsed = parseLightningAddress((body as { address: string }).address);
+      const pingBody = body as { address: string; messageId?: unknown };
+      if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
+        return json(400, { error: 'Expected a JSON body with address and messageId' });
+      }
+      const messageId = pingBody.messageId;
+      const parsed = parseLightningAddress(pingBody.address);
       if (parsed === null) {
         return json(400, { error: 'Not a valid Lightning Address (expected name@domain)' });
       }
@@ -376,7 +382,7 @@ export function createServer(opts: {
         }
       }
       logPing('accepted');
-      void payout(day, 'ping', [storedAddress]).catch((err: unknown) => {
+      void payout(day, 'ping', [storedAddress], messageId).catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
         console.warn(
           JSON.stringify({
@@ -592,6 +598,7 @@ export function createServer(opts: {
     day: string,
     source: TelegramSource,
     onlyAddresses?: string[],
+    messageId?: string,
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
       let liveList: { comment: string; recipients: Recipient[] };
@@ -622,7 +629,18 @@ export function createServer(opts: {
         throw err;
       }
       const runOptions: RunOptions =
-        onlyAddresses === undefined ? { live, day } : { live, day, onlyAddresses };
+        onlyAddresses === undefined
+          ? { live, day }
+          : messageId === undefined
+            ? { live, day, onlyAddresses }
+            : {
+                live,
+                day,
+                onlyAddresses,
+                messageIdByAddress: Object.fromEntries(
+                  onlyAddresses.map((address) => [address.toLowerCase(), messageId]),
+                ),
+              };
       const result = await (opts.runDay ?? runDay)(
         { ...config, recipients: liveList.recipients, comment: liveList.comment },
         runOptions,
