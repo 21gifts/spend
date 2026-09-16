@@ -43,7 +43,7 @@ Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId`
 
 ### Moderator
 
-Body: JSON `{ "address": string, "kind": "moderator" }`. Do not send `messageId` — any `messageId` with this kind → `400` `{ "error": "Expected a JSON body with address and kind" }`. Not roster-gated: an address off the live list is paid the stipend. A corrupt daily roster does not fail this path. No gift-reply: invoice create is the 3-arg form (no `messageId`).
+Body: JSON `{ "address": string, "kind": "moderator" }`. Do not send `messageId` — any `messageId` with this kind → `400` `{ "error": "Expected a JSON body with address and kind" }`. Not roster-gated: an address off the live list can still be paid the stipend. The run still requires `GET /invoices/posted` `hasPosted: true` with `postedAt` on this UTC day (a living-room top-level post today). No living-room post today → skip `no_post` (group-only messages do not pay). A corrupt daily roster does not fail this path. No gift-reply: invoice create is the 3-arg form (no `messageId`).
 
 State is a separate JSONL: `STATE_DIR/YYYY-MM-DD.moderator.jsonl` and `YYYY-MM-DD.moderator.finished`. Once per UTC day per address on that file (`paid` or persisted `failed` → `200` skipped with that reason). Daily `YYYY-MM-DD.jsonl` `paid` / `uncertain` / `*halt*` does not skip a moderator ping, and the moderator file does not skip a daily ping.
 
@@ -89,12 +89,12 @@ docker run -p 3000:3000 -v spend-state:/data \
 
 ## CI / CD
 
-| Workflow               | Trigger                   | Action                                                                 |
-| ---------------------- | ------------------------- | ---------------------------------------------------------------------- |
-| `ci.yml`               | PR; push `main`/`develop` | typecheck + test                                                       |
-| `deploy-dev.yaml`      | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy    |
-| `deploy-prd.yaml`      | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy  |
-| `auto-release-pr.yaml` | push to `develop`         | Auto-create Release PR (`develop → main`)                              |
+| Workflow               | Trigger                   | Action                                                                |
+| ---------------------- | ------------------------- | --------------------------------------------------------------------- |
+| `ci.yml`               | PR; push `main`/`develop` | typecheck + test                                                      |
+| `deploy-dev.yaml`      | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy   |
+| `deploy-prd.yaml`      | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy |
+| `auto-release-pr.yaml` | push to `develop`         | Auto-create Release PR (`develop → main`)                             |
 
 Images target `linux/arm64`.
 
