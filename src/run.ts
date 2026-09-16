@@ -21,7 +21,7 @@ export interface RunOptions {
    * `hasPosted().messageId` when the api returns one.
    */
   messageIdByAddress?: Record<string, string>;
-  /** Default 'daily'. 'moderator' uses the moderator JSONL and skips living-room hasPosted. */
+  /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator';
 }
 
@@ -168,7 +168,7 @@ async function runDayLocked(
     }
     throw err;
   }
-  if (options.live) {
+  if (options.live && options.bucket !== 'moderator') {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
     );
@@ -292,6 +292,9 @@ async function runDayLocked(
   let stopLive = false;
 
   const haltDay = (): void => {
+    if (options.bucket === 'moderator') {
+      return;
+    }
     if (!options.live || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       return;
     }
@@ -402,7 +405,9 @@ async function runDayLocked(
       }
       if (parseFail) {
         sawProblem = true;
-        stopLive = true;
+        if (options.bucket !== 'moderator') {
+          stopLive = true;
+        }
         haltDay();
         log('spend.uncertain', {
           address: recipient.address,
@@ -445,7 +450,9 @@ async function runDayLocked(
     const expectedMsat = amountSats * 1000;
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -508,7 +515,9 @@ async function runDayLocked(
       preimage = paidInvoice.preimage;
     } catch (err) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -524,7 +533,9 @@ async function runDayLocked(
     const digest = preimage === null ? null : hashPreimage(preimage);
     if (preimage === null || digest === null || digest !== invoice.paymentHash) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -560,7 +571,9 @@ async function runDayLocked(
       await gifts.submitProof(invoice.id, preimage);
     } catch (err) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,

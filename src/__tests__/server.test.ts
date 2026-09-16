@@ -739,6 +739,147 @@ describe('createServer', () => {
     }
   });
 
+  it('POST /ping kind moderator does not skip on another address uncertain or *halt*', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-halt-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.moderator.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'alice@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n${JSON.stringify({
+        ts: 't',
+        address: '*halt*',
+        invoiceId: '',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind moderator skips own-address uncertain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-uncertain-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.moderator.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'bob@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'uncertain',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind moderator skips paid case-insensitively using the persisted address', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-case-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.moderator.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'Bob@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'paid',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('POST /ping kind moderator is 400 when messageId is present', async () => {
     const app = createServer({
       env,

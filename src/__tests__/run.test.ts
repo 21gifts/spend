@@ -465,6 +465,191 @@ describe('runDay', () => {
     expect(result.summary.skipped.some((row) => row.reason === 'no_post')).toBe(true);
   });
 
+  it('moderator bucket skips when postedAt is null', async () => {
+    let invoiceCalls = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            postedAt: null,
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceCalls += 1;
+      return new Response('{}', { status: 500 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(invoiceCalls).toBe(0);
+    expect(result.summary.skipped.some((row) => row.reason === 'no_post')).toBe(true);
+  });
+
+  it('moderator bucket skips when postedAt is unparseable', async () => {
+    let invoiceCalls = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            postedAt: 'not-a-date',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceCalls += 1;
+      return new Response('{}', { status: 500 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(invoiceCalls).toBe(0);
+    expect(result.summary.skipped.some((row) => row.reason === 'no_post')).toBe(true);
+  });
+
+  it('moderator bucket skips when hasPosted is false even with postedAt on the run day', async () => {
+    let invoiceCalls = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: false,
+            messageId: null,
+            postedAt: '2026-08-23T12:00:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceCalls += 1;
+      return new Response('{}', { status: 500 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(invoiceCalls).toBe(0);
+    expect(result.summary.skipped.some((row) => row.reason === 'no_post')).toBe(true);
+  });
+
+  it('moderator live run does not halt later addresses on another address uncertain or *halt*', async () => {
+    let bobInvoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            postedAt: '2026-08-23T12:00:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith('/proof')) {
+        return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body ?? '{}')) as { address?: string; amountMsat?: number };
+      if (body.address === 'c@d.com') {
+        bobInvoices += 1;
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'id-bob',
+          pr: 'lnbc1',
+          paymentHash: HASH,
+          amountMsat: body.amountMsat ?? 500_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const prior = `${JSON.stringify({
+      ts: 't',
+      address: 'a@b.com',
+      invoiceId: 'id0',
+      paymentHash: HASH,
+      status: 'uncertain',
+    })}\n${JSON.stringify({
+      ts: 't',
+      address: '*halt*',
+      invoiceId: '',
+      paymentHash: '',
+      status: 'uncertain',
+    })}\n`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(config, { live: true, day: '2026-08-23', bucket: 'moderator' }, {
+      gifts,
+      lndhub,
+      state: memoryState(prior),
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.summary.reason).not.toBe('halted');
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'uncertain' }),
+    ]);
+    expect(bobInvoices).toBe(1);
+    expect(
+      result.summary.skipped.some((row) => row.address === 'c@d.com' && row.reason === 'halted'),
+    ).toBe(false);
+  });
+
   it('forwards RunOptions.messageIdByAddress to createInvoice over posted id', async () => {
     let invoiceBody: unknown;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {

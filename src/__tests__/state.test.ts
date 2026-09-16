@@ -111,6 +111,15 @@ describe('latestStatus', () => {
       ),
     ).toBe('paid');
   });
+
+  it('matches an address case-insensitively', () => {
+    expect(
+      latestStatus(
+        [{ ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' }],
+        'A@b.com',
+      ),
+    ).toBe('paid');
+  });
 });
 
 describe('dayBlock', () => {
@@ -124,5 +133,14 @@ describe('dayBlock', () => {
         'a@b.com',
       ),
     ).toBe('paid');
+  });
+
+  it('matches an address case-insensitively', () => {
+    expect(
+      dayBlock(
+        [{ ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'uncertain' }],
+        'A@b.com',
+      ),
+    ).toBe('uncertain');
   });
 });

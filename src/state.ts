@@ -171,7 +171,7 @@ function parseStateRow(line: string): StateRow {
 export function latestStatus(rows: StateRow[], address: string): StateRow['status'] | undefined {
   let found: StateRow['status'] | undefined;
   for (const row of rows) {
-    if (row.address === address) {
+    if (row.address.toLowerCase() === address.toLowerCase()) {
       found = row.status;
     }
   }
@@ -188,7 +188,7 @@ export function latestStatus(rows: StateRow[], address: string): StateRow['statu
 export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain' | undefined {
   let found: 'paid' | 'uncertain' | undefined;
   for (const row of rows) {
-    if (row.address === address && (row.status === 'paid' || row.status === 'uncertain')) {
+    if (row.address.toLowerCase() === address.toLowerCase() && (row.status === 'paid' || row.status === 'uncertain')) {
       found = row.status;
     }
   }

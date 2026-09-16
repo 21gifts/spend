@@ -347,7 +347,7 @@ export function createServer(opts: {
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
       if (kind === 'moderator') {
-        const storedAddress = parsed;
+        let storedAddress = parsed;
         let rows;
         try {
           rows = new DayState(config.stateDir, day, undefined, 'moderator').load();
@@ -358,10 +358,20 @@ export function createServer(opts: {
           rows = undefined;
         }
         if (rows !== undefined) {
+          const persisted = rows.find(
+            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
+          );
+          if (persisted !== undefined) {
+            storedAddress = persisted.address;
+          }
           const block = dayBlock(rows, storedAddress);
           if (block === 'paid') {
             logPing('skipped', 'paid');
             return json(200, { status: 'skipped', reason: 'paid' });
+          }
+          if (block === 'uncertain') {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
           }
           if (latestStatus(rows, storedAddress) === 'failed') {
             logPing('skipped', 'failed');
