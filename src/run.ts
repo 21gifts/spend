@@ -1,21 +1,32 @@
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
+import { fetchBtcUsdSpot, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, dayBlock, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
+import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
 
-/** CLI options for one run. */
+/** CLI / ping options for one run. */
 export interface RunOptions {
   live: boolean;
   day: string;
+  /** When set, only these live-roster addresses are attempted (case-insensitive). */
+  onlyAddresses?: string[];
+  /**
+   * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
+   * Ping sets this for the one pinged address. CLI / runs without a map fall back to
+   * `hasPosted().messageId` when the api returns one.
+   */
+  messageIdByAddress?: Record<string, string>;
 }
 
 /** Outcome of {@link runDay}. */
 export interface RunResult {
   exitCode: number;
+  summary: RunSummary;
 }
 
 function log(event: string, fields: Record<string, string | number | boolean>): void {
@@ -33,13 +44,47 @@ function feeMargin(availableSats: number): number {
   return Math.max(100, Math.ceil(availableSats * 0.01));
 }
 
+function emptyBags(): Pick<RunSummary, 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'> {
+  return { paid: [], skipped: [], failed: [], uncertain: [], dryRun: [] };
+}
+
+function makeSummary(
+  options: RunOptions,
+  exitCode: number,
+  extra: Partial<Omit<RunSummary, 'day' | 'live' | 'ok' | 'exitCode'>> = {},
+): RunSummary {
+  return {
+    day: options.day,
+    live: options.live,
+    ok: exitCode === 0,
+    exitCode,
+    ...emptyBags(),
+    ...extra,
+  };
+}
+
+function selectTargets(
+  recipients: SpendConfig['recipients'],
+  onlyAddresses: string[] | undefined,
+): SpendConfig['recipients'] {
+  if (onlyAddresses === undefined) {
+    return recipients;
+  }
+  const wanted = new Set(onlyAddresses.map((address) => address.trim().toLowerCase()));
+  return recipients.filter((recipient) => wanted.has(recipient.address.toLowerCase()));
+}
+
 /**
- * Run one UTC day's gifts.
+ * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
+ *
+ * `markFinished` still requires every live-roster recipient to be settled.
+ * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
+ * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run and the day key.
+ * @param options - Live vs dry-run, the day key, optional address filter, and optional post-id map.
  * @param deps - Injected clients (tests).
- * @returns Process exit code.
+ * @returns Process exit code and a structured summary for Telegram notify.
  */
 export async function runDay(
   config: SpendConfig,
@@ -50,13 +95,14 @@ export async function runDay(
     state?: DayState;
     now?: () => Date;
     lock?: DayLock;
+    btcUsd?: () => Promise<number | null>;
   },
 ): Promise<RunResult> {
   const gifts = deps?.gifts ?? new GiftsApi(config.giftsApiUrl, config.giftsApiToken);
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
     log('spend.done', { ok: false, reason: 'bad_lndhub_uri' });
-    return { exitCode: 2 };
+    return { exitCode: 2, summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }) };
   }
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
   const state = deps?.state ?? new DayState(config.stateDir, options.day);
@@ -65,11 +111,11 @@ export async function runDay(
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
   if (!lock.tryAcquire()) {
     log('spend.done', { ok: false, reason: 'locked' });
-    return { exitCode: 3 };
+    return { exitCode: 3, summary: makeSummary(options, 3, { reason: 'locked' }) };
   }
 
   try {
-    return await runDayLocked(config, options, gifts, lndhub, state, now);
+    return await runDayLocked(config, options, gifts, lndhub, state, now, deps?.btcUsd);
   } finally {
     lock.release();
   }
@@ -82,50 +128,150 @@ async function runDayLocked(
   lndhub: LndhubClient,
   state: DayState,
   now: () => Date,
+  btcUsdSpot: (() => Promise<number | null>) | undefined,
 ): Promise<RunResult> {
+  const paid: PayoutLine[] = [];
+  const skipped: PayoutLine[] = [];
+  const failed: PayoutLine[] = [];
+  const uncertain: PayoutLine[] = [];
+  const dryRun: PayoutLine[] = [];
+  let btcUsd: number | undefined;
+
+  const finish = (
+    exitCode: number,
+    extra: Partial<Omit<RunSummary, 'day' | 'live' | 'ok' | 'exitCode' | 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'>> = {},
+  ): RunResult => ({
+    exitCode,
+    summary: makeSummary(options, exitCode, {
+      paid,
+      skipped,
+      failed,
+      uncertain,
+      dryRun,
+      ...(btcUsd !== undefined ? { btcUsd } : {}),
+      ...extra,
+    }),
+  });
+
   let rows: StateRow[];
   try {
     rows = state.load();
   } catch (err) {
     if (err instanceof CorruptStateError) {
       log('spend.done', { ok: false, reason: 'corrupt_state' });
-      return { exitCode: 4 };
+      return finish(4, { reason: 'corrupt_state' });
     }
     throw err;
   }
-  log('spend.start', { live: options.live, day: options.day, recipients: config.recipients.length });
-
   if (options.live) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
     );
     if (recipientUncertain || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       log('spend.done', { ok: false, reason: 'halted' });
-      return { exitCode: 4 };
+      state.markFinished();
+      return finish(4, { reason: 'halted' });
     }
   }
 
+  const rate = await (btcUsdSpot ?? fetchBtcUsdSpot)();
+  if (rate === null) {
+    log('spend.done', { ok: false, reason: 'spot_unreadable' });
+    return finish(3, { reason: 'spot_unreadable' });
+  }
+  btcUsd = rate;
+
+  const targets = selectTargets(config.recipients, options.onlyAddresses);
+
+  const satsByAddress = new Map<string, number>();
+  for (const recipient of targets) {
+    const sats = usdToSats(recipient.amountUsd, rate);
+    if (sats === null) {
+      log('spend.done', {
+        ok: false,
+        reason: 'usd_to_sats',
+        address: recipient.address,
+        amountUsd: recipient.amountUsd,
+        btcUsd: rate,
+      });
+      failed.push({ address: recipient.address, amountUsd: recipient.amountUsd, reason: 'usd_to_sats' });
+      return finish(3, { reason: 'usd_to_sats' });
+    }
+    satsByAddress.set(recipient.address, sats);
+  }
+
+  const noPasskey = new Set<string>();
+  const noPost = new Set<string>();
+  const postedMessageId = new Map<string, string | null>();
+  for (const recipient of targets) {
+    if (dayBlock(rows, recipient.address) !== undefined) {
+      continue;
+    }
+    if (latestStatus(rows, recipient.address) === 'failed') {
+      continue;
+    }
+    try {
+      const eligiblePasskey = await gifts.hasPasskey(recipient.address);
+      if (!eligiblePasskey) {
+        noPasskey.add(recipient.address);
+        continue;
+      }
+    } catch {
+      log('spend.done', { ok: false, reason: 'passkey_unreachable' });
+      return finish(3, { reason: 'passkey_unreachable' });
+    }
+    try {
+      const posted = await gifts.hasPosted(recipient.address);
+      if (!posted.hasPosted) {
+        noPost.add(recipient.address);
+      }
+      postedMessageId.set(recipient.address, posted.messageId);
+    } catch {
+      log('spend.done', { ok: false, reason: 'posted_unreachable' });
+      return finish(3, { reason: 'posted_unreachable' });
+    }
+  }
+
+  log('spend.start', {
+    live: options.live,
+    day: options.day,
+    recipients: targets.length,
+    btcUsd: rate,
+  });
+
   let token = '';
   if (options.live) {
-    const pending = config.recipients.filter((r) => dayBlock(rows, r.address) === undefined);
-    const needed = pending.reduce((sum, r) => sum + r.amountSats, 0);
+    const pending = targets.filter(
+      (r) =>
+        dayBlock(rows, r.address) === undefined &&
+        latestStatus(rows, r.address) !== 'failed' &&
+        !noPasskey.has(r.address) &&
+        !noPost.has(r.address),
+    );
+    const needed = pending.reduce((sum, r) => {
+      const sats = satsByAddress.get(r.address);
+      if (sats === undefined) {
+        throw new Error('satsByAddress incomplete');
+      }
+      return sum + sats;
+    }, 0);
     let available: number;
     try {
       token = await lndhub.auth();
       const bal = await lndhub.balance(token);
       if (bal === null) {
         log('spend.done', { ok: false, reason: 'balance_unreadable' });
-        return { exitCode: 3 };
+        return finish(3, { reason: 'balance_unreadable' });
       }
       available = bal;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'lndhub';
       log('spend.done', { ok: false, reason: 'lndhub_preflight', error: message });
-      return { exitCode: 3 };
+      return finish(3, { reason: 'lndhub_preflight' });
     }
     if (needed > 0 && needed + feeMargin(available) > available) {
       log('spend.done', { ok: false, reason: 'insufficient_balance', needed, available });
-      return { exitCode: 3 };
+      return finish(3, { reason: 'insufficient_balance', needed, available });
     }
   }
 
@@ -147,35 +293,121 @@ async function runDayLocked(
     rows.push(halt);
   };
 
-  for (const recipient of config.recipients) {
+  for (const recipient of targets) {
+    const amountSats = satsByAddress.get(recipient.address);
+    if (amountSats === undefined) {
+      throw new Error('satsByAddress incomplete');
+    }
+    const lineBase = { address: recipient.address, amountSats, amountUsd: recipient.amountUsd };
+
     const prior = dayBlock(rows, recipient.address);
     if (prior !== undefined) {
       log('spend.skip', { address: recipient.address, reason: prior });
+      skipped.push({ ...lineBase, reason: prior });
+      continue;
+    }
+    if (latestStatus(rows, recipient.address) === 'failed') {
+      log('spend.skip', { address: recipient.address, reason: 'failed' });
+      skipped.push({ ...lineBase, reason: 'failed' });
+      continue;
+    }
+    if (noPasskey.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
+      skipped.push({ ...lineBase, reason: 'no_passkey' });
+      continue;
+    }
+    if (noPost.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'no_post' });
+      skipped.push({ ...lineBase, reason: 'no_post' });
       continue;
     }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
+      skipped.push({ ...lineBase, reason: 'halted' });
       continue;
     }
 
     const comment = recipient.comment ?? config.comment;
+    const mappedId = options.messageIdByAddress?.[recipient.address.toLowerCase()];
+    const postedId = postedMessageId.get(recipient.address);
+    const invoiceMessageId =
+      typeof mappedId === 'string' ? mappedId : typeof postedId === 'string' ? postedId : undefined;
     let invoice;
     try {
-      invoice = await gifts.createInvoice(recipient.address, recipient.amountSats * 1000, comment);
+      invoice =
+        invoiceMessageId === undefined
+          ? await gifts.createInvoice(recipient.address, amountSats * 1000, comment)
+          : await gifts.createInvoice(recipient.address, amountSats * 1000, comment, invoiceMessageId);
     } catch (err) {
+      if (err instanceof GiftsApiError && err.status === 409) {
+        log('spend.skip', { address: recipient.address, reason: 'already_paid' });
+        skipped.push({ ...lineBase, reason: 'already_paid' });
+        const claimed: StateRow = {
+          ts: now().toISOString(),
+          address: recipient.address,
+          invoiceId: 'already-paid',
+          paymentHash: '0'.repeat(64),
+          status: 'paid',
+        };
+        state.append(claimed);
+        rows.push(claimed);
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Passkey required'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
+        skipped.push({ ...lineBase, reason: 'no_passkey' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Forum post required'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'no_post' });
+        skipped.push({ ...lineBase, reason: 'no_post' });
+        continue;
+      }
       const status = err instanceof GiftsApiError ? err.status : 0;
-      const retryable = status === 0 || status >= 500;
-      const rowStatus: StateRow['status'] = retryable ? 'uncertain' : 'failed';
-      sawProblem = true;
-      if (retryable) {
+      const message = err instanceof Error ? err.message : 'invoice';
+      const parseFail =
+        message === 'malformed invoice response' || message === 'malformed paymentHash';
+      const unreachable = !parseFail && (status === 0 || status >= 500);
+      if (unreachable) {
+        log('spend.skip', { address: recipient.address, reason: 'invoice_unreachable' });
+        skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
+        continue;
+      }
+      if (parseFail) {
+        sawProblem = true;
         stopLive = true;
         haltDay();
+        log('spend.uncertain', {
+          address: recipient.address,
+          amountSats,
+          error: message,
+        });
+        uncertain.push(lineBase);
+        if (!options.live) {
+          continue;
+        }
+        const failRow: StateRow = {
+          ts: now().toISOString(),
+          address: recipient.address,
+          invoiceId: '',
+          paymentHash: '',
+          status: 'uncertain',
+        };
+        state.append(failRow);
+        rows.push(failRow);
+        continue;
       }
-      log(rowStatus === 'failed' ? 'spend.failed' : 'spend.uncertain', {
-        address: recipient.address,
-        amountSats: recipient.amountSats,
-        error: err instanceof Error ? err.message : 'invoice',
-      });
+      sawProblem = true;
+      log('spend.failed', { address: recipient.address, amountSats, error: message });
+      failed.push(lineBase);
       if (!options.live) {
         continue;
       }
@@ -184,14 +416,14 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: '',
         paymentHash: '',
-        status: rowStatus,
+        status: 'failed',
       };
       state.append(failRow);
       rows.push(failRow);
       continue;
     }
 
-    const expectedMsat = recipient.amountSats * 1000;
+    const expectedMsat = amountSats * 1000;
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
       stopLive = true;
@@ -200,9 +432,10 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         reason: 'amount_mismatch',
       });
+      uncertain.push({ ...lineBase, reason: 'amount_mismatch' });
       if (!options.live) {
         continue;
       }
@@ -222,7 +455,7 @@ async function runDayLocked(
       address: recipient.address,
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
-      amountSats: recipient.amountSats,
+      amountSats,
       pr: prPreview(invoice.pr),
     });
 
@@ -236,6 +469,7 @@ async function runDayLocked(
       };
       state.append(dry);
       rows.push(dry);
+      dryRun.push(lineBase);
       continue;
     }
 
@@ -251,8 +485,8 @@ async function runDayLocked(
 
     let preimage: string | null;
     try {
-      const paid = await lndhub.payInvoice(token, invoice.pr);
-      preimage = paid.preimage;
+      const paidInvoice = await lndhub.payInvoice(token, invoice.pr);
+      preimage = paidInvoice.preimage;
     } catch (err) {
       sawProblem = true;
       stopLive = true;
@@ -261,9 +495,10 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         error: err instanceof Error ? err.message : 'pay',
       });
+      uncertain.push(lineBase);
       continue;
     }
 
@@ -276,9 +511,10 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         reason: 'preimage',
       });
+      uncertain.push({ ...lineBase, reason: 'preimage' });
       const preFail: StateRow = {
         ts: now().toISOString(),
         address: recipient.address,
@@ -311,9 +547,10 @@ async function runDayLocked(
         address: recipient.address,
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
-        amountSats: recipient.amountSats,
+        amountSats,
         error: err instanceof Error ? err.message : 'proof',
       });
+      uncertain.push(lineBase);
       continue;
     }
 
@@ -321,8 +558,9 @@ async function runDayLocked(
       address: recipient.address,
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
-      amountSats: recipient.amountSats,
+      amountSats,
     });
+    paid.push(lineBase);
     const paidRow: StateRow = {
       ts: now().toISOString(),
       address: recipient.address,
@@ -334,6 +572,23 @@ async function runDayLocked(
     rows.push(paidRow);
   }
 
+  const settled = config.recipients.every(
+    (r) => dayBlock(rows, r.address) !== undefined || latestStatus(rows, r.address) === 'failed',
+  );
+  const halted =
+    dayBlock(rows, HALT_ADDRESS) === 'uncertain' ||
+    config.recipients.some((r) => dayBlock(rows, r.address) === 'uncertain');
+  const unfinished = skipped.some((line) => line.reason === 'invoice_unreachable');
+  if (halted) {
+    state.markFinished();
+    log('spend.done', { ok: false });
+    return finish(4);
+  }
+  if (unfinished) {
+    log('spend.done', { ok: false, reason: 'invoice_unreachable' });
+    return finish(3);
+  }
+  if (settled) state.markFinished();
   log('spend.done', { ok: !sawProblem });
-  return { exitCode: sawProblem ? 4 : 0 };
+  return finish(sawProblem ? 4 : 0);
 }

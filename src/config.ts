@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 
-/** One payout recipient. */
+/** One payout recipient. Amounts are USD; sats are computed at payout time. */
 export interface Recipient {
   address: string;
-  amountSats: number;
+  amountUsd: number;
   comment?: string;
 }
 
@@ -16,6 +16,9 @@ export interface SpendConfig {
   stateDir: string;
   comment: string;
   recipients: Recipient[];
+  lightningAddress: string | null;
+  /** Dashboard editor password; `null` when unset (editor returns 503, payouts still boot). */
+  dashboardPassword: string | null;
 }
 
 interface RecipientsFile {
@@ -52,6 +55,13 @@ export function loadConfig(
   if (!lndhubUri.startsWith('lndhub://')) {
     return { ok: false, error: 'LNDHUB_URI must be an lndhub:// URI' };
   }
+  const lightningRaw = trimOrEmpty(env['SPEND_LIGHTNING_ADDRESS']);
+  if (lightningRaw !== '' && !lightningRaw.includes('@')) {
+    return { ok: false, error: 'SPEND_LIGHTNING_ADDRESS must be a Lightning Address' };
+  }
+  const lightningAddress = lightningRaw === '' ? null : lightningRaw;
+  const passwordRaw = trimOrEmpty(env['SPEND_DASHBOARD_PASSWORD']);
+  const dashboardPassword = passwordRaw === '' ? null : passwordRaw;
 
   let raw: string;
   try {
@@ -66,6 +76,9 @@ export function loadConfig(
   } catch {
     return { ok: false, error: 'recipients file is not JSON' };
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'recipients file is not JSON' };
+  }
 
   const fileComment = typeof parsed.comment === 'string' ? parsed.comment : '21gifts daily';
   if (!Array.isArray(parsed.recipients) || parsed.recipients.length === 0) {
@@ -77,14 +90,14 @@ export function loadConfig(
     if (item === null || typeof item !== 'object') {
       return { ok: false, error: 'each recipient must be an object' };
     }
-    const rec = item as { address?: unknown; amountSats?: unknown; comment?: unknown };
+    const rec = item as { address?: unknown; amountUsd?: unknown; comment?: unknown };
     if (typeof rec.address !== 'string' || !rec.address.includes('@')) {
       return { ok: false, error: 'each recipient needs a Lightning Address' };
     }
-    if (typeof rec.amountSats !== 'number' || !Number.isInteger(rec.amountSats) || rec.amountSats < 1) {
-      return { ok: false, error: 'each recipient needs amountSats >= 1' };
+    if (typeof rec.amountUsd !== 'number' || !Number.isFinite(rec.amountUsd) || rec.amountUsd <= 0) {
+      return { ok: false, error: 'each recipient needs amountUsd > 0' };
     }
-    const row: Recipient = { address: rec.address, amountSats: rec.amountSats };
+    const row: Recipient = { address: rec.address, amountUsd: rec.amountUsd };
     if (typeof rec.comment === 'string') {
       row.comment = rec.comment;
     }
@@ -104,6 +117,8 @@ export function loadConfig(
       stateDir,
       comment: fileComment,
       recipients,
+      lightningAddress,
+      dashboardPassword,
     },
   };
 }

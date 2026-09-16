@@ -3,17 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Daily Lightning gift payouts: invoices from 21.gifts api, pay via lightning.space",
+  "description": "Ping-triggered Lightning gift payouts: invoices from 21.gifts api, pay via lightning.space",
   "license": "UNLICENSED",
   "scripts": {
     "start": "bun src/server.ts",
     "cli": "bun src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:with-api": "bun test src/__tests__/with-api.e2e.test.ts",
+    "e2e": "playwright test e2e/ui.spec.ts",
+    "e2e:visual": "playwright test e2e/visual.spec.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.8",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
