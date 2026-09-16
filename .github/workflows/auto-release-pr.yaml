@@ -23,8 +23,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch main branch
-        run: git fetch origin main || true
+      - name: Fetch main and develop
+        run: |
+          git fetch origin main || true
+          git fetch origin develop || true
 
       - name: Check for existing PR
         id: check-pr
@@ -38,7 +40,8 @@ jobs:
         id: check-diff
         if: steps.check-pr.outputs.pr_exists == 'false'
         run: |
-          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+          if git rev-parse --verify origin/main >/dev/null 2>&1 \
+            && git rev-parse --verify origin/develop >/dev/null 2>&1; then
             DIFF_COUNT=$(git rev-list --count origin/main..origin/develop)
           else
             DIFF_COUNT=0
