@@ -44,6 +44,7 @@ Open every feature PR against **`develop`**, not `main`.
 - Merge to `develop` → Deploy DEV (`21gifts/spend:beta`)
 - Push to `develop` also opens `Release: develop -> main` when `main` is behind
 - Merge that release PR to `main` → Deploy PRD (`21gifts/spend:latest`)
+- If the release PR has no file changes (identical trees even though develop is commit-ahead), close it instead of squash-merging. The next push to `develop` opens a new one; merge that only when it has a real diff.
 
 ## Setup
 
