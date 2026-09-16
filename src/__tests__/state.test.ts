@@ -53,6 +53,31 @@ describe('DayState', () => {
     expect(writes[0]).toContain('dry-run');
   });
 
+  it('moderator bucket appends to a .moderator.jsonl path', () => {
+    let appendPath = '';
+    const state = new DayState(
+      '/tmp',
+      '2026-08-23',
+      {
+        exists: () => false,
+        read: () => '',
+        append: (path) => {
+          appendPath = path;
+        },
+        mkdir: () => undefined,
+      },
+      'moderator',
+    );
+    state.append({
+      ts: 't',
+      address: 'a@b.com',
+      invoiceId: '1',
+      paymentHash: 'h',
+      status: 'paid',
+    });
+    expect(appendPath.endsWith('.moderator.jsonl')).toBe(true);
+  });
+
   it('markFinished appends once and isFinished becomes true', () => {
     const writes: string[] = [];
     const files = new Set<string>();

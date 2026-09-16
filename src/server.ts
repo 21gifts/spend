@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { loadConfig, type Recipient, type SpendConfig } from './config';
+import { loadConfig, MODERATOR_STIPEND_USD, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
 import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
 import { parseLightningAddress } from './lightning-address';
@@ -315,11 +315,19 @@ export function createServer(opts: {
       ) {
         return json(400, { error: 'Expected a JSON body with address' });
       }
-      const pingBody = body as { address: string; messageId?: unknown };
-      if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
+      const pingBody = body as { address: string; messageId?: unknown; kind?: unknown };
+      const kindRaw = pingBody.kind;
+      if (kindRaw !== undefined && kindRaw !== 'daily' && kindRaw !== 'moderator') {
+        return json(400, { error: 'Expected a JSON body with address and kind' });
+      }
+      const kind: 'daily' | 'moderator' = kindRaw === 'moderator' ? 'moderator' : 'daily';
+      if (kind === 'moderator') {
+        if ('messageId' in pingBody) {
+          return json(400, { error: 'Expected a JSON body with address and kind' });
+        }
+      } else if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
         return json(400, { error: 'Expected a JSON body with address and messageId' });
       }
-      const messageId = pingBody.messageId;
       const parsed = parseLightningAddress(pingBody.address);
       if (parsed === null) {
         return json(400, { error: 'Not a valid Lightning Address (expected name@domain)' });
@@ -332,9 +340,61 @@ export function createServer(opts: {
             address: parsed,
             status,
             ...(reason !== undefined ? { reason } : {}),
+            ...(kind === 'moderator' ? { kind: 'moderator' } : {}),
           }),
         );
       };
+      const clock = opts.now ?? (() => new Date());
+      const day = clock().toISOString().slice(0, 10);
+      if (kind === 'moderator') {
+        const storedAddress = parsed;
+        let rows;
+        try {
+          rows = new DayState(config.stateDir, day, undefined, 'moderator').load();
+        } catch (err) {
+          if (!(err instanceof CorruptStateError)) {
+            throw err;
+          }
+          rows = undefined;
+        }
+        if (rows !== undefined) {
+          const block = dayBlock(rows, storedAddress);
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
+          }
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
+          }
+        }
+        logPing('accepted');
+        void payout(day, 'ping', [storedAddress], undefined, {
+          bucket: 'moderator',
+          recipients: [
+            {
+              address: storedAddress,
+              amountUsd: MODERATOR_STIPEND_USD,
+              comment: '21gifts moderator',
+            },
+          ],
+          comment: '21gifts moderator',
+        }).catch((err: unknown) => {
+          const error = err instanceof Error ? err.message : 'ping';
+          console.warn(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'spend.ping',
+              address: storedAddress,
+              status: 'error',
+              error,
+              kind: 'moderator',
+            }),
+          );
+        });
+        return json(202, { status: 'accepted' });
+      }
+      const messageId = pingBody.messageId as string;
       let liveList: { comment: string; recipients: Recipient[] };
       try {
         liveList = loadLiveRecipients(config.stateDir);
@@ -352,8 +412,6 @@ export function createServer(opts: {
         return json(200, { status: 'skipped', reason: 'not_listed' });
       }
       const storedAddress = listed.address;
-      const clock = opts.now ?? (() => new Date());
-      const day = clock().toISOString().slice(0, 10);
       let rows;
       try {
         rows = new DayState(config.stateDir, day).load();
@@ -599,40 +657,55 @@ export function createServer(opts: {
     source: TelegramSource,
     onlyAddresses?: string[],
     messageId?: string,
+    extras?: {
+      bucket?: 'moderator';
+      recipients?: Recipient[];
+      comment?: string;
+    },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
+      const moderator = extras?.bucket === 'moderator';
       let liveList: { comment: string; recipients: Recipient[] };
-      try {
-        liveList = loadLiveRecipients(config.stateDir);
-      } catch (err) {
-        if (err instanceof CorruptRecipientsError) {
-          console.warn(
-            JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'spend.done',
-              ok: false,
-              reason: 'corrupt_recipients',
-            }),
-          );
-          const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
-          if (telegramTarget !== null && notifyLog.allow(source, summary)) {
-            const sent = await notifyPayout({
-              target: telegramTarget,
-              summary,
-              source,
-              fetchImpl,
-            });
-            if (sent.ok) notifyLog.remember(source, summary);
+      if (moderator) {
+        liveList = {
+          comment: extras?.comment ?? '21gifts moderator',
+          recipients: extras?.recipients ?? [],
+        };
+      } else {
+        try {
+          liveList = loadLiveRecipients(config.stateDir);
+        } catch (err) {
+          if (err instanceof CorruptRecipientsError) {
+            console.warn(
+              JSON.stringify({
+                ts: new Date().toISOString(),
+                event: 'spend.done',
+                ok: false,
+                reason: 'corrupt_recipients',
+              }),
+            );
+            const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
+            if (telegramTarget !== null && notifyLog.allow(source, summary)) {
+              const sent = await notifyPayout({
+                target: telegramTarget,
+                summary,
+                source,
+                fetchImpl,
+              });
+              if (sent.ok) notifyLog.remember(source, summary);
+            }
+            return { exitCode: 4 };
           }
-          return { exitCode: 4 };
+          throw err;
         }
-        throw err;
       }
       const runOptions: RunOptions =
         onlyAddresses === undefined
           ? { live, day }
           : messageId === undefined
-            ? { live, day, onlyAddresses }
+            ? moderator
+              ? { live, day, onlyAddresses, bucket: 'moderator' }
+              : { live, day, onlyAddresses }
             : {
                 live,
                 day,

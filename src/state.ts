@@ -29,6 +29,9 @@ export interface StateRow {
 
 /**
  * File-backed per-day payout log.
+ *
+ * `bucket` `'daily'` (default) uses `${day}.jsonl` / `${day}.finished`.
+ * `'moderator'` uses `${day}.moderator.jsonl` / `${day}.moderator.finished`.
  */
 export class DayState {
   constructor(
@@ -53,6 +56,7 @@ export class DayState {
       },
       mkdir: (path) => mkdirSync(path, { recursive: true }),
     },
+    private readonly bucket: 'daily' | 'moderator' = 'daily',
   ) {}
 
   /**
@@ -112,10 +116,16 @@ export class DayState {
   }
 
   private path(): string {
+    if (this.bucket === 'moderator') {
+      return join(this.dir, `${this.day}.moderator.jsonl`);
+    }
     return join(this.dir, `${this.day}.jsonl`);
   }
 
   private finishedPath(): string {
+    if (this.bucket === 'moderator') {
+      return join(this.dir, `${this.day}.moderator.finished`);
+    }
     return join(this.dir, `${this.day}.finished`);
   }
 }

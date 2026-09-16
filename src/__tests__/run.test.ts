@@ -339,6 +339,51 @@ describe('runDay', () => {
     });
   });
 
+  it('moderator bucket does not call hasPosted and omits messageId on the invoice', async () => {
+    let invoiceBody: unknown;
+    let passkeyCalls = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        passkeyCalls += 1;
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        throw new Error('hasPosted must not be called for moderator bucket');
+      }
+      invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(passkeyCalls).toBe(1);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      comment: '21gifts daily',
+    });
+  });
+
   it('forwards RunOptions.messageIdByAddress to createInvoice over posted id', async () => {
     let invoiceBody: unknown;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {

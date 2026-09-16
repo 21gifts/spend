@@ -21,6 +21,8 @@ export interface RunOptions {
    * `hasPosted().messageId` when the api returns one.
    */
   messageIdByAddress?: Record<string, string>;
+  /** Default 'daily'. 'moderator' uses the moderator JSONL and skips living-room hasPosted. */
+  bucket?: 'daily' | 'moderator';
 }
 
 /** Outcome of {@link runDay}. */
@@ -80,9 +82,11 @@ function selectTargets(
  * `markFinished` still requires every live-roster recipient to be settled.
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
+ * When {@link RunOptions.bucket} is `'moderator'`, uses the moderator JSONL, skips
+ * living-room `hasPosted`, and never sends `messageId` on `createInvoice`.
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run, the day key, optional address filter, and optional post-id map.
+ * @param options - Live vs dry-run, the day key, optional address filter, optional post-id map, and optional bucket.
  * @param deps - Injected clients (tests).
  * @returns Process exit code and a structured summary for Telegram notify.
  */
@@ -105,7 +109,7 @@ export async function runDay(
     return { exitCode: 2, summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }) };
   }
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
-  const state = deps?.state ?? new DayState(config.stateDir, options.day);
+  const state = deps?.state ?? new DayState(config.stateDir, options.day, undefined, options.bucket ?? 'daily');
   const now = deps?.now ?? (() => new Date());
 
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
@@ -220,6 +224,9 @@ async function runDayLocked(
       log('spend.done', { ok: false, reason: 'passkey_unreachable' });
       return finish(3, { reason: 'passkey_unreachable' });
     }
+    if (options.bucket === 'moderator') {
+      continue;
+    }
     try {
       const posted = await gifts.hasPosted(recipient.address);
       if (!posted.hasPosted) {
@@ -331,7 +338,13 @@ async function runDayLocked(
     const mappedId = options.messageIdByAddress?.[recipient.address.toLowerCase()];
     const postedId = postedMessageId.get(recipient.address);
     const invoiceMessageId =
-      typeof mappedId === 'string' ? mappedId : typeof postedId === 'string' ? postedId : undefined;
+      options.bucket === 'moderator'
+        ? undefined
+        : typeof mappedId === 'string'
+          ? mappedId
+          : typeof postedId === 'string'
+            ? postedId
+            : undefined;
     let invoice;
     try {
       invoice =
