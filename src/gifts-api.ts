@@ -12,13 +12,12 @@ export class GiftsApiError extends Error {
 
   constructor(status: number, message: string) {
     super(message);
-    this.name = "GiftsApiError";
+    this.name = 'GiftsApiError';
     this.status = status;
   }
 }
 
-const MESSAGE_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `POST /invoices`, and `POST /invoices/proof`.
@@ -39,9 +38,9 @@ export class GiftsApi {
   async hasPasskey(address: string): Promise<boolean> {
     const path = `/invoices/passkey?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
-    const has = json["hasPasskey"];
-    if (typeof has !== "boolean") {
-      throw new GiftsApiError(0, "malformed passkey response");
+    const has = json['hasPasskey'];
+    if (typeof has !== 'boolean') {
+      throw new GiftsApiError(0, 'malformed passkey response');
     }
     return has;
   }
@@ -55,23 +54,18 @@ export class GiftsApi {
    */
   async hasPosted(
     address: string,
-  ): Promise<{
-    hasPosted: boolean;
-    messageId: string | null;
-    postedAt: string | null;
-  }> {
+  ): Promise<{ hasPosted: boolean; messageId: string | null; postedAt: string | null }> {
     const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
-    const has = json["hasPosted"];
-    if (typeof has !== "boolean") {
-      throw new GiftsApiError(0, "malformed posted response");
+    const has = json['hasPosted'];
+    if (typeof has !== 'boolean') {
+      throw new GiftsApiError(0, 'malformed posted response');
     }
-    const rawId = json["messageId"];
-    const messageId =
-      typeof rawId === "string" && MESSAGE_ID_RE.test(rawId) ? rawId : null;
-    const rawAt = json["postedAt"];
+    const rawId = json['messageId'];
+    const messageId = typeof rawId === 'string' && MESSAGE_ID_RE.test(rawId) ? rawId : null;
+    const rawAt = json['postedAt'];
     let postedAt: string | null = null;
-    if (typeof rawAt === "string" && !Number.isNaN(Date.parse(rawAt))) {
+    if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
       postedAt = new Date(rawAt).toISOString();
     }
     return { hasPosted: has, messageId, postedAt };
@@ -92,12 +86,7 @@ export class GiftsApi {
     comment?: string,
     messageId?: string,
   ): Promise<IssuedInvoice> {
-    const body: {
-      address: string;
-      amountMsat: number;
-      comment?: string;
-      messageId?: string;
-    } = {
+    const body: { address: string; amountMsat: number; comment?: string; messageId?: string } = {
       address,
       amountMsat,
     };
@@ -107,22 +96,17 @@ export class GiftsApi {
     if (messageId !== undefined) {
       body.messageId = messageId;
     }
-    const json = await this.postJson("/invoices", body);
-    const id = json["id"];
-    const pr = json["pr"];
-    const paymentHash = json["paymentHash"];
-    const amt = json["amountMsat"];
-    if (
-      typeof id !== "string" ||
-      typeof pr !== "string" ||
-      typeof paymentHash !== "string" ||
-      typeof amt !== "number"
-    ) {
-      throw new GiftsApiError(0, "malformed invoice response");
+    const json = await this.postJson('/invoices', body);
+    const id = json['id'];
+    const pr = json['pr'];
+    const paymentHash = json['paymentHash'];
+    const amt = json['amountMsat'];
+    if (typeof id !== 'string' || typeof pr !== 'string' || typeof paymentHash !== 'string' || typeof amt !== 'number') {
+      throw new GiftsApiError(0, 'malformed invoice response');
     }
     const hash = paymentHash.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(hash)) {
-      throw new GiftsApiError(0, "malformed paymentHash");
+      throw new GiftsApiError(0, 'malformed paymentHash');
     }
     return { id, pr, paymentHash: hash, amountMsat: amt };
   }
@@ -134,20 +118,17 @@ export class GiftsApi {
    * @param preimage - 32-byte preimage hex.
    */
   async submitProof(id: string, preimage: string): Promise<void> {
-    await this.postJson("/invoices/proof", { id, preimage });
+    await this.postJson('/invoices/proof', { id, preimage });
   }
 
   private async getJson(path: string): Promise<Record<string, unknown>> {
-    return this.requestJson(path, { method: "GET" });
+    return this.requestJson(path, { method: 'GET' });
   }
 
-  private async postJson(
-    path: string,
-    body: unknown,
-  ): Promise<Record<string, unknown>> {
+  private async postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
     return this.requestJson(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
   }
@@ -167,7 +148,7 @@ export class GiftsApi {
         ...(init.body !== undefined ? { body: init.body } : {}),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "network error";
+      const message = err instanceof Error ? err.message : 'network error';
       throw new GiftsApiError(0, message);
     }
     let json: unknown = {};
@@ -176,15 +157,9 @@ export class GiftsApi {
     } catch {
       json = {};
     }
-    const record =
-      json !== null && typeof json === "object"
-        ? (json as Record<string, unknown>)
-        : {};
+    const record = json !== null && typeof json === 'object' ? (json as Record<string, unknown>) : {};
     if (!response.ok) {
-      const error =
-        typeof record["error"] === "string"
-          ? record["error"]
-          : `HTTP ${response.status}`;
+      const error = typeof record['error'] === 'string' ? record['error'] : `HTTP ${response.status}`;
       throw new GiftsApiError(response.status, error);
     }
     return record;
