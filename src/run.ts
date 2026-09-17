@@ -13,7 +13,7 @@ const HALT_ADDRESS = '*halt*';
 export interface RunOptions {
   live: boolean;
   day: string;
-  /** When set, only these live-roster addresses are attempted (case-insensitive). */
+  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: they are the pinged stipend addresses (not roster-gated). */
   onlyAddresses?: string[];
   /**
    * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
@@ -79,7 +79,7 @@ function selectTargets(
 /**
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
  *
- * `markFinished` still requires every live-roster recipient to be settled.
+ * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster.
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  * When {@link RunOptions.bucket} is `'moderator'`, uses the moderator JSONL, requires
