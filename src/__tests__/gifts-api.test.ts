@@ -100,7 +100,11 @@ describe('GiftsApi', () => {
       auth = new Headers(init?.headers).get('authorization') ?? '';
       return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
     });
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: true, messageId: null });
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      messageId: null,
+      postedAt: null,
+    });
     expect(seenUrl).toBe('https://api.21.gifts/invoices/posted?address=a%40b.com');
     expect(auth).toBe('Bearer tok');
   });
@@ -109,7 +113,11 @@ describe('GiftsApi', () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
       new Response(JSON.stringify({ hasPosted: false }), { status: 200 }),
     );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: false, messageId: null });
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: false,
+      messageId: null,
+      postedAt: null,
+    });
   });
 
   it('hasPosted returns messageId when the JSON includes a valid UUID', async () => {
@@ -122,6 +130,7 @@ describe('GiftsApi', () => {
     await expect(api.hasPosted('a@b.com')).resolves.toEqual({
       hasPosted: true,
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      postedAt: null,
     });
   });
 
@@ -138,8 +147,30 @@ describe('GiftsApi', () => {
       const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
         new Response(JSON.stringify(payload), { status: 200 }),
       );
-      await expect(api.hasPosted('a@b.com')).resolves.toEqual({ hasPosted: true, messageId: null });
+      await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+        hasPosted: true,
+        messageId: null,
+        postedAt: null,
+      });
     }
+  });
+
+  it('hasPosted returns postedAt when the JSON includes a parseable instant', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({
+          hasPosted: true,
+          messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          postedAt: '2026-08-23T12:00:00.000Z',
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      postedAt: '2026-08-23T12:00:00.000Z',
+    });
   });
 
   it('createInvoice JSON includes messageId when the 4th argument is passed', async () => {

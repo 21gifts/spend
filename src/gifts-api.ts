@@ -46,12 +46,15 @@ export class GiftsApi {
   }
 
   /**
-   * Live forum-post flag and post UUID for this Lightning Address.
+   * Live forum-post flag, post UUID, and post timestamp for this Lightning Address.
    *
    * @param address - LUD-16 address.
-   * @returns `{ hasPosted, messageId }` — `messageId` is a UUID, or `null` when missing or invalid.
+   * @returns `{ hasPosted, messageId, postedAt }` — `messageId` is a UUID or `null`;
+   *   `postedAt` is an ISO-8601 instant or `null` when missing or unparseable.
    */
-  async hasPosted(address: string): Promise<{ hasPosted: boolean; messageId: string | null }> {
+  async hasPosted(
+    address: string,
+  ): Promise<{ hasPosted: boolean; messageId: string | null; postedAt: string | null }> {
     const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
     const has = json['hasPosted'];
@@ -60,7 +63,12 @@ export class GiftsApi {
     }
     const rawId = json['messageId'];
     const messageId = typeof rawId === 'string' && MESSAGE_ID_RE.test(rawId) ? rawId : null;
-    return { hasPosted: has, messageId };
+    const rawAt = json['postedAt'];
+    let postedAt: string | null = null;
+    if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
+      postedAt = new Date(rawAt).toISOString();
+    }
+    return { hasPosted: has, messageId, postedAt };
   }
 
   /**

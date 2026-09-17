@@ -13,7 +13,7 @@ const HALT_ADDRESS = '*halt*';
 export interface RunOptions {
   live: boolean;
   day: string;
-  /** When set, only these live-roster addresses are attempted (case-insensitive). */
+  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: they are the pinged stipend addresses (not roster-gated). */
   onlyAddresses?: string[];
   /**
    * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
@@ -21,6 +21,8 @@ export interface RunOptions {
    * `hasPosted().messageId` when the api returns one.
    */
   messageIdByAddress?: Record<string, string>;
+  /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
+  bucket?: 'daily' | 'moderator';
 }
 
 /** Outcome of {@link runDay}. */
@@ -77,12 +79,15 @@ function selectTargets(
 /**
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
  *
- * `markFinished` still requires every live-roster recipient to be settled.
+ * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster.
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
+ * When {@link RunOptions.bucket} is `'moderator'`, uses the moderator JSONL, requires
+ * a living-room `hasPosted` whose `postedAt` UTC day matches {@link RunOptions.day},
+ * and never sends `messageId` on `createInvoice`.
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run, the day key, optional address filter, and optional post-id map.
+ * @param options - Live vs dry-run, the day key, optional address filter, optional post-id map, and optional bucket.
  * @param deps - Injected clients (tests).
  * @returns Process exit code and a structured summary for Telegram notify.
  */
@@ -105,7 +110,7 @@ export async function runDay(
     return { exitCode: 2, summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }) };
   }
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
-  const state = deps?.state ?? new DayState(config.stateDir, options.day);
+  const state = deps?.state ?? new DayState(config.stateDir, options.day, undefined, options.bucket ?? 'daily');
   const now = deps?.now ?? (() => new Date());
 
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
@@ -163,7 +168,7 @@ async function runDayLocked(
     }
     throw err;
   }
-  if (options.live) {
+  if (options.live && options.bucket !== 'moderator') {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
     );
@@ -222,6 +227,14 @@ async function runDayLocked(
     }
     try {
       const posted = await gifts.hasPosted(recipient.address);
+      if (options.bucket === 'moderator') {
+        const postedDay =
+          posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
+        if (!posted.hasPosted || postedDay !== options.day) {
+          noPost.add(recipient.address);
+        }
+        continue;
+      }
       if (!posted.hasPosted) {
         noPost.add(recipient.address);
       }
@@ -279,6 +292,9 @@ async function runDayLocked(
   let stopLive = false;
 
   const haltDay = (): void => {
+    if (options.bucket === 'moderator') {
+      return;
+    }
     if (!options.live || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
       return;
     }
@@ -331,7 +347,13 @@ async function runDayLocked(
     const mappedId = options.messageIdByAddress?.[recipient.address.toLowerCase()];
     const postedId = postedMessageId.get(recipient.address);
     const invoiceMessageId =
-      typeof mappedId === 'string' ? mappedId : typeof postedId === 'string' ? postedId : undefined;
+      options.bucket === 'moderator'
+        ? undefined
+        : typeof mappedId === 'string'
+          ? mappedId
+          : typeof postedId === 'string'
+            ? postedId
+            : undefined;
     let invoice;
     try {
       invoice =
@@ -383,7 +405,9 @@ async function runDayLocked(
       }
       if (parseFail) {
         sawProblem = true;
-        stopLive = true;
+        if (options.bucket !== 'moderator') {
+          stopLive = true;
+        }
         haltDay();
         log('spend.uncertain', {
           address: recipient.address,
@@ -426,7 +450,9 @@ async function runDayLocked(
     const expectedMsat = amountSats * 1000;
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -489,7 +515,9 @@ async function runDayLocked(
       preimage = paidInvoice.preimage;
     } catch (err) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -505,7 +533,9 @@ async function runDayLocked(
     const digest = preimage === null ? null : hashPreimage(preimage);
     if (preimage === null || digest === null || digest !== invoice.paymentHash) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
@@ -541,7 +571,9 @@ async function runDayLocked(
       await gifts.submitProof(invoice.id, preimage);
     } catch (err) {
       sawProblem = true;
-      stopLive = true;
+      if (options.bucket !== 'moderator') {
+        stopLive = true;
+      }
       haltDay();
       log('spend.uncertain', {
         address: recipient.address,
