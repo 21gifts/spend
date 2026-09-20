@@ -392,6 +392,65 @@ describe('runDay', () => {
       amountMsat: 1_000_000,
       comment: '21gifts daily',
     });
+    expect(invoiceBody).not.toHaveProperty('groupMessageId');
+  });
+
+  it('moderator bucket forwards groupMessageIdByAddress on the invoice POST body', async () => {
+    let invoiceBody: unknown;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            postedAt: '2026-08-23T12:00:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      {
+        live: false,
+        day: '2026-08-23',
+        bucket: 'moderator',
+        groupMessageIdByAddress: {
+          'a@b.com': 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        },
+      },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      comment: '21gifts daily',
+      groupMessageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    });
+    expect(invoiceBody).not.toHaveProperty('messageId');
   });
 
   it('moderator bucket skips when there is no living-room post today', async () => {
