@@ -587,6 +587,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         },
+        checkFundingEligible: false,
       }),
     );
     await app.drainPayouts();
@@ -629,6 +630,7 @@ describe('createServer', () => {
         day: '2026-08-25',
         onlyAddresses: ['bob@walletofsatoshi.com'],
         bucket: 'moderator',
+        checkFundingEligible: false,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;

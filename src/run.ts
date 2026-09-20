@@ -23,6 +23,8 @@ export interface RunOptions {
   messageIdByAddress?: Record<string, string>;
   /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator';
+  /** Default true. False on HTTP ping: API already gated eligibleToday. */
+  checkFundingEligible?: boolean;
 }
 
 /** Outcome of {@link runDay}. */
@@ -233,10 +235,12 @@ async function runDayLocked(
           posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
         if (!posted.hasPosted || postedDay !== options.day) {
           noPost.add(recipient.address);
+          continue;
         }
       } else {
         if (!posted.hasPosted) {
           noPost.add(recipient.address);
+          continue;
         }
         postedMessageId.set(recipient.address, posted.messageId);
       }
@@ -244,14 +248,16 @@ async function runDayLocked(
       log('spend.done', { ok: false, reason: 'posted_unreachable' });
       return finish(3, { reason: 'posted_unreachable' });
     }
-    try {
-      const eligible = await gifts.isFundingEligible(recipient.address);
-      if (!eligible) {
-        noEligible.add(recipient.address);
+    if (options.checkFundingEligible !== false) {
+      try {
+        const eligible = await gifts.isFundingEligible(recipient.address);
+        if (!eligible) {
+          noEligible.add(recipient.address);
+        }
+      } catch {
+        log('spend.done', { ok: false, reason: 'eligible_unreachable' });
+        return finish(3, { reason: 'eligible_unreachable' });
       }
-    } catch {
-      log('spend.done', { ok: false, reason: 'eligible_unreachable' });
-      return finish(3, { reason: 'eligible_unreachable' });
     }
   }
 

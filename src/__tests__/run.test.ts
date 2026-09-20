@@ -1238,6 +1238,119 @@ describe('runDay', () => {
     expect(state.isFinished()).toBe(false);
   });
 
+  it('skips no_post without calling eligible when hasPosted is false', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, { 'a@b.com': false }, {
+        'a@b.com': 'throw',
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).not.toBe('eligible_unreachable');
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_post' }),
+    ]);
+  });
+
+  it('moderator bucket skips no_post without calling eligible when hasPosted is false', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, { 'a@b.com': false }, {
+        'a@b.com': 'throw',
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).not.toBe('eligible_unreachable');
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_post' }),
+    ]);
+  });
+
+  it('skips the eligible lookup when checkFundingEligible is false', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(
+        async (_url, init) => {
+          invoices += 1;
+          const body = JSON.parse(String(init?.body ?? '{}')) as { amountMsat?: number };
+          return new Response(
+            JSON.stringify({
+              id: 'id1',
+              pr: 'lnbc1',
+              paymentHash: HASH,
+              amountMsat: body.amountMsat ?? 1_000_000,
+            }),
+            { status: 200 },
+          );
+        },
+        undefined,
+        undefined,
+        { 'a@b.com': 'throw' },
+      ),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const skipped = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', checkFundingEligible: false },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    const def = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(skipped.exitCode).toBe(0);
+    expect(skipped.summary.reason).not.toBe('eligible_unreachable');
+    expect(skipped.summary.skipped.some((row) => row.reason === 'not_eligible')).toBe(false);
+    expect(invoices).toBe(1);
+    expect(skipped.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    expect(def.exitCode).toBe(3);
+    expect(def.summary.reason).toBe('eligible_unreachable');
+  });
+
   it('aborts on low balance', async () => {
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
