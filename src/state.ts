@@ -29,6 +29,9 @@ export interface StateRow {
 
 /**
  * File-backed per-day payout log.
+ *
+ * `bucket` `'daily'` (default) uses `${day}.jsonl` / `${day}.finished`.
+ * `'moderator'` uses `${day}.moderator.jsonl` / `${day}.moderator.finished`.
  */
 export class DayState {
   constructor(
@@ -53,6 +56,7 @@ export class DayState {
       },
       mkdir: (path) => mkdirSync(path, { recursive: true }),
     },
+    private readonly bucket: 'daily' | 'moderator' = 'daily',
   ) {}
 
   /**
@@ -112,10 +116,16 @@ export class DayState {
   }
 
   private path(): string {
+    if (this.bucket === 'moderator') {
+      return join(this.dir, `${this.day}.moderator.jsonl`);
+    }
     return join(this.dir, `${this.day}.jsonl`);
   }
 
   private finishedPath(): string {
+    if (this.bucket === 'moderator') {
+      return join(this.dir, `${this.day}.moderator.finished`);
+    }
     return join(this.dir, `${this.day}.finished`);
   }
 }
@@ -161,7 +171,7 @@ function parseStateRow(line: string): StateRow {
 export function latestStatus(rows: StateRow[], address: string): StateRow['status'] | undefined {
   let found: StateRow['status'] | undefined;
   for (const row of rows) {
-    if (row.address === address) {
+    if (row.address.toLowerCase() === address.toLowerCase()) {
       found = row.status;
     }
   }
@@ -178,7 +188,7 @@ export function latestStatus(rows: StateRow[], address: string): StateRow['statu
 export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain' | undefined {
   let found: 'paid' | 'uncertain' | undefined;
   for (const row of rows) {
-    if (row.address === address && (row.status === 'paid' || row.status === 'uncertain')) {
+    if (row.address.toLowerCase() === address.toLowerCase() && (row.status === 'paid' || row.status === 'uncertain')) {
       found = row.status;
     }
   }
