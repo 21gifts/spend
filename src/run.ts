@@ -207,6 +207,7 @@ async function runDayLocked(
 
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
+  const noEligible = new Set<string>();
   const postedMessageId = new Map<string, string | null>();
   for (const recipient of targets) {
     if (dayBlock(rows, recipient.address) !== undefined) {
@@ -233,15 +234,24 @@ async function runDayLocked(
         if (!posted.hasPosted || postedDay !== options.day) {
           noPost.add(recipient.address);
         }
-        continue;
+      } else {
+        if (!posted.hasPosted) {
+          noPost.add(recipient.address);
+        }
+        postedMessageId.set(recipient.address, posted.messageId);
       }
-      if (!posted.hasPosted) {
-        noPost.add(recipient.address);
-      }
-      postedMessageId.set(recipient.address, posted.messageId);
     } catch {
       log('spend.done', { ok: false, reason: 'posted_unreachable' });
       return finish(3, { reason: 'posted_unreachable' });
+    }
+    try {
+      const eligible = await gifts.isFundingEligible(recipient.address);
+      if (!eligible) {
+        noEligible.add(recipient.address);
+      }
+    } catch {
+      log('spend.done', { ok: false, reason: 'eligible_unreachable' });
+      return finish(3, { reason: 'eligible_unreachable' });
     }
   }
 
@@ -259,7 +269,8 @@ async function runDayLocked(
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
         !noPasskey.has(r.address) &&
-        !noPost.has(r.address),
+        !noPost.has(r.address) &&
+        !noEligible.has(r.address),
     );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
@@ -335,6 +346,11 @@ async function runDayLocked(
     if (noPost.has(recipient.address)) {
       log('spend.skip', { address: recipient.address, reason: 'no_post' });
       skipped.push({ ...lineBase, reason: 'no_post' });
+      continue;
+    }
+    if (noEligible.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'not_eligible' });
+      skipped.push({ ...lineBase, reason: 'not_eligible' });
       continue;
     }
     if (stopLive && options.live) {

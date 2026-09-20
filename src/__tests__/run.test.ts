@@ -30,15 +30,17 @@ if (target === null) {
 }
 
 /**
- * Answer GET /invoices/passkey with `{ hasPasskey: true }` and GET
- * /invoices/posted with `{ hasPosted: true }` by default so existing
- * POST /invoices mocks keep working. Override via `passkeyByAddress` /
- * `postedByAddress` when needed.
+ * Answer GET /invoices/passkey with `{ hasPasskey: true }`, GET
+ * /invoices/posted with `{ hasPosted: true }`, and GET /invoices/eligible
+ * with `{ eligible: true }` by default so existing POST /invoices mocks
+ * keep working. Override via `passkeyByAddress` / `postedByAddress` /
+ * `eligibleByAddress` when needed.
  */
 function giftsFetch(
   postHandler: (url: string, init?: RequestInit) => Promise<Response>,
   passkeyByAddress?: Record<string, boolean | 'throw' | number>,
   postedByAddress?: Record<string, boolean | 'throw' | number>,
+  eligibleByAddress?: Record<string, boolean | 'throw' | number>,
 ): typeof fetch {
   return async (url, init) => {
     const href = String(url);
@@ -65,6 +67,18 @@ function giftsFetch(
       }
       const hasPosted = override === undefined ? true : override;
       return new Response(JSON.stringify({ hasPosted }), { status: 200 });
+    }
+    if (href.includes('/invoices/eligible')) {
+      const address = new URL(href).searchParams.get('address') ?? '';
+      const override = eligibleByAddress?.[address];
+      if (override === 'throw') {
+        throw new Error('eligible offline');
+      }
+      if (typeof override === 'number') {
+        return new Response(JSON.stringify({ error: 'down' }), { status: override });
+      }
+      const eligible = override === undefined ? true : override;
+      return new Response(JSON.stringify({ eligible }), { status: 200 });
     }
     return postHandler(href, init);
   };
@@ -294,6 +308,9 @@ describe('runDay', () => {
     let invoiceBody: unknown;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -345,6 +362,9 @@ describe('runDay', () => {
     let postedCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         passkeyCalls += 1;
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
@@ -398,6 +418,9 @@ describe('runDay', () => {
     let invoiceCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -431,6 +454,9 @@ describe('runDay', () => {
     let invoiceCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -469,6 +495,9 @@ describe('runDay', () => {
     let invoiceCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -506,6 +535,9 @@ describe('runDay', () => {
     let invoiceCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -543,6 +575,9 @@ describe('runDay', () => {
     let invoiceCalls = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -580,6 +615,9 @@ describe('runDay', () => {
     let bobInvoices = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -654,6 +692,9 @@ describe('runDay', () => {
     let invoiceBody: unknown;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
       const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       if (href.includes('/invoices/passkey')) {
         return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
       }
@@ -1098,6 +1139,102 @@ describe('runDay', () => {
     ]);
     expect(result.summary.failed).toEqual([]);
     expect(state.load().some((row) => row.status === 'failed')).toBe(false);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('skips not_eligible recipients, excludes them from needed, and leaves the day unfinished', async () => {
+    let invoices = 0;
+    let neededInPreflight: number | undefined;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(
+        async (url) => {
+          if (url.endsWith('/proof')) {
+            return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+          }
+          invoices += 1;
+          return new Response(
+            JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 500_000 }),
+            { status: 200 },
+          );
+        },
+        undefined,
+        undefined,
+        { 'a@b.com': false, 'c@d.com': true },
+      ),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        // Only c@d.com (500 sats) must be needed; a@b.com (1000) is ineligible.
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 600 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation((msg) => {
+      const line = typeof msg === 'string' ? msg : '';
+      if (line.includes('"reason":"insufficient_balance"')) {
+        const parsed = JSON.parse(line) as { needed?: number };
+        neededInPreflight = parsed.needed;
+      }
+    });
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts,
+      lndhub,
+      state,
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).toBeUndefined();
+    expect(neededInPreflight).toBeUndefined();
+    expect(invoices).toBe(1);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'not_eligible' }),
+    ]);
+    expect(result.summary.paid).toEqual([
+      expect.objectContaining({ address: 'c@d.com' }),
+    ]);
+    expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('aborts with eligible_unreachable when the eligible lookup throws', async () => {
+    let payCalls = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, undefined, {
+        'a@b.com': 'throw',
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      }
+      payCalls += 1;
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
+    expect(result.summary.reason).toBe('eligible_unreachable');
+    expect(payCalls).toBe(0);
+    expect(state.load()).toEqual([]);
     expect(state.isFinished()).toBe(false);
   });
 

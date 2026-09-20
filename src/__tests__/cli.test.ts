@@ -249,6 +249,9 @@ describe('main Telegram notify', () => {
         if (String(url).includes('/invoices/posted')) {
           return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
         }
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+        }
         if (String(url).includes('/invoices') && !String(url).endsWith('/proof')) {
           return new Response(
             JSON.stringify({
@@ -295,6 +298,9 @@ describe('main Telegram notify', () => {
         }
         if (String(url).includes('/invoices/posted')) {
           return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+        }
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: true }), { status: 200 });
         }
         if (String(url).includes('/invoices') && !String(url).endsWith('/proof')) {
           return new Response(
