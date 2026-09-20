@@ -22,11 +22,11 @@ const TRASH_SVG =
  * Optional panel below the Spend block on the combined page.
  *
  * - `login` — password form when the editor is configured but there is no session
- * - `editor` — payment comment + recipient roster when the session is valid
+ * - `editor` — payment comment + daily and moderator rosters when the session is valid
  */
 export type SpendPanel =
   | { kind: 'login'; error?: string }
-  | { kind: 'editor'; recipients: Recipient[]; comment: string; error?: string };
+  | { kind: 'editor'; recipients: Recipient[]; moderators: Recipient[]; comment: string; error?: string };
 
 function formatSats(sats: number | null): string {
   return sats === null ? 'unavailable' : `${sats} sats`;
@@ -41,20 +41,28 @@ function formatUsdTotal(sum: number): string {
   return String(rounded);
 }
 
-function renderRow(row: Recipient): string {
+/**
+ * One roster row. `actionPrefix` is `/recipients` or `/moderators`.
+ *
+ * @param row - Address and USD amount.
+ * @param actionPrefix - POST path prefix for update/delete.
+ * @returns List-item HTML.
+ */
+function renderRow(row: Recipient, actionPrefix: '/recipients' | '/moderators'): string {
   const full = slot(row.address);
   const display = slot(displayLightningAddress(row.address));
   const usd = slot(String(row.amountUsd));
+  const named = actionPrefix === '/moderators' ? `moderator ${full}` : full;
   return `<li class="row">
               <span class="addr" title="${full}">${display}</span>
-              <form class="inline" method="post" action="/recipients/update">
+              <form class="inline" method="post" action="${actionPrefix}/update">
                 <input type="hidden" name="address" value="${full}">
-                <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD amount for ${full}">
-                <button class="icon" type="submit" aria-label="Update ${full}" title="Update">${PENCIL_SVG}</button>
+                <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD amount for ${named}">
+                <button class="icon" type="submit" aria-label="Update ${named}" title="Update">${PENCIL_SVG}</button>
               </form>
-              <form class="inline" method="post" action="/recipients/delete">
+              <form class="inline" method="post" action="${actionPrefix}/delete">
                 <input type="hidden" name="address" value="${full}">
-                <button class="icon danger" type="submit" aria-label="Delete ${full}" title="Delete">${TRASH_SVG}</button>
+                <button class="icon danger" type="submit" aria-label="Delete ${named}" title="Delete">${TRASH_SVG}</button>
               </form>
             </li>`;
 }
@@ -72,6 +80,50 @@ function renderTotalRow(recipients: Recipient[]): string {
                 <span class="icon-spacer" aria-hidden="true"></span>
               </span>
             </li>`;
+}
+
+/**
+ * Roster card: rows plus Total, or a muted empty message.
+ *
+ * @param rows - List to render.
+ * @param actionPrefix - POST path prefix for row forms.
+ * @param emptyMessage - Shown when `rows` is empty.
+ * @returns Card HTML.
+ */
+function renderRosterCard(
+  rows: Recipient[],
+  actionPrefix: '/recipients' | '/moderators',
+  emptyMessage: string,
+): string {
+  if (rows.length === 0) {
+    return `<div class="card"><p class="muted">${emptyMessage}</p></div>`;
+  }
+  return `<div class="card">
+          <ul class="roster">
+            ${rows.map((row) => renderRow(row, actionPrefix)).join('\n            ')}
+            ${renderTotalRow(rows)}
+          </ul>
+        </div>`;
+}
+
+/**
+ * Add-row form posting to `/recipients/add` or `/moderators/add`.
+ *
+ * @param action - Form action path.
+ * @returns Form HTML.
+ */
+function renderAddForm(action: '/recipients/add' | '/moderators/add'): string {
+  return `<form class="card add-grid" method="post" action="${action}">
+    <label class="field grow">
+      <span>Address</span>
+      <input name="address" type="text" autocomplete="off">
+    </label>
+    <label class="field usd">
+      <span>USD</span>
+      <input name="amountUsd" type="text" inputmode="decimal">
+    </label>
+    <button class="primary" type="submit">Add</button>
+  </form>`;
 }
 
 /**
@@ -95,25 +147,22 @@ function renderLoginPanel(error?: string): string {
 }
 
 /**
- * Payment comment + recipient roster + add form panel (below the Spend block).
+ * Payment comment + daily roster + moderator roster + add forms (below Spend).
  *
- * @param recipients - Current recipient list
+ * @param recipients - Current daily recipient list
  * @param comment - File-level LUD-12 payment comment
+ * @param moderators - Current moderator stipend list
  * @param error - Optional error shown above the payment comment heading
  * @returns Inner HTML fragment
  */
-function renderEditorPanel(recipients: Recipient[], comment: string, error?: string): string {
+function renderEditorPanel(
+  recipients: Recipient[],
+  comment: string,
+  moderators: Recipient[],
+  error?: string,
+): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
-  const roster =
-    recipients.length === 0
-      ? '<div class="card"><p class="muted">No recipients</p></div>'
-      : `<div class="card">
-          <ul class="roster">
-            ${recipients.map(renderRow).join('\n            ')}
-            ${renderTotalRow(recipients)}
-          </ul>
-        </div>`;
   return `${errorHtml}
   <h2>Payment comment</h2>
   <form class="card comment-form" method="post" action="/recipients/comment">
@@ -124,19 +173,13 @@ function renderEditorPanel(recipients: Recipient[], comment: string, error?: str
     <button class="primary" type="submit">Save</button>
   </form>
   <h2>Recipients</h2>
-  ${roster}
+  ${renderRosterCard(recipients, '/recipients', 'No recipients')}
   <h2>Add recipient</h2>
-  <form class="card add-grid" method="post" action="/recipients/add">
-    <label class="field grow">
-      <span>Address</span>
-      <input name="address" type="text" autocomplete="off">
-    </label>
-    <label class="field usd">
-      <span>USD</span>
-      <input name="amountUsd" type="text" inputmode="decimal">
-    </label>
-    <button class="primary" type="submit">Add</button>
-  </form>`;
+  ${renderAddForm('/recipients/add')}
+  <h2>Moderators</h2>
+  ${renderRosterCard(moderators, '/moderators', 'No moderators')}
+  <h2>Add moderator</h2>
+  ${renderAddForm('/moderators/add')}`;
 }
 
 function renderSpendFields(data: DashboardData): string {
@@ -166,7 +209,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.recipients, panel.comment, panel.error)}
+  ${renderEditorPanel(panel.recipients, panel.comment, panel.moderators, panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {
@@ -235,20 +278,28 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
 /**
  * Recipients wrapper around the combined renderer (null dashboard + editor panel).
  *
- * @param opts.recipients - Current recipient list
+ * @param opts.recipients - Current daily recipient list
+ * @param opts.moderators - Current moderator stipend list
  * @param opts.comment - File-level LUD-12 payment comment
  * @param opts.error - Optional error message shown above the payment comment heading
  * @returns Complete HTML document.
  */
 export function renderRecipientsHtml(opts: {
   recipients: Recipient[];
+  moderators: Recipient[];
   comment: string;
   error?: string;
 }): string {
   return renderDashboardHtml(
     NULL_DASHBOARD,
     opts.error === undefined
-      ? { kind: 'editor', recipients: opts.recipients, comment: opts.comment }
-      : { kind: 'editor', recipients: opts.recipients, comment: opts.comment, error: opts.error },
+      ? { kind: 'editor', recipients: opts.recipients, moderators: opts.moderators, comment: opts.comment }
+      : {
+          kind: 'editor',
+          recipients: opts.recipients,
+          moderators: opts.moderators,
+          comment: opts.comment,
+          error: opts.error,
+        },
   );
 }

@@ -11,6 +11,7 @@ import {
   ensureLiveRecipients,
   loadLiveRecipients,
   saveLiveRecipients,
+  type LiveRecipients,
 } from './recipients-store';
 import {
   renderDashboardHtml,
@@ -141,6 +142,86 @@ function parseComment(raw: string | null): { ok: true; comment: string } | { ok:
   return { ok: true, comment };
 }
 
+type RosterAction = 'add' | 'update' | 'delete';
+
+/**
+ * Apply add, update, or delete to one roster list. Error strings match the
+ * existing recipient editor pages.
+ *
+ * @param action - Mutation kind.
+ * @param list - Current rows for that list.
+ * @param form - Posted fields (`address`, `amountUsd`).
+ * @returns The next list, or an editor error string.
+ */
+function mutateRosterList(
+  action: RosterAction,
+  list: Recipient[],
+  form: URLSearchParams,
+): { ok: true; list: Recipient[] } | { ok: false; error: string } {
+  if (action === 'add') {
+    const address = parseAddress(form.get('address'));
+    const amountUsd = parseAmountUsd(form.get('amountUsd'));
+    if (address === null || amountUsd === null) {
+      return { ok: false, error: 'Invalid address or amount' };
+    }
+    if (list.some((r) => r.address.toLowerCase() === address.toLowerCase())) {
+      return { ok: false, error: 'Address already listed' };
+    }
+    return { ok: true, list: [...list, { address, amountUsd }] };
+  }
+  if (action === 'update') {
+    const address = parseAddress(form.get('address'));
+    const amountUsd = parseAmountUsd(form.get('amountUsd'));
+    if (address === null) {
+      return { ok: false, error: 'Unknown address' };
+    }
+    const idx = list.findIndex((r) => r.address === address);
+    if (idx < 0) {
+      return { ok: false, error: 'Unknown address' };
+    }
+    if (amountUsd === null) {
+      return { ok: false, error: 'Invalid address or amount' };
+    }
+    const current = list[idx];
+    if (current === undefined) {
+      return { ok: false, error: 'Unknown address' };
+    }
+    const next = list.map((row, i) => (i === idx ? { ...current, amountUsd } : row));
+    return { ok: true, list: next };
+  }
+  const address = parseAddress(form.get('address'));
+  if (address === null) {
+    return { ok: false, error: 'Unknown address' };
+  }
+  const next = list.filter((r) => r.address !== address);
+  if (next.length === list.length) {
+    return { ok: false, error: 'Unknown address' };
+  }
+  return { ok: true, list: next };
+}
+
+/**
+ * Editor panel payload for the combined page.
+ *
+ * @param comment - Payment comment shown in the textarea.
+ * @param recipients - Daily roster.
+ * @param moderators - Moderator roster.
+ * @param error - Optional error shown above the comment heading.
+ * @returns `SpendPanel` editor variant.
+ */
+function editorPanel(
+  comment: string,
+  recipients: Recipient[],
+  moderators: Recipient[],
+  error?: string,
+): SpendPanel {
+  return error === undefined
+    ? { kind: 'editor', comment, recipients, moderators }
+    : { kind: 'editor', comment, recipients, moderators, error };
+}
+
+const ROSTER_MUTATION = /^\/(recipients|moderators)\/(add|update|delete)$/;
+
 /**
  * HTTP app for the dashboard, recipient editor, health probe, operator debug, and ping-triggered payouts.
  *
@@ -237,11 +318,16 @@ export function createServer(opts: {
   };
 
   const loadOrError = ():
-    | { ok: true; comment: string; recipients: Recipient[] }
+    | { ok: true; comment: string; recipients: Recipient[]; moderators: Recipient[] }
     | { ok: false; response: Response } => {
     try {
       const liveList = loadLiveRecipients(config.stateDir);
-      return { ok: true, comment: liveList.comment, recipients: liveList.recipients };
+      return {
+        ok: true,
+        comment: liveList.comment,
+        recipients: liveList.recipients,
+        moderators: liveList.moderators,
+      };
     } catch (err) {
       if (err instanceof CorruptRecipientsError) {
         return {
@@ -283,7 +369,11 @@ export function createServer(opts: {
             count: liveList.recipients.length,
           }),
         );
-        return json(200, { comment: liveList.comment, recipients: liveList.recipients });
+        return json(200, {
+          comment: liveList.comment,
+          recipients: liveList.recipients,
+          moderators: liveList.moderators,
+        });
       } catch (err) {
         if (err instanceof CorruptRecipientsError) {
           return json(500, { error: 'Recipient list is unreadable' });
@@ -315,11 +405,19 @@ export function createServer(opts: {
       ) {
         return json(400, { error: 'Expected a JSON body with address' });
       }
-      const pingBody = body as { address: string; messageId?: unknown };
-      if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
+      const pingBody = body as { address: string; messageId?: unknown; kind?: unknown };
+      const kindRaw = pingBody.kind;
+      if (kindRaw !== undefined && kindRaw !== 'daily' && kindRaw !== 'moderator') {
+        return json(400, { error: 'Expected a JSON body with address and kind' });
+      }
+      const kind: 'daily' | 'moderator' = kindRaw === 'moderator' ? 'moderator' : 'daily';
+      if (kind === 'moderator') {
+        if ('messageId' in pingBody) {
+          return json(400, { error: 'Expected a JSON body with address and kind' });
+        }
+      } else if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
         return json(400, { error: 'Expected a JSON body with address and messageId' });
       }
-      const messageId = pingBody.messageId;
       const parsed = parseLightningAddress(pingBody.address);
       if (parsed === null) {
         return json(400, { error: 'Not a valid Lightning Address (expected name@domain)' });
@@ -332,9 +430,87 @@ export function createServer(opts: {
             address: parsed,
             status,
             ...(reason !== undefined ? { reason } : {}),
+            ...(kind === 'moderator' ? { kind: 'moderator' } : {}),
           }),
         );
       };
+      const clock = opts.now ?? (() => new Date());
+      const day = clock().toISOString().slice(0, 10);
+      if (kind === 'moderator') {
+        let liveList: LiveRecipients;
+        try {
+          liveList = loadLiveRecipients(config.stateDir);
+        } catch (err) {
+          if (err instanceof CorruptRecipientsError) {
+            return json(500, { error: 'Recipient list is unreadable' });
+          }
+          throw err;
+        }
+        const listed = liveList.moderators.find(
+          (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
+        );
+        if (listed === undefined) {
+          logPing('skipped', 'not_listed');
+          return json(200, { status: 'skipped', reason: 'not_listed' });
+        }
+        let storedAddress = listed.address;
+        let rows;
+        try {
+          rows = new DayState(config.stateDir, day, undefined, 'moderator').load();
+        } catch (err) {
+          if (!(err instanceof CorruptStateError)) {
+            throw err;
+          }
+          rows = undefined;
+        }
+        if (rows !== undefined) {
+          const persisted = rows.find(
+            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
+          );
+          if (persisted !== undefined) {
+            storedAddress = persisted.address;
+          }
+          const block = dayBlock(rows, storedAddress);
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
+          }
+          if (block === 'uncertain') {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
+          }
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
+          }
+        }
+        logPing('accepted');
+        void payout(day, 'ping', [storedAddress], undefined, {
+          bucket: 'moderator',
+          recipients: [
+            {
+              address: storedAddress,
+              amountUsd: listed.amountUsd,
+              comment: '21gifts moderator',
+            },
+          ],
+          comment: '21gifts moderator',
+        }).catch((err: unknown) => {
+          const error = err instanceof Error ? err.message : 'ping';
+          console.warn(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'spend.ping',
+              address: storedAddress,
+              status: 'error',
+              error,
+              kind: 'moderator',
+            }),
+          );
+        });
+        return json(202, { status: 'accepted' });
+      }
+      const messageId = pingBody.messageId as string;
       let liveList: { comment: string; recipients: Recipient[] };
       try {
         liveList = loadLiveRecipients(config.stateDir);
@@ -352,8 +528,6 @@ export function createServer(opts: {
         return json(200, { status: 'skipped', reason: 'not_listed' });
       }
       const storedAddress = listed.address;
-      const clock = opts.now ?? (() => new Date());
-      const day = clock().toISOString().slice(0, 10);
       let rows;
       try {
         rows = new DayState(config.stateDir, day).load();
@@ -411,11 +585,9 @@ export function createServer(opts: {
         if (!loadedLive.ok) {
           return loadedLive.response;
         }
-        return combinedPage({
-          kind: 'editor',
-          recipients: loadedLive.recipients,
-          comment: loadedLive.comment,
-        });
+        return combinedPage(
+          editorPanel(loadedLive.comment, loadedLive.recipients, loadedLive.moderators),
+        );
       }
       return combinedPage({ kind: 'login' });
     }
@@ -461,12 +633,10 @@ export function createServer(opts: {
       return redirect('/');
     }
 
+    const rosterMatch = ROSTER_MUTATION.exec(url.pathname);
     if (
       req.method === 'POST' &&
-      (url.pathname === '/recipients/add' ||
-        url.pathname === '/recipients/update' ||
-        url.pathname === '/recipients/delete' ||
-        url.pathname === '/recipients/comment')
+      (rosterMatch !== null || url.pathname === '/recipients/comment')
     ) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
@@ -484,108 +654,40 @@ export function createServer(opts: {
           return loadedLive.response;
         }
         const comment = loadedLive.comment;
-        let recipients = loadedLive.recipients.map((r) => ({ ...r }));
+        const recipients = loadedLive.recipients.map((r) => ({ ...r }));
+        const moderators = loadedLive.moderators.map((r) => ({ ...r }));
 
         if (url.pathname === '/recipients/comment') {
           const raw = form.get('comment');
           const parsed = parseComment(raw);
           if (!parsed.ok) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment: raw ?? '',
-              error: 'Invalid comment',
-            });
+            return combinedPage(editorPanel(raw ?? '', recipients, moderators, 'Invalid comment'));
           }
-          saveLiveRecipients(config.stateDir, { comment: parsed.comment, recipients });
-          return redirect('/');
-        }
-
-        if (url.pathname === '/recipients/add') {
-          const address = parseAddress(form.get('address'));
-          const amountUsd = parseAmountUsd(form.get('amountUsd'));
-          if (address === null || amountUsd === null) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Invalid address or amount',
-            });
-          }
-          if (recipients.some((r) => r.address === address)) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Address already listed',
-            });
-          }
-          recipients = [...recipients, { address, amountUsd }];
-          saveLiveRecipients(config.stateDir, { comment, recipients });
-          return redirect('/');
-        }
-
-        if (url.pathname === '/recipients/update') {
-          const address = parseAddress(form.get('address'));
-          const amountUsd = parseAmountUsd(form.get('amountUsd'));
-          if (address === null) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Unknown address',
-            });
-          }
-          const idx = recipients.findIndex((r) => r.address === address);
-          if (idx < 0) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Unknown address',
-            });
-          }
-          if (amountUsd === null) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Invalid address or amount',
-            });
-          }
-          const current = recipients[idx];
-          if (current === undefined) {
-            return combinedPage({
-              kind: 'editor',
-              recipients,
-              comment,
-              error: 'Unknown address',
-            });
-          }
-          recipients[idx] = { ...current, amountUsd };
-          saveLiveRecipients(config.stateDir, { comment, recipients });
-          return redirect('/');
-        }
-
-        const address = parseAddress(form.get('address'));
-        if (address === null) {
-          return combinedPage({
-            kind: 'editor',
+          saveLiveRecipients(config.stateDir, {
+            comment: parsed.comment,
             recipients,
-            comment,
-            error: 'Unknown address',
+            moderators,
           });
+          return redirect('/');
         }
-        const next = recipients.filter((r) => r.address !== address);
-        if (next.length === recipients.length) {
-          return combinedPage({
-            kind: 'editor',
-            recipients,
-            comment,
-            error: 'Unknown address',
-          });
+
+        if (rosterMatch === null) {
+          return new Response('Not found', { status: 404 });
         }
-        saveLiveRecipients(config.stateDir, { comment, recipients: next });
+        const which = rosterMatch[1] === 'moderators' ? 'moderators' : 'recipients';
+        const actionRaw = rosterMatch[2];
+        const action: RosterAction =
+          actionRaw === 'update' ? 'update' : actionRaw === 'delete' ? 'delete' : 'add';
+        const current = which === 'recipients' ? recipients : moderators;
+        const mutated = mutateRosterList(action, current, form);
+        if (!mutated.ok) {
+          return combinedPage(editorPanel(comment, recipients, moderators, mutated.error));
+        }
+        saveLiveRecipients(config.stateDir, {
+          comment,
+          recipients: which === 'recipients' ? mutated.list : recipients,
+          moderators: which === 'moderators' ? mutated.list : moderators,
+        });
         return redirect('/');
       });
     }
@@ -599,40 +701,55 @@ export function createServer(opts: {
     source: TelegramSource,
     onlyAddresses?: string[],
     messageId?: string,
+    extras?: {
+      bucket?: 'moderator';
+      recipients?: Recipient[];
+      comment?: string;
+    },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
+      const moderator = extras?.bucket === 'moderator';
       let liveList: { comment: string; recipients: Recipient[] };
-      try {
-        liveList = loadLiveRecipients(config.stateDir);
-      } catch (err) {
-        if (err instanceof CorruptRecipientsError) {
-          console.warn(
-            JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'spend.done',
-              ok: false,
-              reason: 'corrupt_recipients',
-            }),
-          );
-          const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
-          if (telegramTarget !== null && notifyLog.allow(source, summary)) {
-            const sent = await notifyPayout({
-              target: telegramTarget,
-              summary,
-              source,
-              fetchImpl,
-            });
-            if (sent.ok) notifyLog.remember(source, summary);
+      if (moderator) {
+        liveList = {
+          comment: extras?.comment ?? '21gifts moderator',
+          recipients: extras?.recipients ?? [],
+        };
+      } else {
+        try {
+          liveList = loadLiveRecipients(config.stateDir);
+        } catch (err) {
+          if (err instanceof CorruptRecipientsError) {
+            console.warn(
+              JSON.stringify({
+                ts: new Date().toISOString(),
+                event: 'spend.done',
+                ok: false,
+                reason: 'corrupt_recipients',
+              }),
+            );
+            const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
+            if (telegramTarget !== null && notifyLog.allow(source, summary)) {
+              const sent = await notifyPayout({
+                target: telegramTarget,
+                summary,
+                source,
+                fetchImpl,
+              });
+              if (sent.ok) notifyLog.remember(source, summary);
+            }
+            return { exitCode: 4 };
           }
-          return { exitCode: 4 };
+          throw err;
         }
-        throw err;
       }
       const runOptions: RunOptions =
         onlyAddresses === undefined
           ? { live, day }
           : messageId === undefined
-            ? { live, day, onlyAddresses }
+            ? moderator
+              ? { live, day, onlyAddresses, bucket: 'moderator' }
+              : { live, day, onlyAddresses }
             : {
                 live,
                 day,
