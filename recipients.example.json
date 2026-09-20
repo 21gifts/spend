@@ -2,5 +2,6 @@
   "comment": "21gifts daily",
   "recipients": [
     { "address": "alice@walletofsatoshi.com", "amountUsd": 1 }
-  ]
+  ],
+  "moderators": []
 }

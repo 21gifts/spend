@@ -2,7 +2,6 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { MODERATOR_STIPEND_USD } from '../config';
 import { createServer, parseBindAddr } from '../server';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
@@ -12,6 +11,7 @@ writeFileSync(
   `${JSON.stringify({
     comment: '21gifts daily',
     recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
   })}\n`,
 );
 
@@ -593,7 +593,7 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator is 202 and queues a 5 USD stipend without messageIdByAddress', async () => {
+  it('POST /ping kind moderator is 202 and queues the listed amountUsd without messageIdByAddress', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
@@ -618,7 +618,7 @@ describe('createServer', () => {
         recipients: [
           {
             address: 'bob@walletofsatoshi.com',
-            amountUsd: MODERATOR_STIPEND_USD,
+            amountUsd: 7.5,
             comment: '21gifts moderator',
           },
         ],
@@ -653,6 +653,7 @@ describe('createServer', () => {
       `${JSON.stringify({
         comment: '21gifts daily',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
@@ -747,6 +748,7 @@ describe('createServer', () => {
       `${JSON.stringify({
         comment: '21gifts daily',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
@@ -800,6 +802,7 @@ describe('createServer', () => {
       `${JSON.stringify({
         comment: '21gifts daily',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
@@ -844,6 +847,7 @@ describe('createServer', () => {
       `${JSON.stringify({
         comment: '21gifts daily',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
@@ -873,6 +877,179 @@ describe('createServer', () => {
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind moderator is 200 skipped not_listed when the address is only on the daily roster', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', kind: 'moderator' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+    expect(runDay).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('POST /ping kind moderator matches the roster case-insensitively and pays the listed amount', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-roster-case-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'Bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipients: [
+            {
+              address: 'Bob@walletofsatoshi.com',
+              amountUsd: 7.5,
+              comment: '21gifts moderator',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          onlyAddresses: ['Bob@walletofsatoshi.com'],
+          bucket: 'moderator',
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind moderator uses the persisted JSONL address over the roster-stored address', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-persisted-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.moderator.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'Bob@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'dry-run',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'BOB@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipients: [
+            {
+              address: 'Bob@walletofsatoshi.com',
+              amountUsd: 7.5,
+              comment: '21gifts moderator',
+            },
+          ],
+        }),
+        expect.objectContaining({
+          onlyAddresses: ['Bob@walletofsatoshi.com'],
+          bucket: 'moderator',
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind moderator is 500 when the live file is unreadable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-corrupt-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      writeFileSync(join(dir, 'recipients.json'), '{');
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        }),
+      );
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1001,6 +1178,23 @@ function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
     RECIPIENTS_FILE: seed,
     SPEND_DASHBOARD_PASSWORD: 'test-password',
   };
+}
+
+/** Parsed `STATE_DIR/recipients.json` after an editor mutation. */
+type LiveRosterFile = {
+  comment: string;
+  recipients: Array<{ address: string; amountUsd: number }>;
+  moderators: Array<{ address: string; amountUsd: number }>;
+};
+
+/**
+ * Read the live roster file from `stateDir`.
+ *
+ * @param stateDir - `STATE_DIR` used by the server under test.
+ * @returns Parsed comment and both roster lists.
+ */
+function readLiveRoster(stateDir: string): LiveRosterFile {
+  return JSON.parse(readFileSync(join(stateDir, 'recipients.json'), 'utf8')) as LiveRosterFile;
 }
 
 async function login(app: ReturnType<typeof createServer>, password = 'test-password'): Promise<string> {
@@ -2062,6 +2256,290 @@ describe('recipient editor', () => {
   });
 });
 
+describe('moderator editor', () => {
+  it('adds, updates, and deletes moderators', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const add = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(add.status).toBe(303);
+    expect(add.headers.get('location')).toBe('/');
+    expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
+      { address: 'bob@walletofsatoshi.com', amountUsd: 2 },
+    ]);
+    expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
+      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+    ]);
+    const dup = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=9',
+      }),
+    );
+    expect(dup.status).toBe(200);
+    expect(await dup.text()).toContain('Address already listed');
+    const badAdd = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=not-an-address&amountUsd=2',
+      }),
+    );
+    expect(await badAdd.text()).toContain('Invalid address or amount');
+    const update = await app.fetch(
+      req('http://127.0.0.1/moderators/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      }),
+    );
+    expect(update.status).toBe(303);
+    expect(update.headers.get('location')).toBe('/');
+    expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
+      { address: 'bob@walletofsatoshi.com', amountUsd: 3 },
+    ]);
+    const unknown = await app.fetch(
+      req('http://127.0.0.1/moderators/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=nobody@walletofsatoshi.com&amountUsd=3',
+      }),
+    );
+    expect(await unknown.text()).toContain('Unknown address');
+    const badUsd = await app.fetch(
+      req('http://127.0.0.1/moderators/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=0',
+      }),
+    );
+    expect(await badUsd.text()).toContain('Invalid address or amount');
+    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(await listed.text()).toContain('value="3"');
+    const del = await app.fetch(
+      req('http://127.0.0.1/moderators/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com',
+      }),
+    );
+    expect(del.status).toBe(303);
+    expect(del.headers.get('location')).toBe('/');
+    expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([]);
+    const delUnknown = await app.fetch(
+      req('http://127.0.0.1/moderators/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=bob@walletofsatoshi.com',
+      }),
+    );
+    expect(await delUnknown.text()).toContain('Unknown address');
+    const empty = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(await empty.text()).toContain('No moderators');
+    expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
+      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+    ]);
+  });
+
+  it('unauthenticated POST /moderators/add redirects to /', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('rejects a cross-origin moderator mutation', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+          origin: 'https://evil.example',
+        },
+        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /moderators/add is 503 when the password is unset', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(req('http://127.0.0.1/moderators/add', { method: 'POST' }));
+    expect(res.status).toBe(503);
+  });
+
+  it('POST /moderators/update with a blank address is unknown', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req('http://127.0.0.1/moderators/update', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+        },
+        body: 'address=&amountUsd=3',
+      }),
+    );
+    expect(await res.text()).toContain('Unknown address');
+  });
+
+  it('POST /moderators/delete with a blank address is unknown', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req('http://127.0.0.1/moderators/delete', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: `spend_session=${token}`,
+        },
+        body: 'address=',
+      }),
+    );
+    expect(await res.text()).toContain('Unknown address');
+  });
+
+  it('editing one roster leaves the other list byte-for-byte unchanged', async () => {
+    const sess = sessionEnv();
+    const recipients = [
+      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+      { address: 'carol@walletofsatoshi.com', amountUsd: 4 },
+    ];
+    const moderators = [{ address: 'dana@walletofsatoshi.com', amountUsd: 7.5 }];
+    writeFileSync(
+      sess.RECIPIENTS_FILE,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients,
+        moderators,
+      })}\n`,
+    );
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const cookie = `spend_session=${token}`;
+    const recipientsBytes = JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients);
+    const addMod = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=erin@walletofsatoshi.com&amountUsd=2',
+      }),
+    );
+    expect(addMod.status).toBe(303);
+    const afterModAdd = readLiveRoster(sess.STATE_DIR);
+    expect(JSON.stringify(afterModAdd.recipients)).toBe(recipientsBytes);
+    expect(afterModAdd.moderators).toEqual([
+      { address: 'dana@walletofsatoshi.com', amountUsd: 7.5 },
+      { address: 'erin@walletofsatoshi.com', amountUsd: 2 },
+    ]);
+    const updateMod = await app.fetch(
+      req('http://127.0.0.1/moderators/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=dana@walletofsatoshi.com&amountUsd=8',
+      }),
+    );
+    expect(updateMod.status).toBe(303);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(recipientsBytes);
+    const delMod = await app.fetch(
+      req('http://127.0.0.1/moderators/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=erin@walletofsatoshi.com',
+      }),
+    );
+    expect(delMod.status).toBe(303);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(recipientsBytes);
+    const moderatorsBytes = JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators);
+    const addRec = await app.fetch(
+      req('http://127.0.0.1/recipients/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=frank@walletofsatoshi.com&amountUsd=9',
+      }),
+    );
+    expect(addRec.status).toBe(303);
+    const afterRecAdd = readLiveRoster(sess.STATE_DIR);
+    expect(JSON.stringify(afterRecAdd.moderators)).toBe(moderatorsBytes);
+    expect(afterRecAdd.recipients).toEqual([
+      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+      { address: 'carol@walletofsatoshi.com', amountUsd: 4 },
+      { address: 'frank@walletofsatoshi.com', amountUsd: 9 },
+    ]);
+    const updateRec = await app.fetch(
+      req('http://127.0.0.1/recipients/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=carol@walletofsatoshi.com&amountUsd=5',
+      }),
+    );
+    expect(updateRec.status).toBe(303);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(moderatorsBytes);
+    const delRec = await app.fetch(
+      req('http://127.0.0.1/recipients/delete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=frank@walletofsatoshi.com',
+      }),
+    );
+    expect(delRec.status).toBe(303);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(moderatorsBytes);
+  });
+});
+
 describe('GET /debug/recipients', () => {
   it('is 503 when DEBUG_TOKEN is unset', async () => {
     const app = createServer({
@@ -2115,8 +2593,17 @@ describe('GET /debug/recipients', () => {
 
   it('returns the live comment and roster without a session cookie', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const sess = sessionEnv();
+    writeFileSync(
+      sess.RECIPIENTS_FILE,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
     const app = createServer({
-      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      env: { ...sess, DEBUG_TOKEN: 'secret-debug' },
       fetchImpl: async () => {
         throw new Error('no network');
       },
@@ -2130,6 +2617,7 @@ describe('GET /debug/recipients', () => {
     expect(await res.json()).toEqual({
       comment: '21gifts daily',
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
     });
     const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
     expect(logged).toContain('spend.debug.recipients');

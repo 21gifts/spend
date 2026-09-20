@@ -46,6 +46,47 @@ test('login, add, update, and delete recipients', async ({ page }) => {
   await expect(page.locator('li.row.total')).toHaveCount(0);
 });
 
+test('login, add, update, and delete moderators', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('input[name=password]', 'test-password');
+  await page.click('button[type=submit]');
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('h2', { hasText: 'Moderators' })).toBeVisible();
+  await expect(page.locator('body')).toContainText('No moderators');
+
+  await page.locator('form[action="/moderators/add"] input[name=address]').fill('mod@example.com');
+  await page.locator('form[action="/moderators/add"] input[name=amountUsd]').fill('2');
+  await page.locator('form[action="/moderators/add"] button').click();
+  const moderatorRow = page.locator(
+    'li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])',
+  );
+  await expect(moderatorRow.locator('.addr')).toHaveText('mod@example.com');
+  await expect(moderatorRow.locator('input[name=amountUsd]')).toHaveValue('2');
+  await expect(
+    page.locator('.card:has(form[action="/moderators/update"]) li.row.total .usd-total'),
+  ).toHaveText('2');
+
+  await moderatorRow.locator('input[name=amountUsd]').fill('3');
+  await moderatorRow.locator('form[action="/moderators/update"] button').click();
+  await expect(
+    page
+      .locator('li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])')
+      .locator('input[name=amountUsd]'),
+  ).toHaveValue('3');
+  await expect(
+    page.locator('.card:has(form[action="/moderators/update"]) li.row.total .usd-total'),
+  ).toHaveText('3');
+
+  await page
+    .locator('li.row:has(form[action="/moderators/delete"]):has(input[name="address"][value="mod@example.com"])')
+    .locator('form[action="/moderators/delete"] button')
+    .click();
+  await expect(
+    page.locator('li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])'),
+  ).toHaveCount(0);
+  await expect(page.locator('body')).toContainText('No moderators');
+});
+
 test('public / contains Log in and not the roster until logged in', async ({ request }) => {
   const res = await request.get('/');
   expect(res.status()).toBe(200);

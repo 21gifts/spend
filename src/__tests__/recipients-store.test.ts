@@ -30,6 +30,22 @@ describe('parseRecipientsJson', () => {
     expect(parseRecipientsJson('{"recipients":[]}')).toEqual({
       comment: '21gifts daily',
       recipients: [],
+      moderators: [],
+    });
+  });
+
+  it('treats a missing moderators key as an empty list', () => {
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          comment: 'daily',
+          recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+        }),
+      ),
+    ).toEqual({
+      comment: 'daily',
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [],
     });
   });
 
@@ -38,11 +54,28 @@ describe('parseRecipientsJson', () => {
       JSON.stringify({
         comment: 'daily',
         recipients: [{ address: ' a@b.com ', amountUsd: 1.5, comment: 'note' }],
+        moderators: [{ address: ' m@x.com ', amountUsd: 5, comment: 'mod' }],
       }),
     );
     expect(parsed).toEqual({
       comment: 'daily',
       recipients: [{ address: 'a@b.com', amountUsd: 1.5, comment: 'note' }],
+      moderators: [{ address: 'm@x.com', amountUsd: 5, comment: 'mod' }],
+    });
+  });
+
+  it('allows the same address on both lists', () => {
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+          moderators: [{ address: 'a@b.com', amountUsd: 5 }],
+        }),
+      ),
+    ).toEqual({
+      comment: '21gifts daily',
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [{ address: 'a@b.com', amountUsd: 5 }],
     });
   });
 
@@ -73,6 +106,43 @@ describe('parseRecipientsJson', () => {
       ),
     ).toThrow(/duplicate/);
   });
+
+  it('rejects each corrupt moderators case', () => {
+    const daily = { recipients: [{ address: 'a@b.com', amountUsd: 1 }] };
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, moderators: {} }))).toThrow(
+      /moderators must be an array/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, moderators: null }))).toThrow(
+      /moderators must be an array/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, moderators: [null] }))).toThrow(
+      /each moderator must be an object/,
+    );
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderators: [{ address: 1, amountUsd: 1 }] })),
+    ).toThrow(/each moderator needs a Lightning Address/);
+    expect(() =>
+      parseRecipientsJson(
+        JSON.stringify({ ...daily, moderators: [{ address: 'nope', amountUsd: 1 }] }),
+      ),
+    ).toThrow(/each moderator needs a Lightning Address/);
+    expect(() =>
+      parseRecipientsJson(
+        JSON.stringify({ ...daily, moderators: [{ address: 'm@x.com', amountUsd: 0 }] }),
+      ),
+    ).toThrow(/each moderator needs amountUsd > 0/);
+    expect(() =>
+      parseRecipientsJson(
+        JSON.stringify({
+          ...daily,
+          moderators: [
+            { address: 'm@x.com', amountUsd: 1 },
+            { address: 'm@x.com', amountUsd: 2 },
+          ],
+        }),
+      ),
+    ).toThrow(/duplicate moderator address m@x.com/);
+  });
 });
 
 describe('ensureLiveRecipients', () => {
@@ -97,8 +167,23 @@ describe('ensureLiveRecipients', () => {
 describe('load and save', () => {
   it('round-trips an empty live list', () => {
     const dir = tmp();
-    saveLiveRecipients(dir, { comment: 'x', recipients: [] });
-    expect(loadLiveRecipients(dir)).toEqual({ comment: 'x', recipients: [] });
+    saveLiveRecipients(dir, { comment: 'x', recipients: [], moderators: [] });
+    expect(loadLiveRecipients(dir)).toEqual({ comment: 'x', recipients: [], moderators: [] });
+  });
+
+  it('round-trips recipients and moderators', () => {
+    const dir = tmp();
+    const data = {
+      comment: 'daily',
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [{ address: 'm@x.com', amountUsd: 7.5 }],
+    };
+    saveLiveRecipients(dir, data);
+    const raw = JSON.parse(readFileSync(join(dir, LIVE_RECIPIENTS_FILE), 'utf8')) as {
+      moderators: unknown;
+    };
+    expect(raw.moderators).toEqual([{ address: 'm@x.com', amountUsd: 7.5 }]);
+    expect(loadLiveRecipients(dir)).toEqual(data);
   });
 
   it('throws when the live file is missing or corrupt', () => {
