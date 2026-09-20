@@ -11,6 +11,7 @@ import {
   ensureLiveRecipients,
   loadLiveRecipients,
   saveLiveRecipients,
+  type LiveRecipients,
 } from './recipients-store';
 import {
   renderDashboardHtml,
@@ -163,7 +164,7 @@ function mutateRosterList(
     if (address === null || amountUsd === null) {
       return { ok: false, error: 'Invalid address or amount' };
     }
-    if (list.some((r) => r.address === address)) {
+    if (list.some((r) => r.address.toLowerCase() === address.toLowerCase())) {
       return { ok: false, error: 'Address already listed' };
     }
     return { ok: true, list: [...list, { address, amountUsd }] };
@@ -436,7 +437,7 @@ export function createServer(opts: {
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
       if (kind === 'moderator') {
-        let liveList;
+        let liveList: LiveRecipients;
         try {
           liveList = loadLiveRecipients(config.stateDir);
         } catch (err) {

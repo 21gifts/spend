@@ -30,6 +30,7 @@ test('recipients-one', async ({ page }) => {
   await expect(page.locator('body')).toContainText('500000 sats');
   await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
   await expect(page.locator('body')).toContainText('Payment comment');
+  await expect(page.locator('body')).toContainText('No moderators');
   await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
 });
 
@@ -42,4 +43,20 @@ test('recipients-empty', async ({ page }) => {
   await expect(page.locator('body')).toContainText('No recipients');
   await expect(page.locator('body')).toContainText('Payment comment');
   await expect(page).toHaveScreenshot('recipients-empty.png', SHOT);
+});
+
+test('moderators-one', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('input[name=password]', 'test-password');
+  await page.click('button[type=submit]');
+  await expect(page).toHaveURL('/');
+  const addModerator = page.locator('form[action="/moderators/add"]');
+  await addModerator.locator('input[name=address]').fill('mod@example.com');
+  await addModerator.locator('input[name=amountUsd]').fill('5');
+  await addModerator.locator('button[type=submit]').click();
+  await expect(page).toHaveURL('/');
+  await expect(
+    page.locator('li.row:has(form[action="/moderators/update"]) .addr'),
+  ).toHaveText('mod@example.com');
+  await expect(page).toHaveScreenshot('moderators-one.png', SHOT);
 });

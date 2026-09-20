@@ -2291,6 +2291,18 @@ describe('moderator editor', () => {
     );
     expect(dup.status).toBe(200);
     expect(await dup.text()).toContain('Address already listed');
+    const dupCase = await app.fetch(
+      req('http://127.0.0.1/moderators/add', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        body: 'address=Bob@WalletOfSatoshi.com&amountUsd=9',
+      }),
+    );
+    expect(dupCase.status).toBe(200);
+    expect(await dupCase.text()).toContain('Address already listed');
+    expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
+      { address: 'bob@walletofsatoshi.com', amountUsd: 2 },
+    ]);
     const badAdd = await app.fetch(
       req('http://127.0.0.1/moderators/add', {
         method: 'POST',
