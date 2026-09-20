@@ -1,8 +1,5 @@
 import { readFileSync } from 'node:fs';
 
-/** Fixed USD stipend for a moderator ping. Not the living-room roster amount. */
-export const MODERATOR_STIPEND_USD = 5;
-
 /** One payout recipient. Amounts are USD; sats are computed at payout time. */
 export interface Recipient {
   address: string;

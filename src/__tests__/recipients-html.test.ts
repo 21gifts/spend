@@ -29,6 +29,7 @@ describe('renderRecipientsHtml', () => {
   it('renders rows, escapes HTML, and the empty state', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com', amountUsd: 1.5 }],
+      moderators: [],
       comment: '21gifts daily',
       error: 'Address already listed',
     });
@@ -38,6 +39,10 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('action="/recipients/update"');
     expect(html).toContain('action="/recipients/delete"');
     expect(html).toContain('action="/recipients/add"');
+    expect(html).toContain('action="/moderators/add"');
+    expect(html).toContain('<h2>Moderators</h2>');
+    expect(html).toContain('No moderators');
+    expect(html).toContain('<h2>Add moderator</h2>');
     expect(html).toContain('action="/logout"');
     expect(html).toContain('Payment comment');
     expect(html).toContain('action="/recipients/comment"');
@@ -49,6 +54,7 @@ describe('renderRecipientsHtml', () => {
     expect(html).toMatch(/class="addr"[^>]*>a@b\.com</);
     const escaped = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com"><img>', amountUsd: 1 }],
+      moderators: [],
       comment: '</textarea><script>alert(1)</script>&"',
     });
     expect(escaped).toContain('&quot;');
@@ -57,8 +63,9 @@ describe('renderRecipientsHtml', () => {
       '&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;&quot;',
     );
     expect(escaped).not.toContain('</textarea><script>');
-    const empty = renderRecipientsHtml({ recipients: [], comment: '21gifts daily' });
+    const empty = renderRecipientsHtml({ recipients: [], moderators: [], comment: '21gifts daily' });
     expect(empty).toContain('No recipients');
+    expect(empty).toContain('No moderators');
     expect(empty).toContain('Payment comment');
     expect(empty).toContain('action="/recipients/comment"');
     expect(empty).toContain('name="comment"');
@@ -74,6 +81,7 @@ describe('renderRecipientsHtml', () => {
   it('renders Invalid comment above the payment comment form', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [],
       comment: '21gifts daily',
       error: 'Invalid comment',
     });
@@ -87,6 +95,7 @@ describe('renderRecipientsHtml', () => {
   it('abbreviates Wallet of Satoshi in .addr and uses icon buttons', () => {
     const html = renderRecipientsHtml({
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      moderators: [],
       comment: '21gifts daily',
     });
     expect(html).toMatch(/class="addr"[^>]*>alice@w\.\.\.</);
@@ -105,6 +114,7 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 1.5 },
         { address: 'c@d.com', amountUsd: 2 },
       ],
+      moderators: [],
       comment: '21gifts daily',
     });
     expect(html).toContain('class="row total"');
@@ -127,6 +137,7 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 0.1 },
         { address: 'c@d.com', amountUsd: 0.2 },
       ],
+      moderators: [],
       comment: '21gifts daily',
     });
     expect(html).toContain('class="usd-total">0.3<');
@@ -139,6 +150,7 @@ describe('renderRecipientsHtml', () => {
         { address: 'a@b.com', amountUsd: 1 },
         { address: 'c@d.com', amountUsd: 2 },
       ],
+      moderators: [],
       comment: '21gifts daily',
     });
     expect(html).toContain('class="usd-total">3<');
@@ -146,9 +158,47 @@ describe('renderRecipientsHtml', () => {
   });
 
   it('omits the Total row when the roster is empty', () => {
-    const empty = renderRecipientsHtml({ recipients: [], comment: '21gifts daily' });
+    const empty = renderRecipientsHtml({ recipients: [], moderators: [], comment: '21gifts daily' });
     expect(empty).toContain('No recipients');
+    expect(empty).toContain('No moderators');
     expect(empty).not.toContain('class="row total"');
+  });
+
+  it('renders a non-empty moderator roster and unique aria-labels when an address is on both lists', () => {
+    const html = renderRecipientsHtml({
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [
+        { address: 'a@b.com', amountUsd: 5 },
+        { address: 'm@x.com', amountUsd: 2.5 },
+      ],
+      comment: '21gifts daily',
+    });
+    expect(html).toContain('<h2>Moderators</h2>');
+    expect(html).toContain('action="/moderators/update"');
+    expect(html).toContain('action="/moderators/delete"');
+    expect(html).toContain('action="/moderators/add"');
+    expect(html).not.toContain('No moderators');
+    expect(html).toContain('aria-label="USD amount for a@b.com"');
+    expect(html).toContain('aria-label="Update a@b.com"');
+    expect(html).toContain('aria-label="Delete a@b.com"');
+    expect(html).toContain('aria-label="USD amount for moderator a@b.com"');
+    expect(html).toContain('aria-label="Update moderator a@b.com"');
+    expect(html).toContain('aria-label="Delete moderator a@b.com"');
+    expect(html).toContain('aria-label="USD amount for moderator m@x.com"');
+    expect(html).toContain('class="usd-total">1<');
+    expect(html).toContain('class="usd-total">7.5<');
+  });
+
+  it('renders empty recipients with a moderator Total row', () => {
+    const html = renderRecipientsHtml({
+      recipients: [],
+      moderators: [{ address: 'm@x.com', amountUsd: 5 }],
+      comment: '21gifts daily',
+    });
+    expect(html).toContain('No recipients');
+    expect(html).not.toContain('No moderators');
+    expect(html).toContain('class="usd-total">5<');
+    expect(html).toContain('action="/moderators/update"');
   });
 });
 

@@ -13,7 +13,7 @@ const HALT_ADDRESS = '*halt*';
 export interface RunOptions {
   live: boolean;
   day: string;
-  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: they are the pinged stipend addresses (not roster-gated). */
+  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: the pinged address as listed on the moderator roster (the server gates the ping; the daily roster does not apply). */
   onlyAddresses?: string[];
   /**
    * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
