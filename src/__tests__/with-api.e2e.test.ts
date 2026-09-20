@@ -209,6 +209,8 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
               ? { method, headers }
               : { method, headers, body: init.body };
           const res = await api.fetch(new Request(target, reqInit));
+          // Old api develop has no GET /invoices/eligible; production still
+          // treats that 404 as eligible_unreachable. This wrapper only.
           if (parsed.pathname === '/invoices/eligible' && res.status === 404) {
             return new Response(JSON.stringify({ eligible: true }), {
               status: 200,
