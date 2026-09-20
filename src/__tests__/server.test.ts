@@ -1231,8 +1231,10 @@ describe('createServer', () => {
         },
       }),
     );
-    expect(runDay.mock.calls[0]?.[1]).not.toHaveProperty('groupMessageIdByAddress');
-    expect(runDay.mock.calls[1]?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    const firstArgs = runDay.mock.calls[0] as unknown[] | undefined;
+    const secondArgs = runDay.mock.calls[1] as unknown[] | undefined;
+    expect(firstArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    expect(secondArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
     await app.drainPayouts();
     warn.mockRestore();
   });
