@@ -47,6 +47,7 @@ function pingReq(init?: RequestInit): Request {
 }
 
 const PING_MESSAGE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const GROUP_MESSAGE_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
@@ -633,6 +634,7 @@ describe('createServer', () => {
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
     expect(pingArgs?.[1]).not.toHaveProperty('messageIdByAddress');
+    expect(pingArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
     await app.drainPayouts();
     const pingLogs = warn.mock.calls
       .map((args) => String(args[0] ?? ''))
@@ -642,6 +644,57 @@ describe('createServer', () => {
         (line) => line.includes('"kind":"moderator"') && line.includes('"status":"accepted"'),
       ),
     ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('POST /ping kind moderator with groupMessageId is 202 and queues groupMessageIdByAddress', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'bob@walletofsatoshi.com',
+          kind: 'moderator',
+          groupMessageId: GROUP_MESSAGE_ID,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: [
+          {
+            address: 'bob@walletofsatoshi.com',
+            amountUsd: 7.5,
+            comment: '21gifts moderator',
+          },
+        ],
+        comment: '21gifts moderator',
+      }),
+      expect.objectContaining({
+        live: true,
+        day: '2026-08-25',
+        onlyAddresses: ['bob@walletofsatoshi.com'],
+        bucket: 'moderator',
+        groupMessageIdByAddress: {
+          'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
+        },
+      }),
+    );
+    const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
+    expect(pingArgs?.[1]).not.toHaveProperty('messageIdByAddress');
+    await app.drainPayouts();
     warn.mockRestore();
   });
 
@@ -1078,6 +1131,112 @@ describe('createServer', () => {
     expect(await res.json()).toEqual({
       error: 'Expected a JSON body with address and kind',
     });
+  });
+
+  it('POST /ping kind moderator is 400 for a malformed groupMessageId', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const invalid = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'bob@walletofsatoshi.com',
+          kind: 'moderator',
+          groupMessageId: 'nope',
+        }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({
+      error: 'Expected a JSON body with address and kind',
+    });
+    const notString = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'bob@walletofsatoshi.com',
+          kind: 'moderator',
+          groupMessageId: 1,
+        }),
+      }),
+    );
+    expect(notString.status).toBe(400);
+    expect(await notString.json()).toEqual({
+      error: 'Expected a JSON body with address and kind',
+    });
+  });
+
+  it('POST /ping daily ignores a stray groupMessageId', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const omittedKind = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          messageId: PING_MESSAGE_ID,
+          groupMessageId: GROUP_MESSAGE_ID,
+        }),
+      }),
+    );
+    expect(omittedKind.status).toBe(202);
+    expect(await omittedKind.json()).toEqual({ status: 'accepted' });
+    const dailyKind = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          kind: 'daily',
+          messageId: PING_MESSAGE_ID,
+          groupMessageId: 'nope',
+        }),
+      }),
+    );
+    expect(dailyKind.status).toBe(202);
+    expect(await dailyKind.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(2);
+    });
+    expect(runDay).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        live: true,
+        day: '2026-08-25',
+        onlyAddresses: ['alice@walletofsatoshi.com'],
+        messageIdByAddress: {
+          'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+        },
+      }),
+    );
+    expect(runDay).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        live: true,
+        day: '2026-08-25',
+        onlyAddresses: ['alice@walletofsatoshi.com'],
+        messageIdByAddress: {
+          'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+        },
+      }),
+    );
+    const firstArgs = runDay.mock.calls[0] as unknown[] | undefined;
+    const secondArgs = runDay.mock.calls[1] as unknown[] | undefined;
+    expect(firstArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    expect(secondArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    await app.drainPayouts();
+    warn.mockRestore();
   });
 
   it('POST /ping is 400 for an invalid kind', async () => {
