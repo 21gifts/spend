@@ -405,15 +405,28 @@ export function createServer(opts: {
       ) {
         return json(400, { error: 'Expected a JSON body with address' });
       }
-      const pingBody = body as { address: string; messageId?: unknown; kind?: unknown };
+      const pingBody = body as {
+        address: string;
+        messageId?: unknown;
+        kind?: unknown;
+        groupMessageId?: unknown;
+      };
       const kindRaw = pingBody.kind;
       if (kindRaw !== undefined && kindRaw !== 'daily' && kindRaw !== 'moderator') {
         return json(400, { error: 'Expected a JSON body with address and kind' });
       }
       const kind: 'daily' | 'moderator' = kindRaw === 'moderator' ? 'moderator' : 'daily';
+      let groupMessageId: string | undefined;
       if (kind === 'moderator') {
         if ('messageId' in pingBody) {
           return json(400, { error: 'Expected a JSON body with address and kind' });
+        }
+        const rawGroupMessageId = pingBody.groupMessageId;
+        if (rawGroupMessageId !== undefined) {
+          if (typeof rawGroupMessageId !== 'string' || !MESSAGE_ID_RE.test(rawGroupMessageId)) {
+            return json(400, { error: 'Expected a JSON body with address and kind' });
+          }
+          groupMessageId = rawGroupMessageId;
         }
       } else if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
         return json(400, { error: 'Expected a JSON body with address and messageId' });
@@ -495,6 +508,7 @@ export function createServer(opts: {
             },
           ],
           comment: '21gifts moderator',
+          ...(groupMessageId === undefined ? {} : { groupMessageId }),
         }).catch((err: unknown) => {
           const error = err instanceof Error ? err.message : 'ping';
           console.warn(
@@ -705,10 +719,12 @@ export function createServer(opts: {
       bucket?: 'moderator';
       recipients?: Recipient[];
       comment?: string;
+      groupMessageId?: string;
     },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
       const moderator = extras?.bucket === 'moderator';
+      const groupMessageId = extras?.groupMessageId;
       let liveList: { comment: string; recipients: Recipient[] };
       if (moderator) {
         liveList = {
@@ -748,7 +764,19 @@ export function createServer(opts: {
           ? { live, day }
           : messageId === undefined
             ? moderator
-              ? { live, day, onlyAddresses, bucket: 'moderator' }
+              ? {
+                  live,
+                  day,
+                  onlyAddresses,
+                  bucket: 'moderator',
+                  ...(groupMessageId === undefined
+                    ? {}
+                    : {
+                        groupMessageIdByAddress: Object.fromEntries(
+                          onlyAddresses.map((address) => [address.toLowerCase(), groupMessageId]),
+                        ),
+                      }),
+                }
               : { live, day, onlyAddresses }
             : {
                 live,

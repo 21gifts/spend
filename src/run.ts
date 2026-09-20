@@ -21,6 +21,12 @@ export interface RunOptions {
    * `hasPosted().messageId` when the api returns one.
    */
   messageIdByAddress?: Record<string, string>;
+  /**
+   * Optional map: lowercase lightning address → Moderators-group message UUID that
+   * triggered the stipend. Ping sets this for the one pinged address when the body
+   * included `groupMessageId`. Used only when {@link RunOptions.bucket} is `'moderator'`.
+   */
+  groupMessageIdByAddress?: Record<string, string>;
   /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator';
 }
@@ -84,10 +90,12 @@ function selectTargets(
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  * When {@link RunOptions.bucket} is `'moderator'`, uses the moderator JSONL, requires
  * a living-room `hasPosted` whose `postedAt` UTC day matches {@link RunOptions.day},
- * and never sends `messageId` on `createInvoice`.
+ * and never sends `messageId` on `createInvoice`. When
+ * {@link RunOptions.groupMessageIdByAddress} has an entry for the recipient, that id
+ * is sent as `groupMessageId` on `createInvoice` (moderator only).
  *
  * @param config - Loaded operator config.
- * @param options - Live vs dry-run, the day key, optional address filter, optional post-id map, and optional bucket.
+ * @param options - Live vs dry-run, the day key, optional address filter, optional post-id map, optional group-message-id map, and optional bucket.
  * @param deps - Injected clients (tests).
  * @returns Process exit code and a structured summary for Telegram notify.
  */
@@ -354,11 +362,23 @@ async function runDayLocked(
           : typeof postedId === 'string'
             ? postedId
             : undefined;
+    const groupMessageId =
+      options.bucket === 'moderator'
+        ? options.groupMessageIdByAddress?.[recipient.address.toLowerCase()]
+        : undefined;
     let invoice;
     try {
       invoice =
         invoiceMessageId === undefined
-          ? await gifts.createInvoice(recipient.address, amountSats * 1000, comment)
+          ? groupMessageId === undefined
+            ? await gifts.createInvoice(recipient.address, amountSats * 1000, comment)
+            : await gifts.createInvoice(
+                recipient.address,
+                amountSats * 1000,
+                comment,
+                undefined,
+                groupMessageId,
+              )
           : await gifts.createInvoice(recipient.address, amountSats * 1000, comment, invoiceMessageId);
     } catch (err) {
       if (err instanceof GiftsApiError && err.status === 409) {

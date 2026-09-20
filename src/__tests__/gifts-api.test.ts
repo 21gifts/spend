@@ -207,6 +207,32 @@ describe('GiftsApi', () => {
       comment: 'hi',
     });
     expect(sent).not.toHaveProperty('messageId');
+    expect(sent).not.toHaveProperty('groupMessageId');
+  });
+
+  it('createInvoice JSON includes groupMessageId when the 5th argument is passed', async () => {
+    let sent: unknown;
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
+      sent = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({ id: '1', pr: 'lnbc1', paymentHash: 'aa'.repeat(32), amountMsat: 1000 }),
+        { status: 200 },
+      );
+    });
+    await api.createInvoice(
+      'a@b.com',
+      1000,
+      'hi',
+      undefined,
+      'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    );
+    expect(sent).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1000,
+      comment: 'hi',
+      groupMessageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    });
+    expect(sent).not.toHaveProperty('messageId');
   });
 
   it('hasPosted throws on 503', async () => {

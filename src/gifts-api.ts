@@ -78,6 +78,7 @@ export class GiftsApi {
    * @param amountMsat - Amount in millisatoshis.
    * @param comment - Optional LUD-12 comment.
    * @param messageId - Optional forum post UUID; included in the POST body only when provided.
+   * @param groupMessageId - Optional Moderators-group message UUID; included in the POST body only when provided.
    * @returns Issued invoice.
    */
   async createInvoice(
@@ -85,8 +86,15 @@ export class GiftsApi {
     amountMsat: number,
     comment?: string,
     messageId?: string,
+    groupMessageId?: string,
   ): Promise<IssuedInvoice> {
-    const body: { address: string; amountMsat: number; comment?: string; messageId?: string } = {
+    const body: {
+      address: string;
+      amountMsat: number;
+      comment?: string;
+      messageId?: string;
+      groupMessageId?: string;
+    } = {
       address,
       amountMsat,
     };
@@ -95,6 +103,9 @@ export class GiftsApi {
     }
     if (messageId !== undefined) {
       body.messageId = messageId;
+    }
+    if (groupMessageId !== undefined) {
+      body.groupMessageId = groupMessageId;
     }
     const json = await this.postJson('/invoices', body);
     const id = json['id'];
