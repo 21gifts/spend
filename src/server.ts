@@ -786,6 +786,7 @@ export function createServer(opts: {
                   onlyAddresses.map((address) => [address.toLowerCase(), messageId]),
                 ),
               };
+      if (source === 'ping') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
         { ...config, recipients: liveList.recipients, comment: liveList.comment },
         runOptions,

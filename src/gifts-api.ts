@@ -20,7 +20,8 @@ export class GiftsApiError extends Error {
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `POST /invoices`, and `POST /invoices/proof`.
+ * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `GET /invoices/eligible`,
+ * `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
   constructor(
@@ -69,6 +70,22 @@ export class GiftsApi {
       postedAt = new Date(rawAt).toISOString();
     }
     return { hasPosted: has, messageId, postedAt };
+  }
+
+  /**
+   * Whether 21.gifts reports this Lightning Address as funding-eligible today.
+   *
+   * @param address - LUD-16 address.
+   * @returns `true` when the address is eligible.
+   */
+  async isFundingEligible(address: string): Promise<boolean> {
+    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
+    const json = await this.getJson(path);
+    const eligible = json['eligible'];
+    if (typeof eligible !== 'boolean') {
+      throw new GiftsApiError(0, 'malformed eligible response');
+    }
+    return eligible;
   }
 
   /**

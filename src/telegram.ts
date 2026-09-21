@@ -177,6 +177,7 @@ function formatSwissNumber(n: number): string {
 const SKIP_REASON_DISPLAY: Readonly<Record<string, string>> = {
   no_passkey: 'kein Passwort',
   no_post: 'hat sich nicht vorgestellt',
+  not_eligible: 'nicht berechtigt',
 };
 
 function formatLine(line: PayoutLine): string {
@@ -238,6 +239,7 @@ const REASON_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   invoice_unreachable: 'invoice create unreachable',
   passkey_unreachable: 'passkey lookup unreachable',
   posted_unreachable: 'forum post lookup unreachable',
+  eligible_unreachable: 'eligible lookup unreachable',
 };
 
 /**

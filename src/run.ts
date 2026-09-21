@@ -29,6 +29,8 @@ export interface RunOptions {
   groupMessageIdByAddress?: Record<string, string>;
   /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator';
+  /** Default true. False on HTTP ping: API already gated eligibleToday. */
+  checkFundingEligible?: boolean;
 }
 
 /** Outcome of {@link runDay}. */
@@ -215,6 +217,7 @@ async function runDayLocked(
 
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
+  const noEligible = new Set<string>();
   const postedMessageId = new Map<string, string | null>();
   for (const recipient of targets) {
     if (dayBlock(rows, recipient.address) !== undefined) {
@@ -240,16 +243,29 @@ async function runDayLocked(
           posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
         if (!posted.hasPosted || postedDay !== options.day) {
           noPost.add(recipient.address);
+          continue;
         }
-        continue;
+      } else {
+        if (!posted.hasPosted) {
+          noPost.add(recipient.address);
+          continue;
+        }
+        postedMessageId.set(recipient.address, posted.messageId);
       }
-      if (!posted.hasPosted) {
-        noPost.add(recipient.address);
-      }
-      postedMessageId.set(recipient.address, posted.messageId);
     } catch {
       log('spend.done', { ok: false, reason: 'posted_unreachable' });
       return finish(3, { reason: 'posted_unreachable' });
+    }
+    if (options.checkFundingEligible !== false) {
+      try {
+        const eligible = await gifts.isFundingEligible(recipient.address);
+        if (!eligible) {
+          noEligible.add(recipient.address);
+        }
+      } catch {
+        log('spend.done', { ok: false, reason: 'eligible_unreachable' });
+        return finish(3, { reason: 'eligible_unreachable' });
+      }
     }
   }
 
@@ -267,7 +283,8 @@ async function runDayLocked(
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
         !noPasskey.has(r.address) &&
-        !noPost.has(r.address),
+        !noPost.has(r.address) &&
+        !noEligible.has(r.address),
     );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
@@ -343,6 +360,11 @@ async function runDayLocked(
     if (noPost.has(recipient.address)) {
       log('spend.skip', { address: recipient.address, reason: 'no_post' });
       skipped.push({ ...lineBase, reason: 'no_post' });
+      continue;
+    }
+    if (noEligible.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'not_eligible' });
+      skipped.push({ ...lineBase, reason: 'not_eligible' });
       continue;
     }
     if (stopLive && options.live) {
