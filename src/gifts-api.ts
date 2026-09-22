@@ -89,6 +89,30 @@ export class GiftsApi {
   }
 
   /**
+   * Funding-grant status 21.gifts reports for this Lightning Address.
+   *
+   * @param address - LUD-16 address.
+   * @returns Grant `status` from `GET /invoices/eligible`.
+   */
+  async fundingGrantStatus(
+    address: string,
+  ): Promise<'none' | 'pending' | 'trial' | 'admitted' | 'rejected'> {
+    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
+    const json = await this.getJson(path);
+    const status = json['status'];
+    if (
+      status !== 'none' &&
+      status !== 'pending' &&
+      status !== 'trial' &&
+      status !== 'admitted' &&
+      status !== 'rejected'
+    ) {
+      throw new GiftsApiError(0, 'malformed eligible status');
+    }
+    return status;
+  }
+
+  /**
    * Fetch a BOLT11 from 21.gifts for one recipient.
    *
    * @param address - LUD-16 address.

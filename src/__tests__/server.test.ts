@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -453,7 +453,10 @@ describe('createServer', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
       env,
-      fetchImpl: async () => {
+      fetchImpl: async (url) => {
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
+        }
         throw new Error('no network');
       },
     });
@@ -466,6 +469,165 @@ describe('createServer', () => {
     warn.mockRestore();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+  });
+
+  it('POST /ping is 202 accepted for an unlisted admitted grant at 1 USD', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url) => {
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), { status: 200 });
+        }
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: [
+          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+        ],
+        comment: '21gifts daily',
+      }),
+      expect.objectContaining({
+        onlyAddresses: ['bob@walletofsatoshi.com'],
+        messageIdByAddress: {
+          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
+        },
+        checkFundingEligible: false,
+      }),
+    );
+    const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
+    expect(pingArgs?.[1]).not.toHaveProperty('bucket');
+    await app.drainPayouts();
+    warn.mockRestore();
+  });
+
+  it('POST /ping is 202 accepted for an unlisted trial grant at 1 USD', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: 'true' },
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url) => {
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: true, status: 'trial' }), { status: 200 });
+        }
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: [
+          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+        ],
+      }),
+      expect.objectContaining({
+        onlyAddresses: ['bob@walletofsatoshi.com'],
+        messageIdByAddress: {
+          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
+        },
+        checkFundingEligible: false,
+      }),
+    );
+    await app.drainPayouts();
+    warn.mockRestore();
+  });
+
+  it('POST /ping is 200 skipped not_listed for unlisted pending, none, or rejected grant', async () => {
+    for (const status of ['pending', 'none', 'rejected'] as const) {
+      const runDay = vi.fn(async () => ({ exitCode: 0 }));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const app = createServer({
+        env,
+        runDay,
+        fetchImpl: async (url) => {
+          if (String(url).includes('/invoices/eligible')) {
+            return new Response(JSON.stringify({ eligible: false, status }), { status: 200 });
+          }
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(runDay).not.toHaveBeenCalled();
+      warn.mockRestore();
+    }
+  });
+
+  it('POST /ping is 200 skipped eligible_unreachable when the unlisted grant lookup fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-eligible-unreach-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async (url) => {
+          if (String(url).includes('/invoices/eligible')) {
+            throw new Error('offline');
+          }
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'eligible_unreachable' });
+      expect(runDay).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
+      expect(existsSync(join(dir, '2026-08-25.finished'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('POST /ping is 200 skipped paid when today JSONL already has a paid row', async () => {
@@ -1380,7 +1542,10 @@ describe('createServer', () => {
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
         now: () => new Date('2026-08-25T12:00:00.000Z'),
         runDay,
-        fetchImpl: async () => {
+        fetchImpl: async (url) => {
+          if (String(url).includes('/invoices/eligible')) {
+            return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
+          }
           throw new Error('no network');
         },
       });
