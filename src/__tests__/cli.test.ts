@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -212,6 +212,98 @@ describe('main live recipients', () => {
     });
     expect(String((telegramBodies[0] as { text: string }).text)).toContain('source=cli');
     expect(JSON.stringify(telegramBodies)).not.toContain(TELEGRAM_TOKEN);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('exits 0 without a payout when daily payments are disabled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-cli-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+        paymentsEnabled: false,
+      })}\n`,
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const code = await main(
+      {
+        ...cliEnv(dir, seed),
+        TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID: TELEGRAM_CHAT,
+      },
+      ['bun', 'cli', '--date', '2026-08-25'],
+      () => new Date('2026-08-25T12:00:00.000Z'),
+      fetchImpl,
+    );
+    expect(code).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+      ts: '2026-08-25T12:00:00.000Z',
+      event: 'spend.skip_payments',
+      reason: 'payments_disabled',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('exits 0 and runs the day when only moderator payments are disabled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-cli-'));
+    const seed = seedRecipients(dir);
+    const recipients = JSON.parse(readFileSync(seed, 'utf8'));
+    recipients.paymentsEnabled = true;
+    recipients.moderatorPaymentsEnabled = false;
+    writeFileSync(seed, `${JSON.stringify(recipients)}\n`);
+    const urls: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ['bun', 'cli', '--date', '2026-08-25'],
+      () => new Date('2026-08-25T12:00:00.000Z'),
+      async (url) => {
+        urls.push(String(url));
+        if (String(url).includes('coinbase.com')) {
+          return new Response(JSON.stringify({ data: { amount: '100000' } }), { status: 200 });
+        }
+        if (String(url).includes('/invoices/passkey')) {
+          return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+        }
+        if (String(url).includes('/invoices/posted')) {
+          return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+        }
+        if (String(url).includes('/invoices/eligible')) {
+          return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+        }
+        if (String(url).includes('/invoices') && !String(url).endsWith('/proof')) {
+          return new Response(
+            JSON.stringify({
+              id: 'id1',
+              pr: 'lnbc1',
+              paymentHash: HASH,
+              amountMsat: 1_000_000,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    );
+    expect(code).toBe(0);
+    expect(
+      warn.mock.calls.every((call) => {
+        try {
+          return JSON.parse(String(call[0])).event !== 'spend.skip_payments';
+        } catch {
+          return true;
+        }
+      }),
+    ).toBe(true);
+    expect(urls.length).toBeGreaterThan(0);
+    warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 });

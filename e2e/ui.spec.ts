@@ -96,6 +96,8 @@ test('public / contains Log in and not the roster until logged in', async ({ req
   expect(html).not.toContain('alice@w...');
   expect(html).not.toContain('action="/recipients/add"');
   expect(html).not.toContain('action="/recipients/comment"');
+  expect(html).not.toContain('action="/recipients/payments"');
+  expect(html).not.toContain('action="/moderators/payments"');
 });
 
 test('login and edit the payment comment', async ({ page }) => {
@@ -108,4 +110,36 @@ test('login and edit the payment comment', async ({ page }) => {
   await page.locator('form[action="/recipients/comment"] button').click();
   await expect(page).toHaveURL('/');
   await expect(page.locator('textarea[name=comment]')).toHaveValue('hello gifts');
+});
+
+test('login and toggle daily and moderator payments', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('input[name=password]', 'test-password');
+  await page.click('button[type=submit]');
+  await expect(page).toHaveURL('/');
+  const daily = page.locator('form[aria-label="Daily payments"]');
+  const moderator = page.locator('form[aria-label="Moderator payments"]');
+  await daily.locator('button[name="enabled"][value="off"]').click();
+  await expect(daily.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await moderator.locator('button[name="enabled"][value="off"]').click();
+  await expect(daily.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(moderator.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await daily.locator('button[name="enabled"][value="on"]').click();
+  await expect(daily.locator('button[name="enabled"][value="on"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(moderator.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 });

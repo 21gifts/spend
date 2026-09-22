@@ -24,17 +24,21 @@ export class CorruptRecipientsError extends Error {
   }
 }
 
-/** Parsed live file: daily roster, moderator roster, and payment comment. */
+/** Parsed live file: daily roster, moderator roster, payment comment, and payment switches. */
 export interface LiveRecipients {
   comment: string;
   recipients: Recipient[];
   moderators: Recipient[];
+  paymentsEnabled: boolean;
+  moderatorPaymentsEnabled: boolean;
 }
 
 interface RecipientsFile {
   comment?: unknown;
   recipients?: unknown;
   moderators?: unknown;
+  paymentsEnabled?: unknown;
+  moderatorPaymentsEnabled?: unknown;
 }
 
 /**
@@ -78,12 +82,33 @@ function parseRosterRows(raw: unknown, noun: 'recipient' | 'moderator'): Recipie
 }
 
 /**
+ * Parse a payment-switch flag. Missing is enabled; any non-boolean present value is corrupt.
+ *
+ * @param raw - JSON value for the key.
+ * @param key - Live-file key, used in the error message.
+ * @returns The flag, defaulting to `true` when the key is absent.
+ */
+function parseEnabledFlag(
+  raw: unknown,
+  key: 'paymentsEnabled' | 'moderatorPaymentsEnabled',
+): boolean {
+  if (raw === undefined) {
+    return true;
+  }
+  if (typeof raw === 'boolean') {
+    return raw;
+  }
+  throw new CorruptRecipientsError(`${key} must be a boolean`);
+}
+
+/**
  * Parse recipients JSON text. Empty `recipients: []` is ok.
- * Missing `moderators` is `[]`. Duplicates, bad usd, or bad address throw
- * {@link CorruptRecipientsError}.
+ * Missing `moderators` is `[]`. Missing `paymentsEnabled` or
+ * `moderatorPaymentsEnabled` is `true`. Duplicates, bad usd, bad address, or a
+ * non-boolean present switch throw {@link CorruptRecipientsError}.
  *
  * @param raw - File contents.
- * @returns Comment, daily rows, and moderator rows.
+ * @returns Comment, daily rows, moderator rows, and both payment switches.
  */
 export function parseRecipientsJson(raw: string): LiveRecipients {
   let parsed: RecipientsFile;
@@ -99,7 +124,12 @@ export function parseRecipientsJson(raw: string): LiveRecipients {
   const recipients = parseRosterRows(parsed.recipients, 'recipient');
   const moderators =
     parsed.moderators === undefined ? [] : parseRosterRows(parsed.moderators, 'moderator');
-  return { comment, recipients, moderators };
+  const paymentsEnabled = parseEnabledFlag(parsed.paymentsEnabled, 'paymentsEnabled');
+  const moderatorPaymentsEnabled = parseEnabledFlag(
+    parsed.moderatorPaymentsEnabled,
+    'moderatorPaymentsEnabled',
+  );
+  return { comment, recipients, moderators, paymentsEnabled, moderatorPaymentsEnabled };
 }
 
 /**
@@ -142,7 +172,7 @@ export function ensureLiveRecipients(stateDir: string, seedPath: string): void {
  * Read the live recipients file. Missing or corrupt → {@link CorruptRecipientsError}.
  *
  * @param stateDir - `STATE_DIR`.
- * @returns Comment, daily rows, and moderator rows.
+ * @returns Comment, daily rows, moderator rows, and both payment switches.
  */
 export function loadLiveRecipients(stateDir: string): LiveRecipients {
   const livePath = join(stateDir, LIVE_RECIPIENTS_FILE);
@@ -157,17 +187,24 @@ export function loadLiveRecipients(stateDir: string): LiveRecipients {
 
 /**
  * Atomically replace the live recipients file (tmp in stateDir + fsync + rename).
- * Always writes `comment`, `recipients`, and `moderators`.
+ * Always writes `comment`, `recipients`, `moderators`, `paymentsEnabled`, and
+ * `moderatorPaymentsEnabled`.
  *
  * @param stateDir - `STATE_DIR`.
- * @param data - Comment and both roster lists to persist.
+ * @param data - Comment, both roster lists, and both payment switches to persist.
  */
 export function saveLiveRecipients(stateDir: string, data: LiveRecipients): void {
   mkdirSync(stateDir, { recursive: true });
   const livePath = join(stateDir, LIVE_RECIPIENTS_FILE);
   const tmpPath = join(stateDir, `.recipients.json.${process.pid}.tmp`);
   const body = `${JSON.stringify(
-    { comment: data.comment, recipients: data.recipients, moderators: data.moderators },
+    {
+      comment: data.comment,
+      recipients: data.recipients,
+      moderators: data.moderators,
+      paymentsEnabled: data.paymentsEnabled,
+      moderatorPaymentsEnabled: data.moderatorPaymentsEnabled,
+    },
     null,
     2,
   )}\n`;

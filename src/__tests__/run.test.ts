@@ -432,6 +432,9 @@ describe('runDay', () => {
           { status: 200 },
         );
       }
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
       invoiceBody = JSON.parse(String(init?.body ?? '{}'));
       return new Response(
         JSON.stringify({

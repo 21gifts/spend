@@ -31,6 +31,8 @@ describe('parseRecipientsJson', () => {
       comment: '21gifts daily',
       recipients: [],
       moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
   });
 
@@ -46,6 +48,8 @@ describe('parseRecipientsJson', () => {
       comment: 'daily',
       recipients: [{ address: 'a@b.com', amountUsd: 1 }],
       moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
   });
 
@@ -61,6 +65,8 @@ describe('parseRecipientsJson', () => {
       comment: 'daily',
       recipients: [{ address: 'a@b.com', amountUsd: 1.5, comment: 'note' }],
       moderators: [{ address: 'm@x.com', amountUsd: 5, comment: 'mod' }],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
   });
 
@@ -76,6 +82,8 @@ describe('parseRecipientsJson', () => {
       comment: '21gifts daily',
       recipients: [{ address: 'a@b.com', amountUsd: 1 }],
       moderators: [{ address: 'a@b.com', amountUsd: 5 }],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
   });
 
@@ -143,6 +151,112 @@ describe('parseRecipientsJson', () => {
       ),
     ).toThrow(/duplicate moderator address m@x.com/);
   });
+
+  it('treats missing payment switches as enabled', () => {
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          comment: 'daily',
+          recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+        }),
+      ),
+    ).toEqual({
+      comment: 'daily',
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
+  });
+
+  it('reads explicit true and false payment switches', () => {
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          recipients: [],
+          paymentsEnabled: true,
+          moderatorPaymentsEnabled: true,
+        }),
+      ),
+    ).toEqual({
+      comment: '21gifts daily',
+      recipients: [],
+      moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          recipients: [],
+          paymentsEnabled: false,
+          moderatorPaymentsEnabled: false,
+        }),
+      ),
+    ).toEqual({
+      comment: '21gifts daily',
+      recipients: [],
+      moderators: [],
+      paymentsEnabled: false,
+      moderatorPaymentsEnabled: false,
+    });
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          recipients: [],
+          paymentsEnabled: false,
+          moderatorPaymentsEnabled: true,
+        }),
+      ),
+    ).toMatchObject({ paymentsEnabled: false, moderatorPaymentsEnabled: true });
+    expect(
+      parseRecipientsJson(
+        JSON.stringify({
+          recipients: [],
+          paymentsEnabled: true,
+          moderatorPaymentsEnabled: false,
+        }),
+      ),
+    ).toMatchObject({ paymentsEnabled: true, moderatorPaymentsEnabled: false });
+  });
+
+  it('rejects a non-boolean paymentsEnabled', () => {
+    const daily = { recipients: [] as Array<{ address: string; amountUsd: number }> };
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, paymentsEnabled: 'true' }))).toThrow(
+      /^paymentsEnabled must be a boolean$/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, paymentsEnabled: 1 }))).toThrow(
+      /^paymentsEnabled must be a boolean$/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, paymentsEnabled: null }))).toThrow(
+      /^paymentsEnabled must be a boolean$/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, paymentsEnabled: {} }))).toThrow(
+      /^paymentsEnabled must be a boolean$/,
+    );
+    expect(() => parseRecipientsJson(JSON.stringify({ ...daily, paymentsEnabled: [] }))).toThrow(
+      /^paymentsEnabled must be a boolean$/,
+    );
+  });
+
+  it('rejects a non-boolean moderatorPaymentsEnabled', () => {
+    const daily = { recipients: [] as Array<{ address: string; amountUsd: number }> };
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderatorPaymentsEnabled: 'false' })),
+    ).toThrow(/^moderatorPaymentsEnabled must be a boolean$/);
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderatorPaymentsEnabled: 0 })),
+    ).toThrow(/^moderatorPaymentsEnabled must be a boolean$/);
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderatorPaymentsEnabled: null })),
+    ).toThrow(/^moderatorPaymentsEnabled must be a boolean$/);
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderatorPaymentsEnabled: {} })),
+    ).toThrow(/^moderatorPaymentsEnabled must be a boolean$/);
+    expect(() =>
+      parseRecipientsJson(JSON.stringify({ ...daily, moderatorPaymentsEnabled: [] })),
+    ).toThrow(/^moderatorPaymentsEnabled must be a boolean$/);
+  });
 });
 
 describe('ensureLiveRecipients', () => {
@@ -167,8 +281,20 @@ describe('ensureLiveRecipients', () => {
 describe('load and save', () => {
   it('round-trips an empty live list', () => {
     const dir = tmp();
-    saveLiveRecipients(dir, { comment: 'x', recipients: [], moderators: [] });
-    expect(loadLiveRecipients(dir)).toEqual({ comment: 'x', recipients: [], moderators: [] });
+    saveLiveRecipients(dir, {
+      comment: 'x',
+      recipients: [],
+      moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
+    expect(loadLiveRecipients(dir)).toEqual({
+      comment: 'x',
+      recipients: [],
+      moderators: [],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
   });
 
   it('round-trips recipients and moderators', () => {
@@ -177,12 +303,18 @@ describe('load and save', () => {
       comment: 'daily',
       recipients: [{ address: 'a@b.com', amountUsd: 1 }],
       moderators: [{ address: 'm@x.com', amountUsd: 7.5 }],
+      paymentsEnabled: false,
+      moderatorPaymentsEnabled: true,
     };
     saveLiveRecipients(dir, data);
     const raw = JSON.parse(readFileSync(join(dir, LIVE_RECIPIENTS_FILE), 'utf8')) as {
       moderators: unknown;
+      paymentsEnabled: unknown;
+      moderatorPaymentsEnabled: unknown;
     };
     expect(raw.moderators).toEqual([{ address: 'm@x.com', amountUsd: 7.5 }]);
+    expect(raw.paymentsEnabled).toBe(false);
+    expect(raw.moderatorPaymentsEnabled).toBe(true);
     expect(loadLiveRecipients(dir)).toEqual(data);
   });
 
