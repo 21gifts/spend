@@ -19,6 +19,9 @@ export class GiftsApiError extends Error {
 
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Grant `status` from `GET /invoices/eligible`. */
+export type FundingGrantStatus = 'none' | 'pending' | 'trial' | 'admitted' | 'rejected';
+
 /**
  * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `GET /invoices/eligible`,
  * `POST /invoices`, and `POST /invoices/proof`.
@@ -94,9 +97,7 @@ export class GiftsApi {
    * @param address - LUD-16 address.
    * @returns Grant `status` from `GET /invoices/eligible`.
    */
-  async fundingGrantStatus(
-    address: string,
-  ): Promise<'none' | 'pending' | 'trial' | 'admitted' | 'rejected'> {
+  async fundingGrantStatus(address: string): Promise<FundingGrantStatus> {
     const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
     const status = json['status'];

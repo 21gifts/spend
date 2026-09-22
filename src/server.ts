@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
 import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
-import { GiftsApi } from './gifts-api';
+import { GiftsApi, type FundingGrantStatus } from './gifts-api';
 import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
@@ -564,7 +564,7 @@ export function createServer(opts: {
       let storedAddress: string;
       let extraRecipients: Recipient[] | undefined;
       if (listed === undefined) {
-        let grant: 'none' | 'pending' | 'trial' | 'admitted' | 'rejected';
+        let grant: FundingGrantStatus;
         try {
           grant = await new GiftsApi(
             config.giftsApiUrl,
