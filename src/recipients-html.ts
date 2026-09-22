@@ -26,7 +26,15 @@ const TRASH_SVG =
  */
 export type SpendPanel =
   | { kind: 'login'; error?: string }
-  | { kind: 'editor'; recipients: Recipient[]; moderators: Recipient[]; comment: string; error?: string };
+  | {
+      kind: 'editor';
+      recipients: Recipient[];
+      moderators: Recipient[];
+      comment: string;
+      paymentsEnabled: boolean;
+      moderatorPaymentsEnabled: boolean;
+      error?: string;
+    };
 
 function formatSats(sats: number | null): string {
   return sats === null ? 'unavailable' : `${sats} sats`;
@@ -127,6 +135,30 @@ function renderAddForm(action: '/recipients/add' | '/moderators/add'): string {
 }
 
 /**
+ * On/Off switch posting `enabled=on` or `enabled=off`.
+ *
+ * @param action - Form action path.
+ * @param ariaLabel - Accessible name for the form.
+ * @param enabled - Persisted flag; the matching button is primary and pressed.
+ * @returns Form HTML.
+ */
+function renderPaymentsSwitch(
+  action: '/recipients/payments' | '/moderators/payments',
+  ariaLabel: 'Daily payments' | 'Moderator payments',
+  enabled: boolean,
+): string {
+  const onClass = enabled ? 'primary' : 'ghost';
+  const offClass = enabled ? 'ghost' : 'primary';
+  const onPressed = enabled ? 'true' : 'false';
+  const offPressed = enabled ? 'false' : 'true';
+  return `<form class="card payments-switch" method="post" action="${action}" aria-label="${ariaLabel}">
+  <span class="switch-label">Payments</span>
+  <button type="submit" name="enabled" value="on" class="${onClass}" aria-pressed="${onPressed}">On</button>
+  <button type="submit" name="enabled" value="off" class="${offClass}" aria-pressed="${offPressed}">Off</button>
+</form>`;
+}
+
+/**
  * Login form panel (below the Spend block).
  *
  * @param error - Optional error shown above the form
@@ -152,6 +184,8 @@ function renderLoginPanel(error?: string): string {
  * @param recipients - Current daily recipient list
  * @param comment - File-level LUD-12 payment comment
  * @param moderators - Current moderator stipend list
+ * @param paymentsEnabled - Daily-payments switch
+ * @param moderatorPaymentsEnabled - Moderator-payments switch
  * @param error - Optional error shown above the payment comment heading
  * @returns Inner HTML fragment
  */
@@ -159,6 +193,8 @@ function renderEditorPanel(
   recipients: Recipient[],
   comment: string,
   moderators: Recipient[],
+  paymentsEnabled: boolean,
+  moderatorPaymentsEnabled: boolean,
   error?: string,
 ): string {
   const errorHtml =
@@ -173,10 +209,12 @@ function renderEditorPanel(
     <button class="primary" type="submit">Save</button>
   </form>
   <h2>Recipients</h2>
+  ${renderPaymentsSwitch('/recipients/payments', 'Daily payments', paymentsEnabled)}
   ${renderRosterCard(recipients, '/recipients', 'No recipients')}
   <h2>Add recipient</h2>
   ${renderAddForm('/recipients/add')}
   <h2>Moderators</h2>
+  ${renderPaymentsSwitch('/moderators/payments', 'Moderator payments', moderatorPaymentsEnabled)}
   ${renderRosterCard(moderators, '/moderators', 'No moderators')}
   <h2>Add moderator</h2>
   ${renderAddForm('/moderators/add')}`;
@@ -209,7 +247,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.recipients, panel.comment, panel.moderators, panel.error)}
+  ${renderEditorPanel(panel.recipients, panel.comment, panel.moderators, panel.paymentsEnabled, panel.moderatorPaymentsEnabled, panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {
@@ -281,6 +319,8 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
  * @param opts.recipients - Current daily recipient list
  * @param opts.moderators - Current moderator stipend list
  * @param opts.comment - File-level LUD-12 payment comment
+ * @param opts.paymentsEnabled - Daily-payments switch
+ * @param opts.moderatorPaymentsEnabled - Moderator-payments switch
  * @param opts.error - Optional error message shown above the payment comment heading
  * @returns Complete HTML document.
  */
@@ -288,17 +328,28 @@ export function renderRecipientsHtml(opts: {
   recipients: Recipient[];
   moderators: Recipient[];
   comment: string;
+  paymentsEnabled: boolean;
+  moderatorPaymentsEnabled: boolean;
   error?: string;
 }): string {
   return renderDashboardHtml(
     NULL_DASHBOARD,
     opts.error === undefined
-      ? { kind: 'editor', recipients: opts.recipients, moderators: opts.moderators, comment: opts.comment }
+      ? {
+          kind: 'editor',
+          recipients: opts.recipients,
+          moderators: opts.moderators,
+          comment: opts.comment,
+          paymentsEnabled: opts.paymentsEnabled,
+          moderatorPaymentsEnabled: opts.moderatorPaymentsEnabled,
+        }
       : {
           kind: 'editor',
           recipients: opts.recipients,
           moderators: opts.moderators,
           comment: opts.comment,
+          paymentsEnabled: opts.paymentsEnabled,
+          moderatorPaymentsEnabled: opts.moderatorPaymentsEnabled,
           error: opts.error,
         },
   );

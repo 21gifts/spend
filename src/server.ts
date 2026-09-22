@@ -206,6 +206,8 @@ function mutateRosterList(
  * @param comment - Payment comment shown in the textarea.
  * @param recipients - Daily roster.
  * @param moderators - Moderator roster.
+ * @param paymentsEnabled - Daily-payments switch.
+ * @param moderatorPaymentsEnabled - Moderator-payments switch.
  * @param error - Optional error shown above the comment heading.
  * @returns `SpendPanel` editor variant.
  */
@@ -213,14 +215,25 @@ function editorPanel(
   comment: string,
   recipients: Recipient[],
   moderators: Recipient[],
+  paymentsEnabled: boolean,
+  moderatorPaymentsEnabled: boolean,
   error?: string,
 ): SpendPanel {
   return error === undefined
-    ? { kind: 'editor', comment, recipients, moderators }
-    : { kind: 'editor', comment, recipients, moderators, error };
+    ? { kind: 'editor', comment, recipients, moderators, paymentsEnabled, moderatorPaymentsEnabled }
+    : {
+        kind: 'editor',
+        comment,
+        recipients,
+        moderators,
+        paymentsEnabled,
+        moderatorPaymentsEnabled,
+        error,
+      };
 }
 
 const ROSTER_MUTATION = /^\/(recipients|moderators)\/(add|update|delete)$/;
+const PAYMENTS_SWITCH = /^\/(recipients|moderators)\/payments$/;
 
 /**
  * HTTP app for the dashboard, recipient editor, health probe, operator debug, and ping-triggered payouts.
@@ -318,7 +331,7 @@ export function createServer(opts: {
   };
 
   const loadOrError = ():
-    | { ok: true; comment: string; recipients: Recipient[]; moderators: Recipient[] }
+    | { ok: true } & LiveRecipients
     | { ok: false; response: Response } => {
     try {
       const liveList = loadLiveRecipients(config.stateDir);
@@ -327,6 +340,8 @@ export function createServer(opts: {
         comment: liveList.comment,
         recipients: liveList.recipients,
         moderators: liveList.moderators,
+        paymentsEnabled: liveList.paymentsEnabled,
+        moderatorPaymentsEnabled: liveList.moderatorPaymentsEnabled,
       };
     } catch (err) {
       if (err instanceof CorruptRecipientsError) {
@@ -373,6 +388,8 @@ export function createServer(opts: {
           comment: liveList.comment,
           recipients: liveList.recipients,
           moderators: liveList.moderators,
+          paymentsEnabled: liveList.paymentsEnabled,
+          moderatorPaymentsEnabled: liveList.moderatorPaymentsEnabled,
         });
       } catch (err) {
         if (err instanceof CorruptRecipientsError) {
@@ -497,6 +514,10 @@ export function createServer(opts: {
             return json(200, { status: 'skipped', reason: 'failed' });
           }
         }
+        if (liveList.moderatorPaymentsEnabled === false) {
+          logPing('skipped', 'payments_disabled');
+          return json(200, { status: 'skipped', reason: 'payments_disabled' });
+        }
         logPing('accepted');
         void payout(day, 'ping', [storedAddress], undefined, {
           bucket: 'moderator',
@@ -525,7 +546,7 @@ export function createServer(opts: {
         return json(202, { status: 'accepted' });
       }
       const messageId = pingBody.messageId as string;
-      let liveList: { comment: string; recipients: Recipient[] };
+      let liveList: LiveRecipients;
       try {
         liveList = loadLiveRecipients(config.stateDir);
       } catch (err) {
@@ -569,6 +590,10 @@ export function createServer(opts: {
           return json(200, { status: 'skipped', reason: 'failed' });
         }
       }
+      if (liveList.paymentsEnabled === false) {
+        logPing('skipped', 'payments_disabled');
+        return json(200, { status: 'skipped', reason: 'payments_disabled' });
+      }
       logPing('accepted');
       void payout(day, 'ping', [storedAddress], messageId).catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
@@ -600,7 +625,13 @@ export function createServer(opts: {
           return loadedLive.response;
         }
         return combinedPage(
-          editorPanel(loadedLive.comment, loadedLive.recipients, loadedLive.moderators),
+          editorPanel(
+            loadedLive.comment,
+            loadedLive.recipients,
+            loadedLive.moderators,
+            loadedLive.paymentsEnabled,
+            loadedLive.moderatorPaymentsEnabled,
+          ),
         );
       }
       return combinedPage({ kind: 'login' });
@@ -648,9 +679,12 @@ export function createServer(opts: {
     }
 
     const rosterMatch = ROSTER_MUTATION.exec(url.pathname);
+    const paymentsMatch = PAYMENTS_SWITCH.exec(url.pathname);
     if (
       req.method === 'POST' &&
-      (rosterMatch !== null || url.pathname === '/recipients/comment')
+      (rosterMatch !== null ||
+        paymentsMatch !== null ||
+        url.pathname === '/recipients/comment')
     ) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
@@ -675,12 +709,49 @@ export function createServer(opts: {
           const raw = form.get('comment');
           const parsed = parseComment(raw);
           if (!parsed.ok) {
-            return combinedPage(editorPanel(raw ?? '', recipients, moderators, 'Invalid comment'));
+            return combinedPage(
+              editorPanel(
+                raw ?? '',
+                recipients,
+                moderators,
+                loadedLive.paymentsEnabled,
+                loadedLive.moderatorPaymentsEnabled,
+                'Invalid comment',
+              ),
+            );
           }
           saveLiveRecipients(config.stateDir, {
             comment: parsed.comment,
             recipients,
             moderators,
+            paymentsEnabled: loadedLive.paymentsEnabled,
+            moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
+          });
+          return redirect('/');
+        }
+
+        if (paymentsMatch !== null) {
+          const enabledRaw = form.get('enabled');
+          if (enabledRaw !== 'on' && enabledRaw !== 'off') {
+            return combinedPage(
+              editorPanel(
+                comment,
+                recipients,
+                moderators,
+                loadedLive.paymentsEnabled,
+                loadedLive.moderatorPaymentsEnabled,
+                'Invalid payments switch',
+              ),
+            );
+          }
+          const enabled = enabledRaw === 'on';
+          const daily = paymentsMatch[1] === 'recipients';
+          saveLiveRecipients(config.stateDir, {
+            comment,
+            recipients,
+            moderators,
+            paymentsEnabled: daily ? enabled : loadedLive.paymentsEnabled,
+            moderatorPaymentsEnabled: daily ? loadedLive.moderatorPaymentsEnabled : enabled,
           });
           return redirect('/');
         }
@@ -695,12 +766,23 @@ export function createServer(opts: {
         const current = which === 'recipients' ? recipients : moderators;
         const mutated = mutateRosterList(action, current, form);
         if (!mutated.ok) {
-          return combinedPage(editorPanel(comment, recipients, moderators, mutated.error));
+          return combinedPage(
+            editorPanel(
+              comment,
+              recipients,
+              moderators,
+              loadedLive.paymentsEnabled,
+              loadedLive.moderatorPaymentsEnabled,
+              mutated.error,
+            ),
+          );
         }
         saveLiveRecipients(config.stateDir, {
           comment,
           recipients: which === 'recipients' ? mutated.list : recipients,
           moderators: which === 'moderators' ? mutated.list : moderators,
+          paymentsEnabled: loadedLive.paymentsEnabled,
+          moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
         });
         return redirect('/');
       });
@@ -786,6 +868,7 @@ export function createServer(opts: {
                   onlyAddresses.map((address) => [address.toLowerCase(), messageId]),
                 ),
               };
+      if (source === 'ping') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
         { ...config, recipients: liveList.recipients, comment: liveList.comment },
         runOptions,

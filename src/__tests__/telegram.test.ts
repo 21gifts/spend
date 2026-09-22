@@ -354,6 +354,24 @@ describe('formatPayoutMessage', () => {
     expect(text).not.toContain('(no_post)');
   });
 
+  it('renders not_eligible skip as (nicht berechtigt)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@x',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'not_eligible',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('(nicht berechtigt)');
+    expect(text).not.toContain('(not_eligible)');
+  });
+
   it('guards binary-float usd total (0.1 + 0.2)', () => {
     const text = formatPayoutMessage(
       baseSummary({
@@ -523,6 +541,7 @@ describe('reasonDisplayName', () => {
     expect(reasonDisplayName('invoice_unreachable')).toBe('invoice create unreachable');
     expect(reasonDisplayName('passkey_unreachable')).toBe('passkey lookup unreachable');
     expect(reasonDisplayName('posted_unreachable')).toBe('forum post lookup unreachable');
+    expect(reasonDisplayName('eligible_unreachable')).toBe('eligible lookup unreachable');
   });
 
   it('replaces underscores for unknown codes', () => {

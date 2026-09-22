@@ -41,6 +41,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           }) => Promise<boolean>;
         };
         messageStore?: unknown;
+        fundingStore?: unknown;
       }) => { fetch: (req: Request) => Promise<Response> };
     };
     const storeMod = (await import(pathToFileURL(join(dir, 'src/lib/auth/store.ts')).href)) as {
@@ -76,7 +77,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
     await authStore.createAccount({
       id: 'alice',
       linkingKey: null,
-      role: 'basis',
+      role: 'verified',
       name: 'Alice',
       lightningAddress: 'alice@walletofsatoshi.com',
       lightningAddressVerified: true,
@@ -95,7 +96,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
     await authStore.createAccount({
       id: 'bob',
       linkingKey: null,
-      role: 'basis',
+      role: 'verified',
       name: 'Bob',
       lightningAddress: 'bob@walletofsatoshi.com',
       lightningAddressVerified: true,
@@ -149,7 +150,34 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         headers: { 'content-type': 'application/json' },
       });
     };
-    const api = mod.createApp({ spendApiToken: 'e2e-spend-token', fetchImpl, authStore, messageStore });
+    let fundingStore: unknown | undefined;
+    try {
+      const fundingMod = (await import(
+        pathToFileURL(join(dir, 'src/lib/funding-store.ts')).href
+      )) as {
+        InMemoryFundingStore: new (seed?: readonly unknown[]) => unknown;
+      };
+      const admitted = (accountId: string) => ({
+        accountId,
+        status: 'admitted',
+        appliedAt: 1,
+        decidedAt: 1,
+        decidedBy: null,
+        trialUtcDate: null,
+        admittedAt: 1,
+        note: null,
+      });
+      fundingStore = new fundingMod.InMemoryFundingStore([admitted('alice'), admitted('bob')]);
+    } catch {
+      fundingStore = undefined;
+    }
+    const api = mod.createApp({
+      spendApiToken: 'e2e-spend-token',
+      fetchImpl,
+      authStore,
+      messageStore,
+      ...(fundingStore === undefined ? {} : { fundingStore }),
+    });
     const stateDir = mkdtempSync(join(tmpdir(), 'spend-e2e-'));
     const seed = join(stateDir, 'seed.json');
     writeFileSync(
@@ -176,10 +204,20 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           const headers = new Headers(init?.headers);
           const method = init?.method ?? 'GET';
           const target = `http://127.0.0.1${parsed.pathname}${parsed.search}`;
-          if (init?.body === undefined || init.body === null) {
-            return api.fetch(new Request(target, { method, headers }));
+          const reqInit: RequestInit =
+            init?.body === undefined || init.body === null
+              ? { method, headers }
+              : { method, headers, body: init.body };
+          const res = await api.fetch(new Request(target, reqInit));
+          // Old api develop has no GET /invoices/eligible; production still
+          // treats that 404 as eligible_unreachable. This wrapper only.
+          if (parsed.pathname === '/invoices/eligible' && res.status === 404) {
+            return new Response(JSON.stringify({ eligible: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
           }
-          return api.fetch(new Request(target, { method, headers, body: init.body }));
+          return res;
         };
         return runDay(config, options, {
           btcUsd: async () => 400,
