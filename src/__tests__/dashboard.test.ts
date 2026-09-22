@@ -128,6 +128,8 @@ describe('renderDashboardHtml', () => {
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
         moderators: [],
         comment: '21gifts daily',
+        paymentsEnabled: true,
+        moderatorPaymentsEnabled: true,
       },
     );
     expect(html).toContain('Log out');

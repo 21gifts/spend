@@ -76,6 +76,8 @@ export function parseArgs(
 
 /**
  * CLI entry. Optionally no-ops outside UTC midnight, then loads env and runs one day.
+ * When the live file has `paymentsEnabled` false, logs `spend.skip_payments` and
+ * returns 0 without calling `runDay` or notifying Telegram.
  *
  * @param env - Process env.
  * @param argv - Process arguments.
@@ -119,6 +121,16 @@ export async function main(
   try {
     ensureLiveRecipients(loaded.config.stateDir, loaded.config.recipientsFile);
     const liveList = loadLiveRecipients(loaded.config.stateDir);
+    if (liveList.paymentsEnabled === false) {
+      console.warn(
+        JSON.stringify({
+          ts: instant.toISOString(),
+          event: 'spend.skip_payments',
+          reason: 'payments_disabled',
+        }),
+      );
+      return 0;
+    }
     const lndhubTarget = parseLndhubUri(loaded.config.lndhubUri);
     const result = await runDay(
       { ...loaded.config, recipients: liveList.recipients, comment: liveList.comment },

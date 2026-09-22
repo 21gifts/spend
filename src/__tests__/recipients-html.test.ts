@@ -16,12 +16,16 @@ describe('renderLoginHtml', () => {
     expect(form).not.toContain('action="/recipients/comment"');
     expect(form).not.toContain('name="comment"');
     expect(form).not.toContain('Payment comment');
+    expect(form).not.toContain('action="/recipients/payments"');
+    expect(form).not.toContain('action="/moderators/payments"');
     expect(renderLoginHtml({ error: 'Invalid password' })).toContain('Invalid password');
     expect(renderLoginHtml({ disabled: true })).toContain('Recipient editor is not configured');
     expect(renderLoginHtml({ disabled: true })).not.toContain('name="password"');
     expect(renderLoginHtml({ disabled: true })).not.toContain('action="/recipients/comment"');
     expect(renderLoginHtml({ disabled: true })).not.toContain('name="comment"');
     expect(renderLoginHtml({ disabled: true })).not.toContain('Payment comment');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('action="/recipients/payments"');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('action="/moderators/payments"');
   });
 });
 
@@ -31,6 +35,8 @@ describe('renderRecipientsHtml', () => {
       recipients: [{ address: 'a@b.com', amountUsd: 1.5 }],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
       error: 'Address already listed',
     });
     expect(html).toContain('<title>21.gifts spend</title>');
@@ -56,6 +62,8 @@ describe('renderRecipientsHtml', () => {
       recipients: [{ address: 'a@b.com"><img>', amountUsd: 1 }],
       moderators: [],
       comment: '</textarea><script>alert(1)</script>&"',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(escaped).toContain('&quot;');
     expect(escaped).toContain('&lt;img&gt;');
@@ -63,7 +71,13 @@ describe('renderRecipientsHtml', () => {
       '&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;&quot;',
     );
     expect(escaped).not.toContain('</textarea><script>');
-    const empty = renderRecipientsHtml({ recipients: [], moderators: [], comment: '21gifts daily' });
+    const empty = renderRecipientsHtml({
+      recipients: [],
+      moderators: [],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
     expect(empty).toContain('No recipients');
     expect(empty).toContain('No moderators');
     expect(empty).toContain('Payment comment');
@@ -83,6 +97,8 @@ describe('renderRecipientsHtml', () => {
       recipients: [{ address: 'a@b.com', amountUsd: 1 }],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
       error: 'Invalid comment',
     });
     const errorAt = html.indexOf('Invalid comment');
@@ -97,6 +113,8 @@ describe('renderRecipientsHtml', () => {
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toMatch(/class="addr"[^>]*>alice@w\.\.\.</);
     expect(html).toContain('title="alice@walletofsatoshi.com"');
@@ -116,6 +134,8 @@ describe('renderRecipientsHtml', () => {
       ],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toContain('class="row total"');
     expect(html).toContain('>Total</span>');
@@ -139,6 +159,8 @@ describe('renderRecipientsHtml', () => {
       ],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toContain('class="usd-total">0.3<');
     expect(html).not.toContain('0.30000000000000004');
@@ -152,13 +174,21 @@ describe('renderRecipientsHtml', () => {
       ],
       moderators: [],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toContain('class="usd-total">3<');
     expect(html).not.toContain('class="usd-total">3.00<');
   });
 
   it('omits the Total row when the roster is empty', () => {
-    const empty = renderRecipientsHtml({ recipients: [], moderators: [], comment: '21gifts daily' });
+    const empty = renderRecipientsHtml({
+      recipients: [],
+      moderators: [],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
     expect(empty).toContain('No recipients');
     expect(empty).toContain('No moderators');
     expect(empty).not.toContain('class="row total"');
@@ -172,6 +202,8 @@ describe('renderRecipientsHtml', () => {
         { address: 'm@x.com', amountUsd: 2.5 },
       ],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toContain('<h2>Moderators</h2>');
     expect(html).toContain('action="/moderators/update"');
@@ -194,13 +226,155 @@ describe('renderRecipientsHtml', () => {
       recipients: [],
       moderators: [{ address: 'm@x.com', amountUsd: 5 }],
       comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
     });
     expect(html).toContain('No recipients');
     expect(html).not.toContain('No moderators');
     expect(html).toContain('class="usd-total">5<');
     expect(html).toContain('action="/moderators/update"');
   });
+
+  it('places On/Off switches after each heading and before that roster card', () => {
+    const html = renderRecipientsHtml({
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [{ address: 'm@x.com', amountUsd: 5 }],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
+    const recH2 = html.indexOf('<h2>Recipients</h2>');
+    const dailySwitch = html.indexOf('aria-label="Daily payments"');
+    const recUpdate = html.indexOf('action="/recipients/update"');
+    expect(recH2).toBeGreaterThan(-1);
+    expect(dailySwitch).toBeGreaterThan(recH2);
+    expect(recUpdate).toBeGreaterThan(dailySwitch);
+    const modH2 = html.indexOf('<h2>Moderators</h2>');
+    const modSwitch = html.indexOf('aria-label="Moderator payments"');
+    const modUpdate = html.indexOf('action="/moderators/update"');
+    expect(modH2).toBeGreaterThan(-1);
+    expect(modSwitch).toBeGreaterThan(modH2);
+    expect(modUpdate).toBeGreaterThan(modSwitch);
+  });
+
+  it('presses On on both switches when both flags are true, including empty rosters', () => {
+    const html = renderRecipientsHtml({
+      recipients: [],
+      moderators: [],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    });
+    const daily = formByAriaLabel(html, 'Daily payments');
+    expect(daily).toContain('action="/recipients/payments"');
+    expect(daily).toContain('class="switch-label">Payments</span>');
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="on" class="primary" aria-pressed="true">On</button>',
+    );
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="off" class="ghost" aria-pressed="false">Off</button>',
+    );
+    const moderator = formByAriaLabel(html, 'Moderator payments');
+    expect(moderator).toContain('action="/moderators/payments"');
+    expect(moderator).toContain('class="switch-label">Payments</span>');
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="on" class="primary" aria-pressed="true">On</button>',
+    );
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="off" class="ghost" aria-pressed="false">Off</button>',
+    );
+    expect(html).toContain('No recipients');
+    expect(html).toContain('No moderators');
+    const recH2 = html.indexOf('<h2>Recipients</h2>');
+    const dailySwitch = html.indexOf('aria-label="Daily payments"');
+    const noRecipients = html.indexOf('No recipients');
+    expect(dailySwitch).toBeGreaterThan(recH2);
+    expect(noRecipients).toBeGreaterThan(dailySwitch);
+    const modH2 = html.indexOf('<h2>Moderators</h2>');
+    const modSwitch = html.indexOf('aria-label="Moderator payments"');
+    const noModerators = html.indexOf('No moderators');
+    expect(modSwitch).toBeGreaterThan(modH2);
+    expect(noModerators).toBeGreaterThan(modSwitch);
+  });
+
+  it('presses Off on the daily switch when paymentsEnabled is false', () => {
+    const html = renderRecipientsHtml({
+      recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      moderators: [],
+      comment: '21gifts daily',
+      paymentsEnabled: false,
+      moderatorPaymentsEnabled: true,
+    });
+    const daily = formByAriaLabel(html, 'Daily payments');
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="on" class="ghost" aria-pressed="false">On</button>',
+    );
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="off" class="primary" aria-pressed="true">Off</button>',
+    );
+    const moderator = formByAriaLabel(html, 'Moderator payments');
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="on" class="primary" aria-pressed="true">On</button>',
+    );
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="off" class="ghost" aria-pressed="false">Off</button>',
+    );
+  });
+
+  it('presses Off on the moderator switch when moderatorPaymentsEnabled is false, including an empty daily roster', () => {
+    const html = renderRecipientsHtml({
+      recipients: [],
+      moderators: [{ address: 'm@x.com', amountUsd: 5 }],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: false,
+    });
+    const daily = formByAriaLabel(html, 'Daily payments');
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="on" class="primary" aria-pressed="true">On</button>',
+    );
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="off" class="ghost" aria-pressed="false">Off</button>',
+    );
+    const moderator = formByAriaLabel(html, 'Moderator payments');
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="on" class="ghost" aria-pressed="false">On</button>',
+    );
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="off" class="primary" aria-pressed="true">Off</button>',
+    );
+    expect(html).toContain('No recipients');
+  });
+
+  it('presses Off on both switches when both flags are false and both rosters are empty', () => {
+    const html = renderRecipientsHtml({
+      recipients: [],
+      moderators: [],
+      comment: '21gifts daily',
+      paymentsEnabled: false,
+      moderatorPaymentsEnabled: false,
+    });
+    const daily = formByAriaLabel(html, 'Daily payments');
+    expect(daily).toContain(
+      '<button type="submit" name="enabled" value="off" class="primary" aria-pressed="true">Off</button>',
+    );
+    const moderator = formByAriaLabel(html, 'Moderator payments');
+    expect(moderator).toContain(
+      '<button type="submit" name="enabled" value="off" class="primary" aria-pressed="true">Off</button>',
+    );
+    expect(html).toContain('No recipients');
+    expect(html).toContain('No moderators');
+  });
 });
+
+function formByAriaLabel(html: string, label: string): string {
+  const marker = `aria-label="${label}"`;
+  const attrAt = html.indexOf(marker);
+  expect(attrAt).toBeGreaterThan(-1);
+  const start = html.lastIndexOf('<form', attrAt);
+  const end = html.indexOf('</form>', attrAt);
+  return html.slice(start, end + '</form>'.length);
+}
 
 describe('renderUnconfiguredHtml', () => {
   it('shows the muted notice with a loaded spend block', () => {
@@ -217,5 +391,7 @@ describe('renderUnconfiguredHtml', () => {
     expect(html).not.toContain('action="/recipients/comment"');
     expect(html).not.toContain('name="comment"');
     expect(html).not.toContain('Payment comment');
+    expect(html).not.toContain('action="/recipients/payments"');
+    expect(html).not.toContain('action="/moderators/payments"');
   });
 });

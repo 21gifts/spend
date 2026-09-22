@@ -125,6 +125,8 @@ button.icon svg{display:block}
 .login-form button.primary,.add-grid button.primary{box-sizing:border-box;height:2.75rem;flex:0 0 auto;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
 .comment-form{display:flex;flex-direction:column;gap:0.75rem;align-items:stretch}
 .comment-form button.primary{box-sizing:border-box;height:2.75rem;align-self:flex-start;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
+.payments-switch{display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap}
+.payments-switch .switch-label{flex:1 1 auto}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}`;
 
 /**
