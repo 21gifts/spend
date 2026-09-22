@@ -93,6 +93,7 @@ export class GiftsApi {
    *
    * @param address - LUD-16 address.
    * @param amountMsat - Amount in millisatoshis.
+   * @param amountUsd - Roster USD amount as a two-decimal string (e.g. `"5.00"`); sent as-is.
    * @param comment - Optional LUD-12 comment.
    * @param messageId - Optional forum post UUID; included in the POST body only when provided.
    * @param groupMessageId - Optional Moderators-group message UUID; included in the POST body only when provided.
@@ -101,6 +102,7 @@ export class GiftsApi {
   async createInvoice(
     address: string,
     amountMsat: number,
+    amountUsd: string,
     comment?: string,
     messageId?: string,
     groupMessageId?: string,
@@ -108,12 +110,14 @@ export class GiftsApi {
     const body: {
       address: string;
       amountMsat: number;
+      amountUsd: string;
       comment?: string;
       messageId?: string;
       groupMessageId?: string;
     } = {
       address,
       amountMsat,
+      amountUsd,
     };
     if (comment !== undefined) {
       body.comment = comment;
