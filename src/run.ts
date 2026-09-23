@@ -27,7 +27,7 @@ export interface RunOptions {
    * included `groupMessageId`. Used only when {@link RunOptions.bucket} is `'moderator'`.
    */
   groupMessageIdByAddress?: Record<string, string>;
-  /** Default `'daily'`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, and does not send `messageId` on `createInvoice`. */
+  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator';
   /** Default true. False on HTTP ping: API already gated eligibleToday. */
   checkFundingEligible?: boolean;
@@ -90,9 +90,11 @@ function selectTargets(
  * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster.
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
- * When {@link RunOptions.bucket} is `'moderator'`, uses the moderator JSONL, requires
- * a living-room `hasPosted` whose `postedAt` UTC day matches {@link RunOptions.day},
- * and never sends `messageId` on `createInvoice`. When
+ * Daily requires `hasPosted` and `hasMedia`; missing or non-true `hasMedia` skips as
+ * `no_media` (no JSONL). When {@link RunOptions.bucket} is `'moderator'`, uses the
+ * moderator JSONL, requires a living-room `hasPosted` whose `postedAt` UTC day matches
+ * {@link RunOptions.day}, does not inspect `hasMedia`, and never sends `messageId` on
+ * `createInvoice`. When
  * {@link RunOptions.groupMessageIdByAddress} has an entry for the recipient, that id
  * is sent as `groupMessageId` on `createInvoice` (moderator only).
  *
@@ -217,6 +219,7 @@ async function runDayLocked(
 
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
+  const noMedia = new Set<string>();
   const noEligible = new Set<string>();
   const postedMessageId = new Map<string, string | null>();
   for (const recipient of targets) {
@@ -248,6 +251,10 @@ async function runDayLocked(
       } else {
         if (!posted.hasPosted) {
           noPost.add(recipient.address);
+          continue;
+        }
+        if (!posted.hasMedia) {
+          noMedia.add(recipient.address);
           continue;
         }
         postedMessageId.set(recipient.address, posted.messageId);
@@ -284,6 +291,7 @@ async function runDayLocked(
         latestStatus(rows, r.address) !== 'failed' &&
         !noPasskey.has(r.address) &&
         !noPost.has(r.address) &&
+        !noMedia.has(r.address) &&
         !noEligible.has(r.address),
     );
     const needed = pending.reduce((sum, r) => {
@@ -360,6 +368,11 @@ async function runDayLocked(
     if (noPost.has(recipient.address)) {
       log('spend.skip', { address: recipient.address, reason: 'no_post' });
       skipped.push({ ...lineBase, reason: 'no_post' });
+      continue;
+    }
+    if (noMedia.has(recipient.address)) {
+      log('spend.skip', { address: recipient.address, reason: 'no_media' });
+      skipped.push({ ...lineBase, reason: 'no_media' });
       continue;
     }
     if (noEligible.has(recipient.address)) {

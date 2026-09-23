@@ -273,7 +273,7 @@ describe('main live recipients', () => {
           return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/posted')) {
-          return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+          return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/eligible')) {
           return new Response(JSON.stringify({ eligible: true }), { status: 200 });
@@ -339,7 +339,7 @@ describe('main Telegram notify', () => {
           return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/posted')) {
-          return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+          return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/eligible')) {
           return new Response(JSON.stringify({ eligible: true }), { status: 200 });
@@ -389,7 +389,7 @@ describe('main Telegram notify', () => {
           return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/posted')) {
-          return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+          return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
         }
         if (String(url).includes('/invoices/eligible')) {
           return new Response(JSON.stringify({ eligible: true }), { status: 200 });

@@ -119,7 +119,8 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         name: 'Alice',
         text: 'first',
         createdAt: new Date('2026-08-01T00:00:00.000Z'),
-        hasPhoto: false,
+        hasPhoto: true,
+        hasVideo: true,
         ...messageMod.unsignedNostrDefaults(),
       },
       {
@@ -128,7 +129,8 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         name: 'Bob',
         text: 'first',
         createdAt: new Date('2026-08-01T00:00:00.000Z'),
-        hasPhoto: false,
+        hasPhoto: true,
+        hasVideo: true,
         ...messageMod.unsignedNostrDefaults(),
       },
     ]);
@@ -213,6 +215,16 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           // treats that 404 as eligible_unreachable. This wrapper only.
           if (parsed.pathname === '/invoices/eligible' && res.status === 404) {
             return new Response(JSON.stringify({ eligible: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          if (parsed.pathname === '/invoices/posted' && res.ok) {
+            const json = (await res.json()) as Record<string, unknown>;
+            if (json['hasPosted'] === true && json['hasMedia'] !== true) {
+              json['hasMedia'] = true;
+            }
+            return new Response(JSON.stringify(json), {
               status: 200,
               headers: { 'content-type': 'application/json' },
             });
