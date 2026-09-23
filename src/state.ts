@@ -7,14 +7,14 @@ import {
   openSync,
   readFileSync,
   writeSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /** Unreadable or truncated day JSONL. */
 export class CorruptStateError extends Error {
   constructor() {
-    super("corrupt payout state");
-    this.name = "CorruptStateError";
+    super('corrupt payout state');
+    this.name = 'CorruptStateError';
   }
 }
 
@@ -24,7 +24,7 @@ export interface StateRow {
   address: string;
   invoiceId: string;
   paymentHash: string;
-  status: "dry-run" | "paid" | "failed" | "uncertain";
+  status: 'dry-run' | 'paid' | 'failed' | 'uncertain';
 }
 
 /**
@@ -46,12 +46,9 @@ export class DayState {
       mkdir: (path: string) => void;
     } = {
       exists: existsSync,
-      read: (path) => readFileSync(path, "utf8"),
+      read: (path) => readFileSync(path, 'utf8'),
       append: (path, data) => {
-        const fd = openSync(
-          path,
-          constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
-        );
+        const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY);
         try {
           writeSync(fd, data);
           fsyncSync(fd);
@@ -61,7 +58,7 @@ export class DayState {
       },
       mkdir: (path) => mkdirSync(path, { recursive: true }),
     },
-    private readonly bucket: "daily" | "moderator" | "welcome" = "daily",
+    private readonly bucket: 'daily' | 'moderator' | 'welcome' = 'daily',
   ) {}
 
   /**
@@ -80,7 +77,7 @@ export class DayState {
     } catch {
       throw new CorruptStateError();
     }
-    const lines = raw.split("\n").filter((line) => line.trim() !== "");
+    const lines = raw.split('\n').filter((line) => line.trim() !== '');
     const rows: StateRow[] = [];
     for (const line of lines) {
       rows.push(parseStateRow(line));
@@ -121,32 +118,27 @@ export class DayState {
   }
 
   private path(): string {
-    if (this.bucket === "welcome") {
-      return join(this.dir, "welcome.jsonl");
+    if (this.bucket === 'welcome') {
+      return join(this.dir, 'welcome.jsonl');
     }
-    if (this.bucket === "moderator") {
+    if (this.bucket === 'moderator') {
       return join(this.dir, `${this.day}.moderator.jsonl`);
     }
     return join(this.dir, `${this.day}.jsonl`);
   }
 
   private finishedPath(): string {
-    if (this.bucket === "welcome") {
-      return join(this.dir, "welcome.finished");
+    if (this.bucket === 'welcome') {
+      return join(this.dir, 'welcome.finished');
     }
-    if (this.bucket === "moderator") {
+    if (this.bucket === 'moderator') {
       return join(this.dir, `${this.day}.moderator.finished`);
     }
     return join(this.dir, `${this.day}.finished`);
   }
 }
 
-const STATUSES = new Set<StateRow["status"]>([
-  "dry-run",
-  "paid",
-  "failed",
-  "uncertain",
-]);
+const STATUSES = new Set<StateRow['status']>(['dry-run', 'paid', 'failed', 'uncertain']);
 
 function parseStateRow(line: string): StateRow {
   let parsed: unknown;
@@ -155,22 +147,22 @@ function parseStateRow(line: string): StateRow {
   } catch {
     throw new CorruptStateError();
   }
-  if (parsed === null || typeof parsed !== "object") {
+  if (parsed === null || typeof parsed !== 'object') {
     throw new CorruptStateError();
   }
   const rec = parsed as Record<string, unknown>;
-  const ts = rec["ts"];
-  const address = rec["address"];
-  const invoiceId = rec["invoiceId"];
-  const paymentHash = rec["paymentHash"];
-  const status = rec["status"];
+  const ts = rec['ts'];
+  const address = rec['address'];
+  const invoiceId = rec['invoiceId'];
+  const paymentHash = rec['paymentHash'];
+  const status = rec['status'];
   if (
-    typeof ts !== "string" ||
-    typeof address !== "string" ||
-    typeof invoiceId !== "string" ||
-    typeof paymentHash !== "string" ||
-    typeof status !== "string" ||
-    !STATUSES.has(status as StateRow["status"])
+    typeof ts !== 'string' ||
+    typeof address !== 'string' ||
+    typeof invoiceId !== 'string' ||
+    typeof paymentHash !== 'string' ||
+    typeof status !== 'string' ||
+    !STATUSES.has(status as StateRow['status'])
   ) {
     throw new CorruptStateError();
   }
@@ -179,7 +171,7 @@ function parseStateRow(line: string): StateRow {
     address,
     invoiceId,
     paymentHash,
-    status: status as StateRow["status"],
+    status: status as StateRow['status'],
   };
 }
 
@@ -190,11 +182,8 @@ function parseStateRow(line: string): StateRow {
  * @param address - Recipient.
  * @returns Last matching status.
  */
-export function latestStatus(
-  rows: StateRow[],
-  address: string,
-): StateRow["status"] | undefined {
-  let found: StateRow["status"] | undefined;
+export function latestStatus(rows: StateRow[], address: string): StateRow['status'] | undefined {
+  let found: StateRow['status'] | undefined;
   for (const row of rows) {
     if (row.address.toLowerCase() === address.toLowerCase()) {
       found = row.status;
@@ -210,15 +199,12 @@ export function latestStatus(
  * @param address - Recipient or halt sentinel.
  * @returns Blocking status, if any.
  */
-export function dayBlock(
-  rows: StateRow[],
-  address: string,
-): "paid" | "uncertain" | undefined {
-  let found: "paid" | "uncertain" | undefined;
+export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain' | undefined {
+  let found: 'paid' | 'uncertain' | undefined;
   for (const row of rows) {
     if (
       row.address.toLowerCase() === address.toLowerCase() &&
-      (row.status === "paid" || row.status === "uncertain")
+      (row.status === 'paid' || row.status === 'uncertain')
     ) {
       found = row.status;
     }

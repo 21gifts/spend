@@ -1,25 +1,21 @@
-import { readFileSync } from "node:fs";
-import { loadConfig, type Recipient, type SpendConfig } from "./config";
-import { loadDashboard } from "./dashboard";
-import { bearerMatchesDebugToken, bearerMatchesToken } from "./debug-token";
-import { GiftsApi, type FundingGrantStatus } from "./gifts-api";
-import { parseLightningAddress } from "./lightning-address";
-import { LndhubClient, parseLndhubUri } from "./lndhub";
-import { createPayoutGate } from "./payout-gate";
-import { fetchBtcUsdSpot } from "./price";
+import { readFileSync } from 'node:fs';
+import { loadConfig, type Recipient, type SpendConfig } from './config';
+import { loadDashboard } from './dashboard';
+import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
+import { GiftsApi, type FundingGrantStatus } from './gifts-api';
+import { parseLightningAddress } from './lightning-address';
+import { LndhubClient, parseLndhubUri } from './lndhub';
+import { createPayoutGate } from './payout-gate';
+import { fetchBtcUsdSpot } from './price';
 import {
   CorruptRecipientsError,
   ensureLiveRecipients,
   loadLiveRecipients,
   saveLiveRecipients,
   type LiveRecipients,
-} from "./recipients-store";
-import {
-  renderDashboardHtml,
-  renderUnconfiguredHtml,
-  type SpendPanel,
-} from "./recipients-html";
-import { runDay, type RunOptions } from "./run";
+} from './recipients-store';
+import { renderDashboardHtml, renderUnconfiguredHtml, type SpendPanel } from './recipients-html';
+import { runDay, type RunOptions } from './run';
 import {
   SESSION_TTL_SEC,
   clearSessionCookie,
@@ -27,8 +23,8 @@ import {
   passwordsMatch,
   sessionCookieHeader,
   sessionCookieValid,
-} from "./session";
-import { CorruptStateError, DayState, dayBlock, latestStatus } from "./state";
+} from './session';
+import { CorruptStateError, DayState, dayBlock, latestStatus } from './state';
 import {
   loadTelegram,
   minimalRunSummary,
@@ -36,11 +32,10 @@ import {
   TelegramDedupe,
   type RunSummary,
   type TelegramSource,
-} from "./telegram";
+} from './telegram';
 
-const SERVICE_NAME = "spend";
-const MESSAGE_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SERVICE_NAME = 'spend';
+const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** New-member handbook cap (USD) for an unlisted daily ping with grant admitted or trial. */
 const NEW_MEMBER_DAILY_USD = 1;
 /** Once-per-Lightning-Address lifetime welcome gift (USD). */
@@ -56,41 +51,33 @@ export function parseBindAddr(raw: string | undefined): {
   hostname: string;
   port: number;
 } {
-  const value =
-    raw === undefined || raw.trim() === "" ? "0.0.0.0:3000" : raw.trim();
-  const idx = value.lastIndexOf(":");
+  const value = raw === undefined || raw.trim() === '' ? '0.0.0.0:3000' : raw.trim();
+  const idx = value.lastIndexOf(':');
   if (idx <= 0 || idx === value.length - 1) {
-    return { hostname: "0.0.0.0", port: 3000 };
+    return { hostname: '0.0.0.0', port: 3000 };
   }
   const hostname = value.slice(0, idx);
   const port = Number(value.slice(idx + 1));
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { hostname: "0.0.0.0", port: 3000 };
+    return { hostname: '0.0.0.0', port: 3000 };
   }
   return { hostname, port };
 }
 
 function serviceVersion(): string {
   try {
-    const raw = readFileSync(
-      new URL("../package.json", import.meta.url),
-      "utf8",
-    );
+    const raw = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
     const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" ? parsed.version : "0.0.0";
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0';
   } catch {
-    return "0.0.0";
+    return '0.0.0';
   }
 }
 
-function htmlResponse(
-  body: string,
-  status = 200,
-  headers?: HeadersInit,
-): Response {
+function htmlResponse(body: string, status = 200, headers?: HeadersInit): Response {
   return new Response(body, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8", ...headers },
+    headers: { 'content-type': 'text/html; charset=utf-8', ...headers },
   });
 }
 
@@ -102,16 +89,16 @@ function redirect(location: string, headers?: HeadersInit): Response {
 }
 
 async function readForm(req: Request): Promise<URLSearchParams> {
-  const contentType = req.headers.get("content-type") ?? "";
-  if (contentType.includes("application/x-www-form-urlencoded")) {
+  const contentType = req.headers.get('content-type') ?? '';
+  if (contentType.includes('application/x-www-form-urlencoded')) {
     const text = await req.text();
     return new URLSearchParams(text);
   }
-  if (contentType.includes("multipart/form-data")) {
+  if (contentType.includes('multipart/form-data')) {
     const form = await req.formData();
     const params = new URLSearchParams();
     for (const [key, value] of form.entries()) {
-      if (typeof value === "string") {
+      if (typeof value === 'string') {
         params.set(key, value);
       }
     }
@@ -126,7 +113,7 @@ function parseAmountUsd(raw: string | null): number | null {
     return null;
   }
   const trimmed = raw.trim();
-  if (trimmed === "") {
+  if (trimmed === '') {
     return null;
   }
   const value = Number(trimmed);
@@ -142,26 +129,24 @@ function parseAddress(raw: string | null): string | null {
     return null;
   }
   const address = raw.trim();
-  if (address === "" || !address.includes("@")) {
+  if (address === '' || !address.includes('@')) {
     return null;
   }
   return address;
 }
 
-function parseComment(
-  raw: string | null,
-): { ok: true; comment: string } | { ok: false } {
+function parseComment(raw: string | null): { ok: true; comment: string } | { ok: false } {
   if (raw === null) {
     return { ok: false };
   }
-  const comment = raw.replace(/\r\n|\n|\r/g, " ").trim();
+  const comment = raw.replace(/\r\n|\n|\r/g, ' ').trim();
   if (comment.length > 500) {
     return { ok: false };
   }
   return { ok: true, comment };
 }
 
-type RosterAction = "add" | "update" | "delete";
+type RosterAction = 'add' | 'update' | 'delete';
 
 /**
  * Apply add, update, or delete to one roster list. Error strings match the
@@ -177,46 +162,44 @@ function mutateRosterList(
   list: Recipient[],
   form: URLSearchParams,
 ): { ok: true; list: Recipient[] } | { ok: false; error: string } {
-  if (action === "add") {
-    const address = parseAddress(form.get("address"));
-    const amountUsd = parseAmountUsd(form.get("amountUsd"));
+  if (action === 'add') {
+    const address = parseAddress(form.get('address'));
+    const amountUsd = parseAmountUsd(form.get('amountUsd'));
     if (address === null || amountUsd === null) {
-      return { ok: false, error: "Invalid address or amount" };
+      return { ok: false, error: 'Invalid address or amount' };
     }
     if (list.some((r) => r.address.toLowerCase() === address.toLowerCase())) {
-      return { ok: false, error: "Address already listed" };
+      return { ok: false, error: 'Address already listed' };
     }
     return { ok: true, list: [...list, { address, amountUsd }] };
   }
-  if (action === "update") {
-    const address = parseAddress(form.get("address"));
-    const amountUsd = parseAmountUsd(form.get("amountUsd"));
+  if (action === 'update') {
+    const address = parseAddress(form.get('address'));
+    const amountUsd = parseAmountUsd(form.get('amountUsd'));
     if (address === null) {
-      return { ok: false, error: "Unknown address" };
+      return { ok: false, error: 'Unknown address' };
     }
     const idx = list.findIndex((r) => r.address === address);
     if (idx < 0) {
-      return { ok: false, error: "Unknown address" };
+      return { ok: false, error: 'Unknown address' };
     }
     if (amountUsd === null) {
-      return { ok: false, error: "Invalid address or amount" };
+      return { ok: false, error: 'Invalid address or amount' };
     }
     const current = list[idx];
     if (current === undefined) {
-      return { ok: false, error: "Unknown address" };
+      return { ok: false, error: 'Unknown address' };
     }
-    const next = list.map((row, i) =>
-      i === idx ? { ...current, amountUsd } : row,
-    );
+    const next = list.map((row, i) => (i === idx ? { ...current, amountUsd } : row));
     return { ok: true, list: next };
   }
-  const address = parseAddress(form.get("address"));
+  const address = parseAddress(form.get('address'));
   if (address === null) {
-    return { ok: false, error: "Unknown address" };
+    return { ok: false, error: 'Unknown address' };
   }
   const next = list.filter((r) => r.address !== address);
   if (next.length === list.length) {
-    return { ok: false, error: "Unknown address" };
+    return { ok: false, error: 'Unknown address' };
   }
   return { ok: true, list: next };
 }
@@ -242,7 +225,7 @@ function editorPanel(
 ): SpendPanel {
   return error === undefined
     ? {
-        kind: "editor",
+        kind: 'editor',
         comment,
         recipients,
         moderators,
@@ -250,7 +233,7 @@ function editorPanel(
         moderatorPaymentsEnabled,
       }
     : {
-        kind: "editor",
+        kind: 'editor',
         comment,
         recipients,
         moderators,
@@ -274,10 +257,7 @@ export function createServer(opts: {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   retryCatchupMs?: number;
-  runDay?: (
-    config: SpendConfig,
-    options: RunOptions,
-  ) => Promise<{ exitCode: number }>;
+  runDay?: (config: SpendConfig, options: RunOptions) => Promise<{ exitCode: number }>;
 }): {
   fetch: (req: Request) => Promise<Response>;
   startScheduler: () => { stop: () => void };
@@ -305,29 +285,28 @@ export function createServer(opts: {
   }
   /* v8 ignore stop */
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const live = opts.env["SPEND_LIVE"] === "true";
-  const debugToken = opts.env["DEBUG_TOKEN"];
+  const live = opts.env['SPEND_LIVE'] === 'true';
+  const debugToken = opts.env['DEBUG_TOKEN'];
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
-    throw new Error("LNDHUB_URI must be an lndhub:// URI");
+    throw new Error('LNDHUB_URI must be an lndhub:// URI');
   }
   const lndhub = new LndhubClient(target, fetchImpl);
   const version = serviceVersion();
   const recipientsGate = createPayoutGate();
-  const sessionNow = (): number =>
-    (opts.now ?? (() => new Date()))().getTime() / 1000;
+  const sessionNow = (): number => (opts.now ?? (() => new Date()))().getTime() / 1000;
 
   const requireSession = (req: Request): boolean => {
     const password = config.dashboardPassword;
     if (password === null) {
       return false;
     }
-    return sessionCookieValid(req.headers.get("cookie"), password, sessionNow);
+    return sessionCookieValid(req.headers.get('cookie'), password, sessionNow);
   };
 
   const requireSameOrigin = (req: Request): boolean => {
-    const origin = req.headers.get("origin");
-    if (origin === null || origin === "") {
+    const origin = req.headers.get('origin');
+    if (origin === null || origin === '') {
       return false;
     }
     let originHost: string;
@@ -336,11 +315,8 @@ export function createServer(opts: {
     } catch {
       return false;
     }
-    const host =
-      (req.headers.get("host") ?? new URL(req.url).host)
-        .split(",")[0]
-        ?.trim() ?? "";
-    return host !== "" && originHost === host;
+    const host = (req.headers.get('host') ?? new URL(req.url).host).split(',')[0]?.trim() ?? '';
+    return host !== '' && originHost === host;
   };
 
   const loadDashboardData = () =>
@@ -362,8 +338,7 @@ export function createServer(opts: {
     return htmlResponse(renderUnconfiguredHtml(data), 503);
   };
 
-  const loadOrError = ():
-    ({ ok: true } & LiveRecipients) | { ok: false; response: Response } => {
+  const loadOrError = (): ({ ok: true } & LiveRecipients) | { ok: false; response: Response } => {
     try {
       const liveList = loadLiveRecipients(config.stateDir);
       return {
@@ -378,7 +353,7 @@ export function createServer(opts: {
       if (err instanceof CorruptRecipientsError) {
         return {
           ok: false,
-          response: new Response("Recipient list is unreadable", {
+          response: new Response('Recipient list is unreadable', {
             status: 500,
           }),
         };
@@ -389,46 +364,35 @@ export function createServer(opts: {
 
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if (
-      (req.method === "GET" || req.method === "HEAD") &&
-      url.pathname === "/healthz"
-    ) {
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') {
       const body = JSON.stringify({
-        status: "ok",
+        status: 'ok',
         service: SERVICE_NAME,
         version,
       });
-      return new Response(req.method === "HEAD" ? null : body, {
+      return new Response(req.method === 'HEAD' ? null : body, {
         status: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
+        headers: { 'content-type': 'application/json; charset=utf-8' },
       });
     }
-    if (
-      (req.method === "GET" || req.method === "HEAD") &&
-      url.pathname === "/debug/recipients"
-    ) {
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/debug/recipients') {
       const json = (status: number, payload: unknown): Response =>
-        new Response(req.method === "HEAD" ? null : JSON.stringify(payload), {
+        new Response(req.method === 'HEAD' ? null : JSON.stringify(payload), {
           status,
-          headers: { "content-type": "application/json; charset=utf-8" },
+          headers: { 'content-type': 'application/json; charset=utf-8' },
         });
-      if (debugToken === undefined || debugToken.trim() === "") {
-        return json(503, { error: "Debug is not configured" });
+      if (debugToken === undefined || debugToken.trim() === '') {
+        return json(503, { error: 'Debug is not configured' });
       }
-      if (
-        !bearerMatchesDebugToken(
-          debugToken,
-          req.headers.get("authorization") ?? undefined,
-        )
-      ) {
-        return json(401, { error: "Unauthorized" });
+      if (!bearerMatchesDebugToken(debugToken, req.headers.get('authorization') ?? undefined)) {
+        return json(401, { error: 'Unauthorized' });
       }
       try {
         const liveList = loadLiveRecipients(config.stateDir);
         console.warn(
           JSON.stringify({
             ts: new Date().toISOString(),
-            event: "spend.debug.recipients",
+            event: 'spend.debug.recipients',
             count: liveList.recipients.length,
           }),
         );
@@ -441,39 +405,36 @@ export function createServer(opts: {
         });
       } catch (err) {
         if (err instanceof CorruptRecipientsError) {
-          return json(500, { error: "Recipient list is unreadable" });
+          return json(500, { error: 'Recipient list is unreadable' });
         }
         throw err;
       }
     }
-    if (req.method === "POST" && url.pathname === "/ping") {
+    if (req.method === 'POST' && url.pathname === '/ping') {
       const json = (status: number, payload: unknown): Response =>
         new Response(JSON.stringify(payload), {
           status,
-          headers: { "content-type": "application/json; charset=utf-8" },
+          headers: { 'content-type': 'application/json; charset=utf-8' },
         });
       if (
-        !bearerMatchesToken(
-          config.giftsApiToken,
-          req.headers.get("authorization") ?? undefined,
-        )
+        !bearerMatchesToken(config.giftsApiToken, req.headers.get('authorization') ?? undefined)
       ) {
-        return json(401, { error: "Unauthorized" });
+        return json(401, { error: 'Unauthorized' });
       }
       let body: unknown;
       try {
         body = await req.json();
       } catch {
-        return json(400, { error: "Expected a JSON body with address" });
+        return json(400, { error: 'Expected a JSON body with address' });
       }
       if (
         body === null ||
-        typeof body !== "object" ||
+        typeof body !== 'object' ||
         Array.isArray(body) ||
-        !("address" in body) ||
-        typeof (body as { address: unknown }).address !== "string"
+        !('address' in body) ||
+        typeof (body as { address: unknown }).address !== 'string'
       ) {
-        return json(400, { error: "Expected a JSON body with address" });
+        return json(400, { error: 'Expected a JSON body with address' });
       }
       const pingBody = body as {
         address: string;
@@ -484,75 +445,64 @@ export function createServer(opts: {
       const kindRaw = pingBody.kind;
       if (
         kindRaw !== undefined &&
-        kindRaw !== "daily" &&
-        kindRaw !== "moderator" &&
-        kindRaw !== "welcome"
+        kindRaw !== 'daily' &&
+        kindRaw !== 'moderator' &&
+        kindRaw !== 'welcome'
       ) {
         return json(400, {
-          error: "Expected a JSON body with address and kind",
+          error: 'Expected a JSON body with address and kind',
         });
       }
-      const kind: "daily" | "moderator" | "welcome" =
-        kindRaw === "moderator"
-          ? "moderator"
-          : kindRaw === "welcome"
-            ? "welcome"
-            : "daily";
+      const kind: 'daily' | 'moderator' | 'welcome' =
+        kindRaw === 'moderator' ? 'moderator' : kindRaw === 'welcome' ? 'welcome' : 'daily';
       let groupMessageId: string | undefined;
-      if (kind === "moderator") {
-        if ("messageId" in pingBody) {
+      if (kind === 'moderator') {
+        if ('messageId' in pingBody) {
           return json(400, {
-            error: "Expected a JSON body with address and kind",
+            error: 'Expected a JSON body with address and kind',
           });
         }
         const rawGroupMessageId = pingBody.groupMessageId;
         if (rawGroupMessageId !== undefined) {
-          if (
-            typeof rawGroupMessageId !== "string" ||
-            !MESSAGE_ID_RE.test(rawGroupMessageId)
-          ) {
+          if (typeof rawGroupMessageId !== 'string' || !MESSAGE_ID_RE.test(rawGroupMessageId)) {
             return json(400, {
-              error: "Expected a JSON body with address and kind",
+              error: 'Expected a JSON body with address and kind',
             });
           }
           groupMessageId = rawGroupMessageId;
         }
       } else if (
-        kind === "daily" &&
-        (typeof pingBody.messageId !== "string" ||
-          !MESSAGE_ID_RE.test(pingBody.messageId))
+        kind === 'daily' &&
+        (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId))
       ) {
         return json(400, {
-          error: "Expected a JSON body with address and messageId",
+          error: 'Expected a JSON body with address and messageId',
         });
       }
       const parsed = parseLightningAddress(pingBody.address);
       if (parsed === null) {
         return json(400, {
-          error: "Not a valid Lightning Address (expected name@domain)",
+          error: 'Not a valid Lightning Address (expected name@domain)',
         });
       }
       const logPing = (status: string, reason?: string): void => {
         console.warn(
           JSON.stringify({
             ts: new Date().toISOString(),
-            event: "spend.ping",
+            event: 'spend.ping',
             address: parsed,
             status,
             ...(reason !== undefined ? { reason } : {}),
-            ...(kind === "daily" ? {} : { kind }),
+            ...(kind === 'daily' ? {} : { kind }),
           }),
         );
       };
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
-      if (kind === "welcome") {
-        if (
-          typeof pingBody.messageId !== "string" ||
-          !MESSAGE_ID_RE.test(pingBody.messageId)
-        ) {
+      if (kind === 'welcome') {
+        if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
           return json(400, {
-            error: "Expected a JSON body with address and messageId",
+            error: 'Expected a JSON body with address and messageId',
           });
         }
         const messageId = pingBody.messageId;
@@ -561,19 +511,14 @@ export function createServer(opts: {
           liveList = loadLiveRecipients(config.stateDir);
         } catch (err) {
           if (err instanceof CorruptRecipientsError) {
-            return json(500, { error: "Recipient list is unreadable" });
+            return json(500, { error: 'Recipient list is unreadable' });
           }
           throw err;
         }
         let storedAddress = parsed;
         let rows;
         try {
-          rows = new DayState(
-            config.stateDir,
-            day,
-            undefined,
-            "welcome",
-          ).load();
+          rows = new DayState(config.stateDir, day, undefined, 'welcome').load();
         } catch (err) {
           if (!(err instanceof CorruptStateError)) {
             throw err;
@@ -581,83 +526,75 @@ export function createServer(opts: {
           rows = undefined;
         }
         if (rows !== undefined) {
-          const persisted = rows.find(
-            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
-          );
+          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
           if (persisted !== undefined) {
             storedAddress = persisted.address;
           }
           const block = dayBlock(rows, storedAddress);
-          if (block === "paid") {
-            logPing("skipped", "paid");
-            return json(200, { status: "skipped", reason: "paid" });
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
           }
-          if (block === "uncertain") {
-            logPing("skipped", "uncertain");
-            return json(200, { status: "skipped", reason: "uncertain" });
+          if (block === 'uncertain') {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
           }
-          if (latestStatus(rows, storedAddress) === "failed") {
-            logPing("skipped", "failed");
-            return json(200, { status: "skipped", reason: "failed" });
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
           }
         }
         if (liveList.paymentsEnabled === false) {
-          logPing("skipped", "payments_disabled");
-          return json(200, { status: "skipped", reason: "payments_disabled" });
+          logPing('skipped', 'payments_disabled');
+          return json(200, { status: 'skipped', reason: 'payments_disabled' });
         }
-        logPing("accepted");
-        void payout(day, "ping", [storedAddress], messageId, {
-          bucket: "welcome",
+        logPing('accepted');
+        void payout(day, 'ping', [storedAddress], messageId, {
+          bucket: 'welcome',
           recipients: [
             {
               address: storedAddress,
               amountUsd: WELCOME_USD,
-              comment: "Welcome",
+              comment: 'Welcome',
             },
           ],
-          comment: "Welcome",
+          comment: 'Welcome',
         }).catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : "ping";
+          const error = err instanceof Error ? err.message : 'ping';
           console.warn(
             JSON.stringify({
               ts: new Date().toISOString(),
-              event: "spend.ping",
+              event: 'spend.ping',
               address: storedAddress,
-              status: "error",
+              status: 'error',
               error,
-              kind: "welcome",
+              kind: 'welcome',
             }),
           );
         });
-        return json(202, { status: "accepted" });
+        return json(202, { status: 'accepted' });
       }
-      if (kind === "moderator") {
+      if (kind === 'moderator') {
         let liveList: LiveRecipients;
         try {
           liveList = loadLiveRecipients(config.stateDir);
         } catch (err) {
           if (err instanceof CorruptRecipientsError) {
-            return json(500, { error: "Recipient list is unreadable" });
+            return json(500, { error: 'Recipient list is unreadable' });
           }
           throw err;
         }
         const listed = liveList.moderators.find(
-          (recipient) =>
-            recipient.address.toLowerCase() === parsed.toLowerCase(),
+          (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
         );
         if (listed === undefined) {
-          logPing("skipped", "not_listed");
-          return json(200, { status: "skipped", reason: "not_listed" });
+          logPing('skipped', 'not_listed');
+          return json(200, { status: 'skipped', reason: 'not_listed' });
         }
         let storedAddress = listed.address;
         let rows;
         try {
-          rows = new DayState(
-            config.stateDir,
-            day,
-            undefined,
-            "moderator",
-          ).load();
+          rows = new DayState(config.stateDir, day, undefined, 'moderator').load();
         } catch (err) {
           if (!(err instanceof CorruptStateError)) {
             throw err;
@@ -665,56 +602,54 @@ export function createServer(opts: {
           rows = undefined;
         }
         if (rows !== undefined) {
-          const persisted = rows.find(
-            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
-          );
+          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
           if (persisted !== undefined) {
             storedAddress = persisted.address;
           }
           const block = dayBlock(rows, storedAddress);
-          if (block === "paid") {
-            logPing("skipped", "paid");
-            return json(200, { status: "skipped", reason: "paid" });
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
           }
-          if (block === "uncertain") {
-            logPing("skipped", "uncertain");
-            return json(200, { status: "skipped", reason: "uncertain" });
+          if (block === 'uncertain') {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
           }
-          if (latestStatus(rows, storedAddress) === "failed") {
-            logPing("skipped", "failed");
-            return json(200, { status: "skipped", reason: "failed" });
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
           }
         }
         if (liveList.moderatorPaymentsEnabled === false) {
-          logPing("skipped", "payments_disabled");
-          return json(200, { status: "skipped", reason: "payments_disabled" });
+          logPing('skipped', 'payments_disabled');
+          return json(200, { status: 'skipped', reason: 'payments_disabled' });
         }
-        logPing("accepted");
-        void payout(day, "ping", [storedAddress], undefined, {
-          bucket: "moderator",
+        logPing('accepted');
+        void payout(day, 'ping', [storedAddress], undefined, {
+          bucket: 'moderator',
           recipients: [
             {
               address: storedAddress,
               amountUsd: listed.amountUsd,
-              comment: "21gifts moderator",
+              comment: '21gifts moderator',
             },
           ],
-          comment: "21gifts moderator",
+          comment: '21gifts moderator',
           ...(groupMessageId === undefined ? {} : { groupMessageId }),
         }).catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : "ping";
+          const error = err instanceof Error ? err.message : 'ping';
           console.warn(
             JSON.stringify({
               ts: new Date().toISOString(),
-              event: "spend.ping",
+              event: 'spend.ping',
               address: storedAddress,
-              status: "error",
+              status: 'error',
               error,
-              kind: "moderator",
+              kind: 'moderator',
             }),
           );
         });
-        return json(202, { status: "accepted" });
+        return json(202, { status: 'accepted' });
       }
       const messageId = pingBody.messageId as string;
       let liveList: LiveRecipients;
@@ -722,7 +657,7 @@ export function createServer(opts: {
         liveList = loadLiveRecipients(config.stateDir);
       } catch (err) {
         if (err instanceof CorruptRecipientsError) {
-          return json(500, { error: "Recipient list is unreadable" });
+          return json(500, { error: 'Recipient list is unreadable' });
         }
         throw err;
       }
@@ -740,20 +675,18 @@ export function createServer(opts: {
             fetchImpl,
           ).fundingGrantStatus(parsed);
         } catch {
-          logPing("skipped", "eligible_unreachable");
+          logPing('skipped', 'eligible_unreachable');
           return json(200, {
-            status: "skipped",
-            reason: "eligible_unreachable",
+            status: 'skipped',
+            reason: 'eligible_unreachable',
           });
         }
-        if (grant !== "admitted" && grant !== "trial") {
-          logPing("skipped", "not_listed");
-          return json(200, { status: "skipped", reason: "not_listed" });
+        if (grant !== 'admitted' && grant !== 'trial') {
+          logPing('skipped', 'not_listed');
+          return json(200, { status: 'skipped', reason: 'not_listed' });
         }
         storedAddress = parsed;
-        extraRecipients = [
-          { address: storedAddress, amountUsd: NEW_MEMBER_DAILY_USD },
-        ];
+        extraRecipients = [{ address: storedAddress, amountUsd: NEW_MEMBER_DAILY_USD }];
       } else {
         storedAddress = listed.address;
       }
@@ -768,57 +701,55 @@ export function createServer(opts: {
       }
       if (rows !== undefined) {
         const block = dayBlock(rows, storedAddress);
-        if (block === "paid") {
-          logPing("skipped", "paid");
-          return json(200, { status: "skipped", reason: "paid" });
+        if (block === 'paid') {
+          logPing('skipped', 'paid');
+          return json(200, { status: 'skipped', reason: 'paid' });
         }
         if (
-          block === "uncertain" ||
-          dayBlock(rows, "*halt*") === "uncertain" ||
-          liveList.recipients.some(
-            (recipient) => dayBlock(rows, recipient.address) === "uncertain",
-          )
+          block === 'uncertain' ||
+          dayBlock(rows, '*halt*') === 'uncertain' ||
+          liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain')
         ) {
-          logPing("skipped", "uncertain");
-          return json(200, { status: "skipped", reason: "uncertain" });
+          logPing('skipped', 'uncertain');
+          return json(200, { status: 'skipped', reason: 'uncertain' });
         }
-        if (latestStatus(rows, storedAddress) === "failed") {
-          logPing("skipped", "failed");
-          return json(200, { status: "skipped", reason: "failed" });
+        if (latestStatus(rows, storedAddress) === 'failed') {
+          logPing('skipped', 'failed');
+          return json(200, { status: 'skipped', reason: 'failed' });
         }
       }
       if (liveList.paymentsEnabled === false) {
-        logPing("skipped", "payments_disabled");
-        return json(200, { status: "skipped", reason: "payments_disabled" });
+        logPing('skipped', 'payments_disabled');
+        return json(200, { status: 'skipped', reason: 'payments_disabled' });
       }
-      logPing("accepted");
+      logPing('accepted');
       const queued =
         extraRecipients === undefined
-          ? payout(day, "ping", [storedAddress], messageId)
-          : payout(day, "ping", [storedAddress], messageId, {
+          ? payout(day, 'ping', [storedAddress], messageId)
+          : payout(day, 'ping', [storedAddress], messageId, {
               recipients: extraRecipients,
             });
       void queued.catch((err: unknown) => {
-        const error = err instanceof Error ? err.message : "ping";
+        const error = err instanceof Error ? err.message : 'ping';
         console.warn(
           JSON.stringify({
             ts: new Date().toISOString(),
-            event: "spend.ping",
+            event: 'spend.ping',
             address: storedAddress,
-            status: "error",
+            status: 'error',
             error,
           }),
         );
       });
-      return json(202, { status: "accepted" });
+      return json(202, { status: 'accepted' });
     }
-    if (req.method === "HEAD" && url.pathname === "/") {
+    if (req.method === 'HEAD' && url.pathname === '/') {
       return new Response(null, {
         status: 200,
-        headers: { "content-type": "text/html; charset=utf-8" },
+        headers: { 'content-type': 'text/html; charset=utf-8' },
       });
     }
-    if (req.method === "GET" && url.pathname === "/") {
+    if (req.method === 'GET' && url.pathname === '/') {
       if (config.dashboardPassword === null) {
         return combinedPage();
       }
@@ -837,69 +768,64 @@ export function createServer(opts: {
           ),
         );
       }
-      return combinedPage({ kind: "login" });
+      return combinedPage({ kind: 'login' });
     }
 
-    if (req.method === "GET" && url.pathname === "/login") {
+    if (req.method === 'GET' && url.pathname === '/login') {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
       }
-      return redirect("/");
+      return redirect('/');
     }
 
-    if (
-      req.method === "POST" &&
-      (url.pathname === "/login" || url.pathname === "/")
-    ) {
+    if (req.method === 'POST' && (url.pathname === '/login' || url.pathname === '/')) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
       }
       if (!requireSameOrigin(req)) {
-        return new Response("Forbidden", { status: 403 });
+        return new Response('Forbidden', { status: 403 });
       }
       const form = await readForm(req);
-      const submitted = form.get("password") ?? "";
+      const submitted = form.get('password') ?? '';
       if (!passwordsMatch(config.dashboardPassword, submitted)) {
-        return combinedPage({ kind: "login", error: "Invalid password" });
+        return combinedPage({ kind: 'login', error: 'Invalid password' });
       }
       const value = mintSessionCookie(config.dashboardPassword, sessionNow);
-      return redirect("/", {
-        "set-cookie": sessionCookieHeader(value, req, SESSION_TTL_SEC),
+      return redirect('/', {
+        'set-cookie': sessionCookieHeader(value, req, SESSION_TTL_SEC),
       });
     }
 
-    if (req.method === "POST" && url.pathname === "/logout") {
+    if (req.method === 'POST' && url.pathname === '/logout') {
       if (config.dashboardPassword !== null && !requireSameOrigin(req)) {
-        return new Response("Forbidden", { status: 403 });
+        return new Response('Forbidden', { status: 403 });
       }
-      return redirect("/", {
-        "set-cookie": sessionCookieHeader(clearSessionCookie(), req, 0),
+      return redirect('/', {
+        'set-cookie': sessionCookieHeader(clearSessionCookie(), req, 0),
       });
     }
 
-    if (req.method === "GET" && url.pathname === "/recipients") {
+    if (req.method === 'GET' && url.pathname === '/recipients') {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
       }
-      return redirect("/");
+      return redirect('/');
     }
 
     const rosterMatch = ROSTER_MUTATION.exec(url.pathname);
     const paymentsMatch = PAYMENTS_SWITCH.exec(url.pathname);
     if (
-      req.method === "POST" &&
-      (rosterMatch !== null ||
-        paymentsMatch !== null ||
-        url.pathname === "/recipients/comment")
+      req.method === 'POST' &&
+      (rosterMatch !== null || paymentsMatch !== null || url.pathname === '/recipients/comment')
     ) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
       }
       if (!requireSession(req)) {
-        return redirect("/");
+        return redirect('/');
       }
       if (!requireSameOrigin(req)) {
-        return new Response("Forbidden", { status: 403 });
+        return new Response('Forbidden', { status: 403 });
       }
       const form = await readForm(req);
       return recipientsGate.run(async () => {
@@ -911,18 +837,18 @@ export function createServer(opts: {
         const recipients = loadedLive.recipients.map((r) => ({ ...r }));
         const moderators = loadedLive.moderators.map((r) => ({ ...r }));
 
-        if (url.pathname === "/recipients/comment") {
-          const raw = form.get("comment");
+        if (url.pathname === '/recipients/comment') {
+          const raw = form.get('comment');
           const parsed = parseComment(raw);
           if (!parsed.ok) {
             return combinedPage(
               editorPanel(
-                raw ?? "",
+                raw ?? '',
                 recipients,
                 moderators,
                 loadedLive.paymentsEnabled,
                 loadedLive.moderatorPaymentsEnabled,
-                "Invalid comment",
+                'Invalid comment',
               ),
             );
           }
@@ -933,12 +859,12 @@ export function createServer(opts: {
             paymentsEnabled: loadedLive.paymentsEnabled,
             moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
           });
-          return redirect("/");
+          return redirect('/');
         }
 
         if (paymentsMatch !== null) {
-          const enabledRaw = form.get("enabled");
-          if (enabledRaw !== "on" && enabledRaw !== "off") {
+          const enabledRaw = form.get('enabled');
+          if (enabledRaw !== 'on' && enabledRaw !== 'off') {
             return combinedPage(
               editorPanel(
                 comment,
@@ -946,37 +872,30 @@ export function createServer(opts: {
                 moderators,
                 loadedLive.paymentsEnabled,
                 loadedLive.moderatorPaymentsEnabled,
-                "Invalid payments switch",
+                'Invalid payments switch',
               ),
             );
           }
-          const enabled = enabledRaw === "on";
-          const daily = paymentsMatch[1] === "recipients";
+          const enabled = enabledRaw === 'on';
+          const daily = paymentsMatch[1] === 'recipients';
           saveLiveRecipients(config.stateDir, {
             comment,
             recipients,
             moderators,
             paymentsEnabled: daily ? enabled : loadedLive.paymentsEnabled,
-            moderatorPaymentsEnabled: daily
-              ? loadedLive.moderatorPaymentsEnabled
-              : enabled,
+            moderatorPaymentsEnabled: daily ? loadedLive.moderatorPaymentsEnabled : enabled,
           });
-          return redirect("/");
+          return redirect('/');
         }
 
         if (rosterMatch === null) {
-          return new Response("Not found", { status: 404 });
+          return new Response('Not found', { status: 404 });
         }
-        const which =
-          rosterMatch[1] === "moderators" ? "moderators" : "recipients";
+        const which = rosterMatch[1] === 'moderators' ? 'moderators' : 'recipients';
         const actionRaw = rosterMatch[2];
         const action: RosterAction =
-          actionRaw === "update"
-            ? "update"
-            : actionRaw === "delete"
-              ? "delete"
-              : "add";
-        const current = which === "recipients" ? recipients : moderators;
+          actionRaw === 'update' ? 'update' : actionRaw === 'delete' ? 'delete' : 'add';
+        const current = which === 'recipients' ? recipients : moderators;
         const mutated = mutateRosterList(action, current, form);
         if (!mutated.ok) {
           return combinedPage(
@@ -992,16 +911,16 @@ export function createServer(opts: {
         }
         saveLiveRecipients(config.stateDir, {
           comment,
-          recipients: which === "recipients" ? mutated.list : recipients,
-          moderators: which === "moderators" ? mutated.list : moderators,
+          recipients: which === 'recipients' ? mutated.list : recipients,
+          moderators: which === 'moderators' ? mutated.list : moderators,
           paymentsEnabled: loadedLive.paymentsEnabled,
           moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
         });
-        return redirect("/");
+        return redirect('/');
       });
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response('Not found', { status: 404 });
   };
 
   const gate = createPayoutGate();
@@ -1011,21 +930,20 @@ export function createServer(opts: {
     onlyAddresses?: string[],
     messageId?: string,
     extras?: {
-      bucket?: "moderator" | "welcome";
+      bucket?: 'moderator' | 'welcome';
       recipients?: Recipient[];
       comment?: string;
       groupMessageId?: string;
     },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
-      const moderator = extras?.bucket === "moderator";
-      const welcome = extras?.bucket === "welcome";
+      const moderator = extras?.bucket === 'moderator';
+      const welcome = extras?.bucket === 'welcome';
       const groupMessageId = extras?.groupMessageId;
       let liveList: { comment: string; recipients: Recipient[] };
       if (moderator || welcome) {
         liveList = {
-          comment:
-            extras?.comment ?? (welcome ? "Welcome" : "21gifts moderator"),
+          comment: extras?.comment ?? (welcome ? 'Welcome' : '21gifts moderator'),
           recipients: extras?.recipients ?? [],
         };
       } else {
@@ -1036,14 +954,14 @@ export function createServer(opts: {
             console.warn(
               JSON.stringify({
                 ts: new Date().toISOString(),
-                event: "spend.done",
+                event: 'spend.done',
                 ok: false,
-                reason: "corrupt_recipients",
+                reason: 'corrupt_recipients',
               }),
             );
             const summary = {
               ...minimalRunSummary(day, live, 4),
-              reason: "corrupt_recipients",
+              reason: 'corrupt_recipients',
             };
             if (telegramTarget !== null && notifyLog.allow(source, summary)) {
               const sent = await notifyPayout({
@@ -1075,15 +993,12 @@ export function createServer(opts: {
                   live,
                   day,
                   onlyAddresses,
-                  bucket: "moderator",
+                  bucket: 'moderator',
                   ...(groupMessageId === undefined
                     ? {}
                     : {
                         groupMessageIdByAddress: Object.fromEntries(
-                          onlyAddresses.map((address) => [
-                            address.toLowerCase(),
-                            groupMessageId,
-                          ]),
+                          onlyAddresses.map((address) => [address.toLowerCase(), groupMessageId]),
                         ),
                       }),
                 }
@@ -1093,14 +1008,11 @@ export function createServer(opts: {
                 day,
                 onlyAddresses,
                 messageIdByAddress: Object.fromEntries(
-                  onlyAddresses.map((address) => [
-                    address.toLowerCase(),
-                    messageId,
-                  ]),
+                  onlyAddresses.map((address) => [address.toLowerCase(), messageId]),
                 ),
-                ...(welcome ? { bucket: "welcome" as const } : {}),
+                ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
-      if (source === "ping") runOptions.checkFundingEligible = false;
+      if (source === 'ping') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
         {
           ...config,
@@ -1110,9 +1022,7 @@ export function createServer(opts: {
         runOptions,
       );
       const withSummary = result as { exitCode: number; summary?: RunSummary };
-      const summary =
-        withSummary.summary ??
-        minimalRunSummary(day, live, withSummary.exitCode);
+      const summary = withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
       if (telegramTarget !== null && notifyLog.allow(source, summary)) {
         const sent = await notifyPayout({
           target: telegramTarget,
@@ -1146,7 +1056,7 @@ export function createServer(opts: {
     startScheduler: () => ({ stop: () => undefined }),
     startCatchup,
     startRetryCatchup,
-    runPayout: (day: string) => payout(day, "scheduler"),
+    runPayout: (day: string) => payout(day, 'scheduler'),
     drainPayouts: () => gate.run(async () => undefined),
   };
 }
@@ -1156,7 +1066,7 @@ const meta = import.meta as ImportMeta & { main?: boolean };
 if (meta.main === true) {
   try {
     const app = createServer({ env: process.env });
-    const bind = parseBindAddr(process.env["BIND_ADDR"]);
+    const bind = parseBindAddr(process.env['BIND_ADDR']);
     const bun = (
       globalThis as {
         Bun?: {
@@ -1171,8 +1081,8 @@ if (meta.main === true) {
     if (bun === undefined) {
       console.error(
         JSON.stringify({
-          event: "spend.config",
-          error: "Bun.serve is required",
+          event: 'spend.config',
+          error: 'Bun.serve is required',
         }),
       );
       process.exit(2);
@@ -1190,19 +1100,19 @@ if (meta.main === true) {
         process.exit(1);
       }, 55_000).unref();
     };
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
     console.warn(
       JSON.stringify({
         ts: new Date().toISOString(),
-        event: "spend.listen",
+        event: 'spend.listen',
         hostname: bind.hostname,
         port: bind.port,
       }),
     );
   } catch (err: unknown) {
-    const error = err instanceof Error ? err.message : "boot";
-    console.error(JSON.stringify({ event: "spend.config", error }));
+    const error = err instanceof Error ? err.message : 'boot';
+    console.error(JSON.stringify({ event: 'spend.config', error }));
     process.exit(2);
   }
 }
