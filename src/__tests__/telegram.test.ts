@@ -354,6 +354,24 @@ describe('formatPayoutMessage', () => {
     expect(text).not.toContain('(no_post)');
   });
 
+  it('renders no_media skip as (kein Foto oder Video)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@x',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'no_media',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('(kein Foto oder Video)');
+    expect(text).not.toContain('(no_media)');
+  });
+
   it('renders not_eligible skip as (nicht berechtigt)', () => {
     const text = formatPayoutMessage(
       baseSummary({
