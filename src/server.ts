@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
 import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
+import { GiftsApi, type FundingGrantStatus } from './gifts-api';
 import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
@@ -39,6 +40,8 @@ import {
 
 const SERVICE_NAME = 'spend';
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** New-member handbook cap (USD) for an unlisted daily ping with grant admitted or trial. */
+const NEW_MEMBER_DAILY_USD = 1;
 
 /**
  * Parse `BIND_ADDR` (`host:port`).
@@ -558,11 +561,29 @@ export function createServer(opts: {
       const listed = liveList.recipients.find(
         (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
       );
+      let storedAddress: string;
+      let extraRecipients: Recipient[] | undefined;
       if (listed === undefined) {
-        logPing('skipped', 'not_listed');
-        return json(200, { status: 'skipped', reason: 'not_listed' });
+        let grant: FundingGrantStatus;
+        try {
+          grant = await new GiftsApi(
+            config.giftsApiUrl,
+            config.giftsApiToken,
+            fetchImpl,
+          ).fundingGrantStatus(parsed);
+        } catch {
+          logPing('skipped', 'eligible_unreachable');
+          return json(200, { status: 'skipped', reason: 'eligible_unreachable' });
+        }
+        if (grant !== 'admitted' && grant !== 'trial') {
+          logPing('skipped', 'not_listed');
+          return json(200, { status: 'skipped', reason: 'not_listed' });
+        }
+        storedAddress = parsed;
+        extraRecipients = [{ address: storedAddress, amountUsd: NEW_MEMBER_DAILY_USD }];
+      } else {
+        storedAddress = listed.address;
       }
-      const storedAddress = listed.address;
       let rows;
       try {
         rows = new DayState(config.stateDir, day).load();
@@ -579,6 +600,7 @@ export function createServer(opts: {
           return json(200, { status: 'skipped', reason: 'paid' });
         }
         if (
+          block === 'uncertain' ||
           dayBlock(rows, '*halt*') === 'uncertain' ||
           liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain')
         ) {
@@ -595,7 +617,11 @@ export function createServer(opts: {
         return json(200, { status: 'skipped', reason: 'payments_disabled' });
       }
       logPing('accepted');
-      void payout(day, 'ping', [storedAddress], messageId).catch((err: unknown) => {
+      const queued =
+        extraRecipients === undefined
+          ? payout(day, 'ping', [storedAddress], messageId)
+          : payout(day, 'ping', [storedAddress], messageId, { recipients: extraRecipients });
+      void queued.catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
         console.warn(
           JSON.stringify({
@@ -839,6 +865,13 @@ export function createServer(opts: {
             return { exitCode: 4 };
           }
           throw err;
+        }
+        // Append only — replacing the live roster would let markFinished close the UTC day.
+        if (extras?.recipients !== undefined) {
+          liveList = {
+            comment: liveList.comment,
+            recipients: [...liveList.recipients, ...extras.recipients],
+          };
         }
       }
       const runOptions: RunOptions =
