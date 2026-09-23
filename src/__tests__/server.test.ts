@@ -1,24 +1,30 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { createServer, parseBindAddr } from '../server';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { createServer, parseBindAddr } from "../server";
 
-const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
-const seedPath = join(stateDir, 'seed.json');
+const stateDir = mkdtempSync(join(tmpdir(), "spend-server-"));
+const seedPath = join(stateDir, "seed.json");
 writeFileSync(
   seedPath,
   `${JSON.stringify({
-    comment: '21gifts daily',
-    recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-    moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+    comment: "21gifts daily",
+    recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+    moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
   })}\n`,
 );
 
 const env = {
-  GIFTS_API_URL: 'http://api.example',
-  GIFTS_API_TOKEN: 'tok',
-  LNDHUB_URI: 'lndhub://admin:secret@https://lightning.space/lndhub',
+  GIFTS_API_URL: "http://api.example",
+  GIFTS_API_TOKEN: "tok",
+  LNDHUB_URI: "lndhub://admin:secret@https://lightning.space/lndhub",
   RECIPIENTS_FILE: seedPath,
   STATE_DIR: stateDir,
 };
@@ -28,11 +34,11 @@ const sessionDirs: string[] = [];
 function req(url: string, init?: RequestInit): Request {
   const parsed = new URL(url);
   const headers = new Headers(init?.headers);
-  if (!headers.has('host')) {
-    headers.set('host', parsed.host);
+  if (!headers.has("host")) {
+    headers.set("host", parsed.host);
   }
-  if ((init?.method ?? 'GET') === 'POST' && !headers.has('origin')) {
-    headers.set('origin', parsed.origin);
+  if ((init?.method ?? "GET") === "POST" && !headers.has("origin")) {
+    headers.set("origin", parsed.origin);
   }
   return new Request(url, { ...init, headers });
 }
@@ -40,14 +46,18 @@ function req(url: string, init?: RequestInit): Request {
 /** `POST /ping` without Origin — the route is api-to-api and must not require it. */
 function pingReq(init?: RequestInit): Request {
   const headers = new Headers(init?.headers);
-  if (!headers.has('host')) {
-    headers.set('host', '127.0.0.1');
+  if (!headers.has("host")) {
+    headers.set("host", "127.0.0.1");
   }
-  return new Request('http://127.0.0.1/ping', { ...init, method: 'POST', headers });
+  return new Request("http://127.0.0.1/ping", {
+    ...init,
+    method: "POST",
+    headers,
+  });
 }
 
-const PING_MESSAGE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const GROUP_MESSAGE_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const PING_MESSAGE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const GROUP_MESSAGE_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
@@ -60,144 +70,163 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('parseBindAddr', () => {
-  it('parses host and port', () => {
-    expect(parseBindAddr('0.0.0.0:3000')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+describe("parseBindAddr", () => {
+  it("parses host and port", () => {
+    expect(parseBindAddr("0.0.0.0:3000")).toEqual({
+      hostname: "0.0.0.0",
+      port: 3000,
+    });
   });
 
-  it('defaults when unset, empty, or malformed', () => {
-    expect(parseBindAddr(undefined)).toEqual({ hostname: '0.0.0.0', port: 3000 });
-    expect(parseBindAddr('')).toEqual({ hostname: '0.0.0.0', port: 3000 });
-    expect(parseBindAddr('nope')).toEqual({ hostname: '0.0.0.0', port: 3000 });
-    expect(parseBindAddr(':80')).toEqual({ hostname: '0.0.0.0', port: 3000 });
-    expect(parseBindAddr('host:')).toEqual({ hostname: '0.0.0.0', port: 3000 });
-    expect(parseBindAddr('host:99999')).toEqual({ hostname: '0.0.0.0', port: 3000 });
+  it("defaults when unset, empty, or malformed", () => {
+    expect(parseBindAddr(undefined)).toEqual({
+      hostname: "0.0.0.0",
+      port: 3000,
+    });
+    expect(parseBindAddr("")).toEqual({ hostname: "0.0.0.0", port: 3000 });
+    expect(parseBindAddr("nope")).toEqual({ hostname: "0.0.0.0", port: 3000 });
+    expect(parseBindAddr(":80")).toEqual({ hostname: "0.0.0.0", port: 3000 });
+    expect(parseBindAddr("host:")).toEqual({ hostname: "0.0.0.0", port: 3000 });
+    expect(parseBindAddr("host:99999")).toEqual({
+      hostname: "0.0.0.0",
+      port: 3000,
+    });
   });
 });
 
-describe('createServer', () => {
-  it('returns 404 for other paths without LNDHub I/O', async () => {
+describe("createServer", () => {
+  it("returns 404 for other paths without LNDHub I/O", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/nope'));
+    const res = await app.fetch(req("http://127.0.0.1/nope"));
     expect(res.status).toBe(404);
   });
 
-  it('serves healthz without LNDHub I/O', async () => {
+  it("serves healthz without LNDHub I/O", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/healthz'));
+    const res = await app.fetch(req("http://127.0.0.1/healthz"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; service: string };
-    expect(body.status).toBe('ok');
-    expect(body.service).toBe('spend');
+    expect(body.status).toBe("ok");
+    expect(body.service).toBe("spend");
   });
 
-  it('HEAD /healthz is 200 with empty body and no fetch', async () => {
+  it("HEAD /healthz is 200 with empty body and no fetch", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/healthz', { method: 'HEAD' }));
+    const res = await app.fetch(
+      req("http://127.0.0.1/healthz", { method: "HEAD" }),
+    );
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(await res.text()).toBe("");
   });
 
-  it('renders sats on GET / without password and has no Log in', async () => {
+  it("renders sats on GET / without password and has no Log in", async () => {
     const app = createServer({
-      env: { ...env, SPEND_LIGHTNING_ADDRESS: '9643e3@lightning.space' },
+      env: { ...env, SPEND_LIGHTNING_ADDRESS: "9643e3@lightning.space" },
       fetchImpl: async (url) => {
         const path = String(url);
-        if (path.endsWith('/auth')) {
-          return new Response(JSON.stringify({ access_token: 'tok' }), { status: 200 });
+        if (path.endsWith("/auth")) {
+          return new Response(JSON.stringify({ access_token: "tok" }), {
+            status: 200,
+          });
         }
-        if (path.endsWith('/balance')) {
-          return new Response(JSON.stringify({ BTC: { AvailableBalance: 3803 } }), { status: 200 });
+        if (path.endsWith("/balance")) {
+          return new Response(
+            JSON.stringify({ BTC: { AvailableBalance: 3803 } }),
+            { status: 200 },
+          );
         }
-        if (path.includes('coinbase.com')) {
-          return new Response(JSON.stringify({ data: { amount: '78883.06' } }), { status: 200 });
+        if (path.includes("coinbase.com")) {
+          return new Response(
+            JSON.stringify({ data: { amount: "78883.06" } }),
+            { status: 200 },
+          );
         }
-        return new Response('{}', { status: 404 });
+        return new Response("{}", { status: 404 });
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/'));
+    const res = await app.fetch(req("http://127.0.0.1/"));
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('3803 sats');
+    expect(html).toContain("3803 sats");
     expect(html).toContain(`${((3803 / 1e8) * 78883.06).toFixed(2)} USD`);
-    expect(html).toContain('9643e3@lightning.space');
-    expect(html).toContain('Lightning address');
-    expect(html).toContain('<svg');
-    expect(html).not.toContain('bc1q');
-    expect(html).not.toContain('Deposit address');
-    expect(html).not.toContain('/getbtc');
-    expect(html).not.toContain('/login');
-    expect(html).not.toContain('/recipients');
-    expect(html).not.toContain('Log in');
+    expect(html).toContain("9643e3@lightning.space");
+    expect(html).toContain("Lightning address");
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("bc1q");
+    expect(html).not.toContain("Deposit address");
+    expect(html).not.toContain("/getbtc");
+    expect(html).not.toContain("/login");
+    expect(html).not.toContain("/recipients");
+    expect(html).not.toContain("Log in");
     expect(html).not.toContain('action="/recipients/payments"');
     expect(html).not.toContain('action="/moderators/payments"');
   });
 
-  it('GET / with password shows the login form', async () => {
+  it("GET / with password shows the login form", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/'));
+    const res = await app.fetch(req("http://127.0.0.1/"));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('name="password"');
-    expect(html).toContain('Log in');
+    expect(html).toContain("Log in");
     expect(html).toContain('action="/"');
-    expect(html).toContain('unavailable');
+    expect(html).toContain("unavailable");
     expect(html).not.toContain('action="/recipients/comment"');
     expect(html).not.toContain('name="comment"');
-    expect(html).not.toContain('Payment comment');
+    expect(html).not.toContain("Payment comment");
     expect(html).not.toContain('action="/recipients/payments"');
     expect(html).not.toContain('action="/moderators/payments"');
-    expect(html).not.toContain('Daily payments');
+    expect(html).not.toContain("Daily payments");
   });
 
-  it('HEAD / is 200 with empty body and does not load the dashboard', async () => {
+  it("HEAD / is 200 with empty body and does not load the dashboard", async () => {
     const app = createServer({
-      env: { ...env, SPEND_LIGHTNING_ADDRESS: '9643e3@lightning.space' },
+      env: { ...env, SPEND_LIGHTNING_ADDRESS: "9643e3@lightning.space" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/', { method: 'HEAD' }));
+    const res = await app.fetch(req("http://127.0.0.1/", { method: "HEAD" }));
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(await res.text()).toBe("");
   });
 
-  it('startScheduler is a no-op and does not invoke runDay', async () => {
+  it("startScheduler is a no-op and does not invoke runDay", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const live = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const liveHandle = live.startScheduler();
     await Promise.resolve();
     liveHandle.stop();
     const dry = createServer({
       env,
-      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const dryHandle = dry.startScheduler();
     await Promise.resolve();
@@ -205,36 +234,36 @@ describe('createServer', () => {
     expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('startCatchup always resolves null and does not invoke runDay', async () => {
+  it("startCatchup always resolves null and does not invoke runDay", async () => {
     const runDay = vi.fn(async () => {
-      throw new Error('boom');
+      throw new Error("boom");
     });
     const live = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-27T00:43:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     await expect(live.startCatchup()).resolves.toBeNull();
     const dry = createServer({
       env,
-      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      now: () => new Date("2026-08-27T00:43:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     await expect(dry.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('startRetryCatchup is a no-op and does not invoke runDay', async () => {
+  it("startRetryCatchup is a no-op and does not invoke runDay", async () => {
     vi.useFakeTimers();
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const live = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-27T12:00:00.000Z"),
       retryCatchupMs: 20,
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const liveHandle = live.startRetryCatchup();
     await vi.advanceTimersByTimeAsync(20);
@@ -242,10 +271,10 @@ describe('createServer', () => {
     liveHandle.stop();
     const dry = createServer({
       env,
-      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      now: () => new Date("2026-08-27T12:00:00.000Z"),
       retryCatchupMs: 20,
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const dryHandle = dry.startRetryCatchup();
     await vi.advanceTimersByTimeAsync(20);
@@ -253,27 +282,36 @@ describe('createServer', () => {
     expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('fails closed on boot when only one Telegram env is set', () => {
+  it("fails closed on boot when only one Telegram env is set", () => {
     expect(() =>
       createServer({
-        env: { ...env, TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx' },
+        env: {
+          ...env,
+          TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        },
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       }),
     ).toThrow(/TELEGRAM_CHAT_ID/);
   });
 
-  it('startScheduler does not notify Telegram', async () => {
+  it("startScheduler does not notify Telegram", async () => {
     const telegramCalls: string[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 0,
       summary: {
-        day: '2026-08-25',
+        day: "2026-08-25",
         live: true,
         ok: true,
         exitCode: 0,
-        paid: [{ address: 'alice@walletofsatoshi.com', amountSats: 1000, amountUsd: 1 }],
+        paid: [
+          {
+            address: "alice@walletofsatoshi.com",
+            amountSats: 1000,
+            amountUsd: 1,
+          },
+        ],
         skipped: [],
         failed: [],
         uncertain: [],
@@ -283,18 +321,18 @@ describe('createServer', () => {
     const app = createServer({
       env: {
         ...env,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-08-25T00:00:00.000Z'),
+      now: () => new Date("2026-08-25T00:00:00.000Z"),
       runDay,
       fetchImpl: async (url) => {
-        if (String(url).includes('api.telegram.org')) {
+        if (String(url).includes("api.telegram.org")) {
           telegramCalls.push(String(url));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
     const handle = app.startScheduler();
@@ -304,17 +342,17 @@ describe('createServer', () => {
     handle.stop();
   });
 
-  it('startCatchup does not notify Telegram', async () => {
+  it("startCatchup does not notify Telegram", async () => {
     const telegramCalls: string[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 0,
       summary: {
-        day: '2026-08-27',
+        day: "2026-08-27",
         live: true,
         ok: true,
         exitCode: 0,
         paid: [],
-        skipped: [{ address: 'alice@walletofsatoshi.com', reason: 'paid' }],
+        skipped: [{ address: "alice@walletofsatoshi.com", reason: "paid" }],
         failed: [],
         uncertain: [],
         dryRun: [],
@@ -323,18 +361,18 @@ describe('createServer', () => {
     const app = createServer({
       env: {
         ...env,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-08-27T00:43:00.000Z'),
+      now: () => new Date("2026-08-27T00:43:00.000Z"),
       runDay,
       fetchImpl: async (url) => {
-        if (String(url).includes('api.telegram.org')) {
+        if (String(url).includes("api.telegram.org")) {
           telegramCalls.push(String(url));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
     await expect(app.startCatchup()).resolves.toBeNull();
@@ -342,218 +380,282 @@ describe('createServer', () => {
     expect(telegramCalls).toEqual([]);
   });
 
-  it('POST /ping is 401 without Bearer or with a wrong Bearer', async () => {
+  it("POST /ping is 401 without Bearer or with a wrong Bearer", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const missing = await app.fetch(
       pingReq({
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(missing.status).toBe(401);
-    expect(await missing.json()).toEqual({ error: 'Unauthorized' });
+    expect(await missing.json()).toEqual({ error: "Unauthorized" });
     const wrong = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer nope', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer nope",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(wrong.status).toBe(401);
-    expect(await wrong.json()).toEqual({ error: 'Unauthorized' });
+    expect(await wrong.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it('POST /ping is 400 for bad JSON or a missing address', async () => {
+  it("POST /ping is 400 for bad JSON or a missing address", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const badJson = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: 'not-json',
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: "not-json",
       }),
     );
     expect(badJson.status).toBe(400);
-    expect(await badJson.json()).toEqual({ error: 'Expected a JSON body with address' });
+    expect(await badJson.json()).toEqual({
+      error: "Expected a JSON body with address",
+    });
     const missing = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({}),
       }),
     );
     expect(missing.status).toBe(400);
-    expect(await missing.json()).toEqual({ error: 'Expected a JSON body with address' });
+    expect(await missing.json()).toEqual({
+      error: "Expected a JSON body with address",
+    });
   });
 
-  it('POST /ping is 400 without messageId', async () => {
+  it("POST /ping is 400 without messageId", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com' }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ address: "alice@walletofsatoshi.com" }),
       }),
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Expected a JSON body with address and messageId',
+      error: "Expected a JSON body with address and messageId",
     });
   });
 
-  it('POST /ping is 400 for an invalid messageId', async () => {
+  it("POST /ping is 400 for an invalid messageId", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: 'nope' }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: "nope",
+        }),
       }),
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Expected a JSON body with address and messageId',
+      error: "Expected a JSON body with address and messageId",
     });
   });
 
-  it('POST /ping is 400 for an invalid address', async () => {
+  it("POST /ping is 400 for an invalid address", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'not-an-address', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "not-an-address",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Not a valid Lightning Address (expected name@domain)',
+      error: "Not a valid Lightning Address (expected name@domain)",
     });
   });
 
-  it('POST /ping is 200 skipped not_listed when the address is off the roster', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it("POST /ping is 200 skipped not_listed when the address is off the roster", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env,
       fetchImpl: async (url) => {
-        if (String(url).includes('/invoices/eligible')) {
-          return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
+        if (String(url).includes("/invoices/eligible")) {
+          return new Response(
+            JSON.stringify({ eligible: false, status: "none" }),
+            { status: 200 },
+          );
         }
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "bob@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     warn.mockRestore();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+    expect(await res.json()).toEqual({
+      status: "skipped",
+      reason: "not_listed",
+    });
   });
 
-  it('POST /ping is 202 accepted for an unlisted admitted grant at 1 USD', async () => {
+  it("POST /ping is 202 accepted for an unlisted admitted grant at 1 USD", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url) => {
-        if (String(url).includes('/invoices/eligible')) {
-          return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), { status: 200 });
+        if (String(url).includes("/invoices/eligible")) {
+          return new Response(
+            JSON.stringify({ eligible: true, status: "admitted" }),
+            { status: 200 },
+          );
         }
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "bob@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
+    expect(await res.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalled();
     });
     expect(runDay).toHaveBeenCalledWith(
       expect.objectContaining({
         recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+          { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+          { address: "bob@walletofsatoshi.com", amountUsd: 1 },
         ],
-        comment: '21gifts daily',
+        comment: "21gifts daily",
       }),
       expect.objectContaining({
-        onlyAddresses: ['bob@walletofsatoshi.com'],
+        onlyAddresses: ["bob@walletofsatoshi.com"],
         messageIdByAddress: {
-          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
+          "bob@walletofsatoshi.com": PING_MESSAGE_ID,
         },
         checkFundingEligible: false,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
-    expect(pingArgs?.[1]).not.toHaveProperty('bucket');
+    expect(pingArgs?.[1]).not.toHaveProperty("bucket");
     await app.drainPayouts();
     warn.mockRestore();
   });
 
-  it('POST /ping is 202 accepted for an unlisted trial grant at 1 USD', async () => {
+  it("POST /ping is 202 accepted for an unlisted trial grant at 1 USD", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url) => {
-        if (String(url).includes('/invoices/eligible')) {
-          return new Response(JSON.stringify({ eligible: true, status: 'trial' }), { status: 200 });
+        if (String(url).includes("/invoices/eligible")) {
+          return new Response(
+            JSON.stringify({ eligible: true, status: "trial" }),
+            { status: 200 },
+          );
         }
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "bob@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
+    expect(await res.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalled();
     });
     expect(runDay).toHaveBeenCalledWith(
       expect.objectContaining({
         recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+          { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+          { address: "bob@walletofsatoshi.com", amountUsd: 1 },
         ],
       }),
       expect.objectContaining({
-        onlyAddresses: ['bob@walletofsatoshi.com'],
+        onlyAddresses: ["bob@walletofsatoshi.com"],
         messageIdByAddress: {
-          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
+          "bob@walletofsatoshi.com": PING_MESSAGE_ID,
         },
         checkFundingEligible: false,
       }),
@@ -562,220 +664,149 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('POST /ping is 200 skipped not_listed for unlisted pending, none, or rejected grant', async () => {
-    for (const status of ['pending', 'none', 'rejected'] as const) {
+  it("POST /ping is 200 skipped not_listed for unlisted pending, none, or rejected grant", async () => {
+    for (const status of ["pending", "none", "rejected"] as const) {
       const runDay = vi.fn(async () => ({ exitCode: 0 }));
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const warn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
       const app = createServer({
         env,
         runDay,
         fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: false, status }), { status: 200 });
-          }
-          throw new Error('no network');
-        },
-      });
-      const res = await app.fetch(
-        pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
-      expect(runDay).not.toHaveBeenCalled();
-      warn.mockRestore();
-    }
-  });
-
-  it('POST /ping is 200 skipped eligible_unreachable when the unlisted grant lookup fails', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-eligible-unreach-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(
-      seed,
-      `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-      })}\n`,
-    );
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            throw new Error('offline');
-          }
-          throw new Error('no network');
-        },
-      });
-      const res = await app.fetch(
-        pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'eligible_unreachable' });
-      expect(runDay).not.toHaveBeenCalled();
-      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
-      expect(existsSync(join(dir, '2026-08-25.finished'))).toBe(false);
-    } finally {
-      warn.mockRestore();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('POST /ping is 200 skipped paid for an unlisted admitted grant already paid today', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-unlisted-paid-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(
-      seed,
-      `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-      })}\n`,
-    );
-    writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
-      `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
-      })}\n`,
-    );
-    const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
-        runDay,
-        fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), {
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(JSON.stringify({ eligible: false, status }), {
               status: 200,
             });
           }
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "not_listed",
+      });
       expect(runDay).not.toHaveBeenCalled();
-    } finally {
       warn.mockRestore();
-      rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('POST /ping is 200 skipped failed for an unlisted admitted grant already failed today', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-unlisted-failed-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping is 200 skipped eligible_unreachable when the unlisted grant lookup fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-eligible-unreach-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-      })}\n`,
-    );
-    writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
-      `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'failed',
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: true, status: 'trial' }), {
-              status: 200,
-            });
+          if (String(url).includes("/invoices/eligible")) {
+            throw new Error("offline");
           }
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "nobody@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'failed' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "eligible_unreachable",
+      });
       expect(runDay).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, "2026-08-25.jsonl"))).toBe(false);
+      expect(existsSync(join(dir, "2026-08-25.finished"))).toBe(false);
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('POST /ping is 200 skipped uncertain for an unlisted admitted grant with own uncertain row', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-unlisted-uncertain-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping is 200 skipped paid for an unlisted admitted grant already paid today", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-unlisted-paid-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), {
-              status: 200,
-            });
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(
+              JSON.stringify({ eligible: true, status: "admitted" }),
+              {
+                status: 200,
+              },
+            );
           }
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -783,41 +814,181 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 200 skipped payments_disabled for an unlisted admitted grant', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-unlisted-pay-off-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping is 200 skipped failed for an unlisted admitted grant already failed today", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-unlisted-failed-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, "2026-08-25.jsonl"),
+      `${JSON.stringify({
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "failed",
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: async (url) => {
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(
+              JSON.stringify({ eligible: true, status: "trial" }),
+              {
+                status: 200,
+              },
+            );
+          }
+          throw new Error("no network");
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: "skipped", reason: "failed" });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping is 200 skipped uncertain for an unlisted admitted grant with own uncertain row", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-unlisted-uncertain-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, "2026-08-25.jsonl"),
+      `${JSON.stringify({
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: async (url) => {
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(
+              JSON.stringify({ eligible: true, status: "admitted" }),
+              {
+                status: 200,
+              },
+            );
+          }
+          throw new Error("no network");
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "uncertain",
+      });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping is 200 skipped payments_disabled for an unlisted admitted grant", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-unlisted-pay-off-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
         paymentsEnabled: false,
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), {
-              status: 200,
-            });
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(
+              JSON.stringify({ eligible: true, status: "admitted" }),
+              {
+                status: 200,
+              },
+            );
           }
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "payments_disabled",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -825,45 +996,51 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 200 skipped paid when today JSONL already has a paid row', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-paid-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping is 200 skipped paid when today JSONL already has a paid row", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-paid-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -871,49 +1048,58 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 200 skipped uncertain when another live recipient is uncertain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-uncertain-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping is 200 skipped uncertain when another live recipient is uncertain", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-uncertain-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
+        comment: "21gifts daily",
         recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+          { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+          { address: "bob@walletofsatoshi.com", amountUsd: 1 },
         ],
       })}\n`,
     );
-    writeFileSync(join(dir, 'recipients.json'), readFileSync(seed, 'utf8'));
+    writeFileSync(join(dir, "recipients.json"), readFileSync(seed, "utf8"));
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "uncertain",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -921,23 +1107,29 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 202 accepted and queues runDay with onlyAddresses without Origin', async () => {
+  it("POST /ping is 202 accepted and queues runDay with onlyAddresses without Origin", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
+    expect(await res.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalled();
     });
@@ -945,10 +1137,10 @@ describe('createServer', () => {
       expect.anything(),
       expect.objectContaining({
         live: true,
-        day: '2026-08-25',
-        onlyAddresses: ['alice@walletofsatoshi.com'],
+        day: "2026-08-25",
+        onlyAddresses: ["alice@walletofsatoshi.com"],
         messageIdByAddress: {
-          'alice@walletofsatoshi.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          "alice@walletofsatoshi.com": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         },
         checkFundingEligible: false,
       }),
@@ -957,23 +1149,29 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator is 202 and queues the listed amountUsd without messageIdByAddress', async () => {
+  it("POST /ping kind moderator is 202 and queues the listed amountUsd without messageIdByAddress", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "bob@walletofsatoshi.com",
+          kind: "moderator",
+        }),
       }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
+    expect(await res.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalled();
     });
@@ -981,57 +1179,62 @@ describe('createServer', () => {
       expect.objectContaining({
         recipients: [
           {
-            address: 'bob@walletofsatoshi.com',
+            address: "bob@walletofsatoshi.com",
             amountUsd: 7.5,
-            comment: '21gifts moderator',
+            comment: "21gifts moderator",
           },
         ],
-        comment: '21gifts moderator',
+        comment: "21gifts moderator",
       }),
       expect.objectContaining({
         live: true,
-        day: '2026-08-25',
-        onlyAddresses: ['bob@walletofsatoshi.com'],
-        bucket: 'moderator',
+        day: "2026-08-25",
+        onlyAddresses: ["bob@walletofsatoshi.com"],
+        bucket: "moderator",
         checkFundingEligible: false,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
-    expect(pingArgs?.[1]).not.toHaveProperty('messageIdByAddress');
-    expect(pingArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    expect(pingArgs?.[1]).not.toHaveProperty("messageIdByAddress");
+    expect(pingArgs?.[1]).not.toHaveProperty("groupMessageIdByAddress");
     await app.drainPayouts();
     const pingLogs = warn.mock.calls
-      .map((args) => String(args[0] ?? ''))
+      .map((args) => String(args[0] ?? ""))
       .filter((line) => line.includes('"event":"spend.ping"'));
     expect(
       pingLogs.some(
-        (line) => line.includes('"kind":"moderator"') && line.includes('"status":"accepted"'),
+        (line) =>
+          line.includes('"kind":"moderator"') &&
+          line.includes('"status":"accepted"'),
       ),
     ).toBe(true);
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator with groupMessageId is 202 and queues groupMessageIdByAddress', async () => {
+  it("POST /ping kind moderator with groupMessageId is 202 and queues groupMessageIdByAddress", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'bob@walletofsatoshi.com',
-          kind: 'moderator',
+          address: "bob@walletofsatoshi.com",
+          kind: "moderator",
           groupMessageId: GROUP_MESSAGE_ID,
         }),
       }),
     );
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
+    expect(await res.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalled();
     });
@@ -1039,114 +1242,137 @@ describe('createServer', () => {
       expect.objectContaining({
         recipients: [
           {
-            address: 'bob@walletofsatoshi.com',
+            address: "bob@walletofsatoshi.com",
             amountUsd: 7.5,
-            comment: '21gifts moderator',
+            comment: "21gifts moderator",
           },
         ],
-        comment: '21gifts moderator',
+        comment: "21gifts moderator",
       }),
       expect.objectContaining({
         live: true,
-        day: '2026-08-25',
-        onlyAddresses: ['bob@walletofsatoshi.com'],
-        bucket: 'moderator',
+        day: "2026-08-25",
+        onlyAddresses: ["bob@walletofsatoshi.com"],
+        bucket: "moderator",
         groupMessageIdByAddress: {
-          'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
+          "bob@walletofsatoshi.com": GROUP_MESSAGE_ID,
         },
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
-    expect(pingArgs?.[1]).not.toHaveProperty('messageIdByAddress');
+    expect(pingArgs?.[1]).not.toHaveProperty("messageIdByAddress");
     await app.drainPayouts();
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator skips only the moderator JSONL and is independent of the daily file', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator skips only the moderator JSONL and is independent of the daily file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const paidRow = (address: string): string =>
       `${JSON.stringify({
-        ts: 't',
+        ts: "t",
         address,
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`;
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const moderatorPing = (): Promise<Response> =>
         app.fetch(
           pingReq({
-            headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-            body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+            headers: {
+              authorization: "Bearer tok",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              address: "bob@walletofsatoshi.com",
+              kind: "moderator",
+            }),
           }),
         );
       const first = await moderatorPing();
       expect(first.status).toBe(202);
-      expect(await first.json()).toEqual({ status: 'accepted' });
+      expect(await first.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalledTimes(1);
       });
-      writeFileSync(join(dir, '2026-08-25.moderator.jsonl'), paidRow('bob@walletofsatoshi.com'));
+      writeFileSync(
+        join(dir, "2026-08-25.moderator.jsonl"),
+        paidRow("bob@walletofsatoshi.com"),
+      );
       const skipped = await moderatorPing();
       expect(skipped.status).toBe(200);
-      expect(await skipped.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await skipped.json()).toEqual({
+        status: "skipped",
+        reason: "paid",
+      });
       expect(runDay).toHaveBeenCalledTimes(1);
       const dailyAlice = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
           body: JSON.stringify({
-            address: 'alice@walletofsatoshi.com',
+            address: "alice@walletofsatoshi.com",
             messageId: PING_MESSAGE_ID,
           }),
         }),
       );
       expect(dailyAlice.status).toBe(202);
-      expect(await dailyAlice.json()).toEqual({ status: 'accepted' });
+      expect(await dailyAlice.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalledTimes(2);
       });
       writeFileSync(
-        join(dir, '2026-08-25.moderator.jsonl'),
-        `${paidRow('bob@walletofsatoshi.com')}${paidRow('alice@walletofsatoshi.com')}`,
+        join(dir, "2026-08-25.moderator.jsonl"),
+        `${paidRow("bob@walletofsatoshi.com")}${paidRow("alice@walletofsatoshi.com")}`,
       );
       const dailyAliceAgain = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
           body: JSON.stringify({
-            address: 'alice@walletofsatoshi.com',
+            address: "alice@walletofsatoshi.com",
             messageId: PING_MESSAGE_ID,
           }),
         }),
       );
       expect(dailyAliceAgain.status).toBe(202);
-      expect(await dailyAliceAgain.json()).toEqual({ status: 'accepted' });
+      expect(await dailyAliceAgain.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalledTimes(3);
       });
@@ -1157,50 +1383,61 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator does not skip on another address uncertain or *halt*', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-halt-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator does not skip on another address uncertain or *halt*", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-halt-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
       })}\n${JSON.stringify({
-        ts: 't',
-        address: '*halt*',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "*halt*",
+        invoiceId: "",
+        paymentHash: "",
+        status: "uncertain",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ status: 'accepted' });
+      expect(await res.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalled();
       });
@@ -1211,44 +1448,58 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator skips own-address uncertain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-uncertain-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator skips own-address uncertain", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-uncertain-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "uncertain",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1256,44 +1507,55 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator skips paid case-insensitively using the persisted address', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-case-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator skips paid case-insensitively using the persisted address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-case-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'Bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        ts: "t",
+        address: "Bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1301,55 +1563,75 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 200 skipped not_listed when the address is only on the daily roster', async () => {
+  it("POST /ping kind moderator is 200 skipped not_listed when the address is only on the daily roster", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', kind: 'moderator' }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          kind: "moderator",
+        }),
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+    expect(await res.json()).toEqual({
+      status: "skipped",
+      reason: "not_listed",
+    });
     expect(runDay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator matches the roster case-insensitively and pays the listed amount', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-roster-case-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator matches the roster case-insensitively and pays the listed amount", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-roster-case-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'Bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "Bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ status: 'accepted' });
+      expect(await res.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalled();
       });
@@ -1357,15 +1639,15 @@ describe('createServer', () => {
         expect.objectContaining({
           recipients: [
             {
-              address: 'Bob@walletofsatoshi.com',
+              address: "Bob@walletofsatoshi.com",
               amountUsd: 7.5,
-              comment: '21gifts moderator',
+              comment: "21gifts moderator",
             },
           ],
         }),
         expect.objectContaining({
-          onlyAddresses: ['Bob@walletofsatoshi.com'],
-          bucket: 'moderator',
+          onlyAddresses: ["Bob@walletofsatoshi.com"],
+          bucket: "moderator",
         }),
       );
       await app.drainPayouts();
@@ -1375,44 +1657,55 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator uses the persisted JSONL address over the roster-stored address', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-persisted-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator uses the persisted JSONL address over the roster-stored address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-persisted-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'Bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'dry-run',
+        ts: "t",
+        address: "Bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "dry-run",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'BOB@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "BOB@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ status: 'accepted' });
+      expect(await res.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalled();
       });
@@ -1420,15 +1713,15 @@ describe('createServer', () => {
         expect.objectContaining({
           recipients: [
             {
-              address: 'Bob@walletofsatoshi.com',
+              address: "Bob@walletofsatoshi.com",
               amountUsd: 7.5,
-              comment: '21gifts moderator',
+              comment: "21gifts moderator",
             },
           ],
         }),
         expect.objectContaining({
-          onlyAddresses: ['Bob@walletofsatoshi.com'],
-          bucket: 'moderator',
+          onlyAddresses: ["Bob@walletofsatoshi.com"],
+          bucket: "moderator",
         }),
       );
       await app.drainPayouts();
@@ -1438,35 +1731,48 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 500 when the live file is unreadable', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-corrupt-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator is 500 when the live file is unreadable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-corrupt-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
-      writeFileSync(join(dir, 'recipients.json'), '{');
+      writeFileSync(join(dir, "recipients.json"), "{");
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(500);
-      expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
+      expect(await res.json()).toEqual({
+        error: "Recipient list is unreadable",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1474,100 +1780,115 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 400 when messageId is present', async () => {
+  it("POST /ping kind moderator is 400 when messageId is present", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'alice@walletofsatoshi.com',
-          kind: 'moderator',
+          address: "alice@walletofsatoshi.com",
+          kind: "moderator",
           messageId: PING_MESSAGE_ID,
         }),
       }),
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Expected a JSON body with address and kind',
+      error: "Expected a JSON body with address and kind",
     });
   });
 
-  it('POST /ping kind moderator is 400 for a malformed groupMessageId', async () => {
+  it("POST /ping kind moderator is 400 for a malformed groupMessageId", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const invalid = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'bob@walletofsatoshi.com',
-          kind: 'moderator',
-          groupMessageId: 'nope',
+          address: "bob@walletofsatoshi.com",
+          kind: "moderator",
+          groupMessageId: "nope",
         }),
       }),
     );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({
-      error: 'Expected a JSON body with address and kind',
+      error: "Expected a JSON body with address and kind",
     });
     const notString = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'bob@walletofsatoshi.com',
-          kind: 'moderator',
+          address: "bob@walletofsatoshi.com",
+          kind: "moderator",
           groupMessageId: 1,
         }),
       }),
     );
     expect(notString.status).toBe(400);
     expect(await notString.json()).toEqual({
-      error: 'Expected a JSON body with address and kind',
+      error: "Expected a JSON body with address and kind",
     });
   });
 
-  it('POST /ping daily ignores a stray groupMessageId', async () => {
+  it("POST /ping daily ignores a stray groupMessageId", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const omittedKind = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'alice@walletofsatoshi.com',
+          address: "alice@walletofsatoshi.com",
           messageId: PING_MESSAGE_ID,
           groupMessageId: GROUP_MESSAGE_ID,
         }),
       }),
     );
     expect(omittedKind.status).toBe(202);
-    expect(await omittedKind.json()).toEqual({ status: 'accepted' });
+    expect(await omittedKind.json()).toEqual({ status: "accepted" });
     const dailyKind = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
         body: JSON.stringify({
-          address: 'alice@walletofsatoshi.com',
-          kind: 'daily',
+          address: "alice@walletofsatoshi.com",
+          kind: "daily",
           messageId: PING_MESSAGE_ID,
-          groupMessageId: 'nope',
+          groupMessageId: "nope",
         }),
       }),
     );
     expect(dailyKind.status).toBe(202);
-    expect(await dailyKind.json()).toEqual({ status: 'accepted' });
+    expect(await dailyKind.json()).toEqual({ status: "accepted" });
     await vi.waitFor(() => {
       expect(runDay).toHaveBeenCalledTimes(2);
     });
@@ -1576,10 +1897,10 @@ describe('createServer', () => {
       expect.anything(),
       expect.objectContaining({
         live: true,
-        day: '2026-08-25',
-        onlyAddresses: ['alice@walletofsatoshi.com'],
+        day: "2026-08-25",
+        onlyAddresses: ["alice@walletofsatoshi.com"],
         messageIdByAddress: {
-          'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+          "alice@walletofsatoshi.com": PING_MESSAGE_ID,
         },
       }),
     );
@@ -1588,78 +1909,381 @@ describe('createServer', () => {
       expect.anything(),
       expect.objectContaining({
         live: true,
-        day: '2026-08-25',
-        onlyAddresses: ['alice@walletofsatoshi.com'],
+        day: "2026-08-25",
+        onlyAddresses: ["alice@walletofsatoshi.com"],
         messageIdByAddress: {
-          'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+          "alice@walletofsatoshi.com": PING_MESSAGE_ID,
         },
       }),
     );
     const firstArgs = runDay.mock.calls[0] as unknown[] | undefined;
     const secondArgs = runDay.mock.calls[1] as unknown[] | undefined;
-    expect(firstArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
-    expect(secondArgs?.[1]).not.toHaveProperty('groupMessageIdByAddress');
+    expect(firstArgs?.[1]).not.toHaveProperty("groupMessageIdByAddress");
+    expect(secondArgs?.[1]).not.toHaveProperty("groupMessageIdByAddress");
     await app.drainPayouts();
     warn.mockRestore();
   });
 
-  it('POST /ping is 400 for an invalid kind', async () => {
+  it("POST /ping is 400 for an invalid kind", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', kind: 'nope' }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          kind: "nope",
+        }),
       }),
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'Expected a JSON body with address and kind',
+      error: "Expected a JSON body with address and kind",
     });
   });
 
-  it('POST /ping is 200 skipped payments_disabled and does not invoke runDay', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-pay-off-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind welcome is 202 and queues 1 USD Welcome", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          kind: "welcome",
+          messageId: PING_MESSAGE_ID,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: [
+          {
+            address: "alice@walletofsatoshi.com",
+            amountUsd: 1,
+            comment: "Welcome",
+          },
+        ],
+        comment: "Welcome",
+      }),
+      expect.objectContaining({
+        live: true,
+        onlyAddresses: ["alice@walletofsatoshi.com"],
+        bucket: "welcome",
+        messageIdByAddress: {
+          "alice@walletofsatoshi.com": PING_MESSAGE_ID,
+        },
+        checkFundingEligible: false,
+      }),
+    );
+    await app.drainPayouts();
+    warn.mockRestore();
+  });
+
+  it("POST /ping kind welcome skips paid in welcome.jsonl and is independent of the daily file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-welcome-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, "2026-08-25.jsonl"),
+      `${JSON.stringify({
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
+      })}\n`,
+    );
+    const paidRow = `${JSON.stringify({
+      ts: "t",
+      address: "alice@walletofsatoshi.com",
+      invoiceId: "1",
+      paymentHash: "",
+      status: "paid",
+    })}\n`;
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: async () => new Response("{}", { status: 200 }),
+      });
+      const welcomePing = (): Promise<Response> =>
+        app.fetch(
+          pingReq({
+            headers: {
+              authorization: "Bearer tok",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              address: "alice@walletofsatoshi.com",
+              kind: "welcome",
+              messageId: PING_MESSAGE_ID,
+            }),
+          }),
+        );
+      const first = await welcomePing();
+      expect(first.status).toBe(202);
+      expect(await first.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalledTimes(1);
+      });
+      writeFileSync(join(dir, "welcome.jsonl"), paidRow);
+      const skipped = await welcomePing();
+      expect(skipped.status).toBe(200);
+      expect(await skipped.json()).toEqual({
+        status: "skipped",
+        reason: "paid",
+      });
+      expect(runDay).toHaveBeenCalledTimes(1);
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping kind welcome is 400 without a valid messageId", async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error("no network");
+      },
+    });
+    const missing = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          kind: "welcome",
+        }),
+      }),
+    );
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({
+      error: "Expected a JSON body with address and messageId",
+    });
+    const invalid = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          kind: "welcome",
+          messageId: "nope",
+        }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({
+      error: "Expected a JSON body with address and messageId",
+    });
+  });
+
+  it("POST /ping kind welcome is 200 skipped payments_disabled and does not invoke runDay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-welcome-off-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+        paymentsEnabled: false,
+        moderatorPaymentsEnabled: true,
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: async () => new Response("{}", { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            kind: "welcome",
+            messageId: PING_MESSAGE_ID,
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "payments_disabled",
+      });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping kind welcome is 202 when the address is not on the roster", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: async () => {
+        throw new Error("no network");
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "nobody@walletofsatoshi.com",
+          kind: "welcome",
+          messageId: PING_MESSAGE_ID,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipients: [
+          {
+            address: "nobody@walletofsatoshi.com",
+            amountUsd: 1,
+            comment: "Welcome",
+          },
+        ],
+        comment: "Welcome",
+      }),
+      expect.objectContaining({
+        live: true,
+        onlyAddresses: ["nobody@walletofsatoshi.com"],
+        bucket: "welcome",
+        messageIdByAddress: {
+          "nobody@walletofsatoshi.com": PING_MESSAGE_ID,
+        },
+        checkFundingEligible: false,
+      }),
+    );
+    await app.drainPayouts();
+    warn.mockRestore();
+  });
+
+  it("POST /ping is 200 skipped payments_disabled and does not invoke runDay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-pay-off-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         paymentsEnabled: false,
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const daily = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(200);
-      expect(await daily.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(await daily.json()).toEqual({
+        status: "skipped",
+        reason: "payments_disabled",
+      });
       expect(runDay).not.toHaveBeenCalled();
       const moderator = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(moderator.status).toBe(202);
-      expect(await moderator.json()).toEqual({ status: 'accepted' });
+      expect(await moderator.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalled();
       });
@@ -1670,44 +2294,64 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 200 skipped payments_disabled and does not invoke runDay', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-off-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator is 200 skipped payments_disabled and does not invoke runDay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-mod-off-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         moderatorPaymentsEnabled: false,
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
-        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
-        fetchImpl: async () => new Response('{}', { status: 200 }),
+        fetchImpl: async () => new Response("{}", { status: 200 }),
       });
       const moderator = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(moderator.status).toBe(200);
-      expect(await moderator.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(await moderator.json()).toEqual({
+        status: "skipped",
+        reason: "payments_disabled",
+      });
       expect(runDay).not.toHaveBeenCalled();
       const daily = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(202);
-      expect(await daily.json()).toEqual({ status: 'accepted' });
+      expect(await daily.json()).toEqual({ status: "accepted" });
       await vi.waitFor(() => {
         expect(runDay).toHaveBeenCalled();
       });
@@ -1718,48 +2362,69 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping stays not_listed while payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-listed-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping stays not_listed while payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-listed-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
         paymentsEnabled: false,
         moderatorPaymentsEnabled: false,
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async (url) => {
-          if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
+          if (String(url).includes("/invoices/eligible")) {
+            return new Response(
+              JSON.stringify({ eligible: false, status: "none" }),
+              { status: 200 },
+            );
           }
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const daily = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "nobody@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(200);
-      expect(await daily.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(await daily.json()).toEqual({
+        status: "skipped",
+        reason: "not_listed",
+      });
       const moderator = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "nobody@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(moderator.status).toBe(200);
-      expect(await moderator.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(await moderator.json()).toEqual({
+        status: "skipped",
+        reason: "not_listed",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1767,46 +2432,52 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping stays paid while payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-paid-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping stays paid while payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-paid-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
         paymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1814,49 +2485,58 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping stays uncertain while daily payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-uncertain-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping stays uncertain while daily payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-uncertain-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
+        comment: "21gifts daily",
         recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
+          { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+          { address: "bob@walletofsatoshi.com", amountUsd: 1 },
         ],
         paymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "uncertain",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1864,46 +2544,52 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping stays failed while daily payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-failed-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping stays failed while daily payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-failed-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
         paymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.jsonl'),
+      join(dir, "2026-08-25.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'alice@walletofsatoshi.com',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'failed',
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "",
+        paymentHash: "",
+        status: "failed",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'failed' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "failed" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1911,47 +2597,53 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator stays paid while moderator payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-mod-paid-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator stays paid while moderator payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-mod-paid-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         moderatorPaymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'paid',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1959,47 +2651,56 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator stays uncertain while moderator payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-mod-uncertain-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator stays uncertain while moderator payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-mod-uncertain-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         moderatorPaymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '1',
-        paymentHash: '',
-        status: 'uncertain',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "uncertain",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
+      expect(await res.json()).toEqual({
+        status: "skipped",
+        reason: "uncertain",
+      });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -2007,47 +2708,53 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator stays failed while moderator payments are off', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-mod-failed-'));
-    const seed = join(dir, 'seed.json');
+  it("POST /ping kind moderator stays failed while moderator payments are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-off-mod-failed-"));
+    const seed = join(dir, "seed.json");
     writeFileSync(
       seed,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         moderatorPaymentsEnabled: false,
       })}\n`,
     );
     writeFileSync(
-      join(dir, '2026-08-25.moderator.jsonl'),
+      join(dir, "2026-08-25.moderator.jsonl"),
       `${JSON.stringify({
-        ts: 't',
-        address: 'bob@walletofsatoshi.com',
-        invoiceId: '',
-        paymentHash: '',
-        status: 'failed',
+        ts: "t",
+        address: "bob@walletofsatoshi.com",
+        invoiceId: "",
+        paymentHash: "",
+        status: "failed",
       })}\n`,
     );
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const app = createServer({
         env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
-        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
         runDay,
         fetchImpl: async () => {
-          throw new Error('no network');
+          throw new Error("no network");
         },
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+          }),
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'failed' });
+      expect(await res.json()).toEqual({ status: "skipped", reason: "failed" });
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -2055,7 +2762,7 @@ describe('createServer', () => {
     }
   });
 
-  it('drainPayouts waits for an in-flight ping payout', async () => {
+  it("drainPayouts waits for an in-flight ping payout", async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
@@ -2064,17 +2771,23 @@ describe('createServer', () => {
       await blocked;
       return { exitCode: 0 };
     });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...env, SPEND_LIVE: 'true' },
-      now: () => new Date('2026-08-27T12:00:00.000Z'),
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-27T12:00:00.000Z"),
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const res = await app.fetch(
       pingReq({
-        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+        }),
       }),
     );
     expect(res.status).toBe(202);
@@ -2085,54 +2798,54 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('runPayout notifies with a minimal summary when runDay omits summary', async () => {
+  it("runPayout notifies with a minimal summary when runDay omits summary", async () => {
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const app = createServer({
       env: {
         ...env,
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
+    await expect(app.runPayout("2026-08-28")).resolves.toEqual({ exitCode: 0 });
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
-      chat_id: '-1001234567890',
-      text: expect.stringContaining('source=scheduler'),
+      chat_id: "-1001234567890",
+      text: expect.stringContaining("source=scheduler"),
       disable_web_page_preview: true,
     });
   });
 });
 
 function cookieFrom(res: Response): string {
-  return res.headers.get('set-cookie') ?? '';
+  return res.headers.get("set-cookie") ?? "";
 }
 
 function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'spend-sess-'));
+  const dir = mkdtempSync(join(tmpdir(), "spend-sess-"));
   sessionDirs.push(dir);
-  const seed = join(dir, 'seed.json');
+  const seed = join(dir, "seed.json");
   writeFileSync(
     seed,
     `${JSON.stringify({
-      comment: '21gifts daily',
-      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      comment: "21gifts daily",
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
     })}\n`,
   );
   return {
     ...env,
     STATE_DIR: dir,
     RECIPIENTS_FILE: seed,
-    SPEND_DASHBOARD_PASSWORD: 'test-password',
+    SPEND_DASHBOARD_PASSWORD: "test-password",
   };
 }
 
@@ -2152,452 +2865,516 @@ type LiveRosterFile = {
  * @returns Parsed comment and both roster lists.
  */
 function readLiveRoster(stateDir: string): LiveRosterFile {
-  return JSON.parse(readFileSync(join(stateDir, 'recipients.json'), 'utf8')) as LiveRosterFile;
+  return JSON.parse(
+    readFileSync(join(stateDir, "recipients.json"), "utf8"),
+  ) as LiveRosterFile;
 }
 
-async function login(app: ReturnType<typeof createServer>, password = 'test-password'): Promise<string> {
+async function login(
+  app: ReturnType<typeof createServer>,
+  password = "test-password",
+): Promise<string> {
   const res = await app.fetch(
-    req('http://127.0.0.1/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    req("http://127.0.0.1/login", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
       body: `password=${encodeURIComponent(password)}`,
     }),
   );
   expect(res.status).toBe(303);
-  expect(res.headers.get('location')).toBe('/');
+  expect(res.headers.get("location")).toBe("/");
   const setCookie = cookieFrom(res);
   const match = /spend_session=([^;]+)/.exec(setCookie);
-  return match?.[1] ?? '';
+  return match?.[1] ?? "";
 }
 
-describe('recipient editor', () => {
-  it('GET /login redirects to / when a password is configured', async () => {
+describe("recipient editor", () => {
+  it("GET /login redirects to / when a password is configured", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/login'));
+    const res = await app.fetch(req("http://127.0.0.1/login"));
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('GET /login is 503 when the password is unset', async () => {
+  it("GET /login is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/login'));
+    const res = await app.fetch(req("http://127.0.0.1/login"));
     expect(res.status).toBe(503);
-    expect(await res.text()).toContain('Recipient editor is not configured');
+    expect(await res.text()).toContain("Recipient editor is not configured");
   });
 
-  it('POST /login is 503 when the password is unset', async () => {
+  it("POST /login is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'password=x',
+      req("http://127.0.0.1/login", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "password=x",
       }),
     );
     expect(res.status).toBe(503);
   });
 
-  it('rejects a wrong password without a session cookie', async () => {
+  it("rejects a wrong password without a session cookie", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'password=nope',
+      req("http://127.0.0.1/login", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "password=nope",
       }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Invalid password');
+    expect(html).toContain("Invalid password");
     expect(html).toContain('name="password"');
-    expect(cookieFrom(res)).not.toContain('spend_session=v1.');
+    expect(cookieFrom(res)).not.toContain("spend_session=v1.");
   });
 
-  it('logs in from a raw form body without a content-type', async () => {
+  it("logs in from a raw form body without a content-type", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/login', {
-        method: 'POST',
-        body: 'password=test-password',
+      req("http://127.0.0.1/login", {
+        method: "POST",
+        body: "password=test-password",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
-    expect(cookieFrom(res)).toContain('spend_session=v1.');
+    expect(res.headers.get("location")).toBe("/");
+    expect(cookieFrom(res)).toContain("spend_session=v1.");
   });
 
-  it('logs in and lists seeded recipients on GET /', async () => {
+  it("logs in and lists seeded recipients on GET /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
-    expect(token.startsWith('v1.')).toBe(true);
+    expect(token.startsWith("v1.")).toBe(true);
     const res = await app.fetch(
-      req('http://127.0.0.1/', { headers: { cookie: `spend_session=${token}` } }),
+      req("http://127.0.0.1/", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('alice@walletofsatoshi.com');
-    expect(html).toContain('Log out');
-    expect(html).toContain('>21gifts daily</textarea>');
-    expect(html).toContain('Payment comment');
+    expect(html).toContain("alice@walletofsatoshi.com");
+    expect(html).toContain("Log out");
+    expect(html).toContain(">21gifts daily</textarea>");
+    expect(html).toContain("Payment comment");
     expect(html).toContain('aria-label="Daily payments"');
     expect(html).toContain('aria-label="Moderator payments"');
   });
 
-  it('GET /recipients without a cookie redirects to /', async () => {
+  it("GET /recipients without a cookie redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/recipients'));
+    const res = await app.fetch(req("http://127.0.0.1/recipients"));
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('GET /recipients with a cookie redirects to /', async () => {
+  it("GET /recipients with a cookie redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients', { headers: { cookie: `spend_session=${token}` } }),
+      req("http://127.0.0.1/recipients", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('GET /recipients is 503 when the password is unset', async () => {
+  it("GET /recipients is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/recipients'));
+    const res = await app.fetch(req("http://127.0.0.1/recipients"));
     expect(res.status).toBe(503);
   });
 
-  it('rejects a cross-origin mutation', async () => {
+  it("rejects a cross-origin mutation", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
-          origin: 'https://evil.example',
+          origin: "https://evil.example",
         },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(res.status).toBe(403);
   });
 
-  it('unauthenticated POST /recipients/add redirects to /', async () => {
+  it("unauthenticated POST /recipients/add redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('keeps both recipients when two adds overlap', async () => {
+  it("keeps both recipients when two adds overlap", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const post = (address: string): Promise<Response> =>
       app.fetch(
-        req('http://127.0.0.1/recipients/add', {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        req("http://127.0.0.1/recipients/add", {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            cookie,
+          },
           body: `address=${encodeURIComponent(address)}&amountUsd=2`,
         }),
       );
     const [first, second] = await Promise.all([
-      post('bob@walletofsatoshi.com'),
-      post('carol@walletofsatoshi.com'),
+      post("bob@walletofsatoshi.com"),
+      post("carol@walletofsatoshi.com"),
     ]);
     expect(first.status).toBe(303);
-    expect(first.headers.get('location')).toBe('/');
+    expect(first.headers.get("location")).toBe("/");
     expect(second.status).toBe(303);
-    expect(second.headers.get('location')).toBe('/');
-    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(second.headers.get("location")).toBe("/");
+    const listed = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
     const html = await listed.text();
-    expect(html).toContain('bob@walletofsatoshi.com');
-    expect(html).toContain('carol@walletofsatoshi.com');
+    expect(html).toContain("bob@walletofsatoshi.com");
+    expect(html).toContain("carol@walletofsatoshi.com");
   });
 
-  it('adds, updates, and deletes recipients', async () => {
+  it("adds, updates, and deletes recipients", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const add = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(add.status).toBe(303);
-    expect(add.headers.get('location')).toBe('/');
+    expect(add.headers.get("location")).toBe("/");
     const dup = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=9',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=9",
       }),
     );
     expect(dup.status).toBe(200);
-    expect(await dup.text()).toContain('Address already listed');
+    expect(await dup.text()).toContain("Address already listed");
     const badAdd = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=not-an-address&amountUsd=2',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=not-an-address&amountUsd=2",
       }),
     );
-    expect(await badAdd.text()).toContain('Invalid address or amount');
+    expect(await badAdd.text()).toContain("Invalid address or amount");
     const update = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=3",
       }),
     );
     expect(update.status).toBe(303);
-    expect(update.headers.get('location')).toBe('/');
+    expect(update.headers.get("location")).toBe("/");
     const unknown = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=nobody@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=nobody@walletofsatoshi.com&amountUsd=3",
       }),
     );
-    expect(await unknown.text()).toContain('Unknown address');
+    expect(await unknown.text()).toContain("Unknown address");
     const badUsd = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=0',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=0",
       }),
     );
-    expect(await badUsd.text()).toContain('Invalid address or amount');
-    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(await badUsd.text()).toContain("Invalid address or amount");
+    const listed = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
     expect(await listed.text()).toContain('value="3"');
     const del = await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com",
       }),
     );
     expect(del.status).toBe(303);
-    expect(del.headers.get('location')).toBe('/');
+    expect(del.headers.get("location")).toBe("/");
     const delUnknown = await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com",
       }),
     );
-    expect(await delUnknown.text()).toContain('Unknown address');
+    expect(await delUnknown.text()).toContain("Unknown address");
     await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=alice@walletofsatoshi.com',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=alice@walletofsatoshi.com",
       }),
     );
-    const empty = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
-    expect(await empty.text()).toContain('No recipients');
+    const empty = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
+    expect(await empty.text()).toContain("No recipients");
   });
 
-  it('accepts multipart login and sets Secure when forwarded proto is https', async () => {
+  it("accepts multipart login and sets Secure when forwarded proto is https", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const form = new FormData();
-    form.set('password', 'test-password');
+    form.set("password", "test-password");
     const res = await app.fetch(
-      req('https://spend.example/login', {
-        method: 'POST',
-        headers: { 'x-forwarded-proto': 'https' },
+      req("https://spend.example/login", {
+        method: "POST",
+        headers: { "x-forwarded-proto": "https" },
         body: form,
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
-    expect(cookieFrom(res)).toContain('Secure');
+    expect(res.headers.get("location")).toBe("/");
+    expect(cookieFrom(res)).toContain("Secure");
   });
 
-  it('POST /logout clears the cookie', async () => {
+  it("POST /logout clears the cookie", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/logout', { method: 'POST' }));
+    const res = await app.fetch(
+      req("http://127.0.0.1/logout", { method: "POST" }),
+    );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
-    expect(cookieFrom(res)).toContain('Max-Age=0');
+    expect(res.headers.get("location")).toBe("/");
+    expect(cookieFrom(res)).toContain("Max-Age=0");
   });
 
-  it('GET / is 500 when the live file is corrupt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-bad-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("GET / is 500 when the live file is corrupt", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-bad-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_DASHBOARD_PASSWORD: 'test-password',
+        SPEND_DASHBOARD_PASSWORD: "test-password",
       },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
-    writeFileSync(join(dir, 'recipients.json'), '{');
+    writeFileSync(join(dir, "recipients.json"), "{");
     const res = await app.fetch(
-      req('http://127.0.0.1/', { headers: { cookie: `spend_session=${token}` } }),
+      req("http://127.0.0.1/", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
     );
     expect(res.status).toBe(500);
-    expect(await res.text()).toBe('Recipient list is unreadable');
+    expect(await res.text()).toBe("Recipient list is unreadable");
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('payout reloads the live list and skips a corrupt file', async () => {
+  it("payout reloads the live list and skips a corrupt file", async () => {
     const sess = sessionEnv();
-    const runDay = vi.fn(async (cfg: { recipients: Array<{ address: string }> }) => {
-      expect(cfg.recipients.map((r) => r.address)).toEqual(['alice@walletofsatoshi.com', 'bob@walletofsatoshi.com']);
-      return { exitCode: 0 };
-    });
+    const runDay = vi.fn(
+      async (cfg: { recipients: Array<{ address: string }> }) => {
+        expect(cfg.recipients.map((r) => r.address)).toEqual([
+          "alice@walletofsatoshi.com",
+          "bob@walletofsatoshi.com",
+        ]);
+        return { exitCode: 0 };
+      },
+    );
     const app = createServer({
       env: sess,
       runDay,
-      fetchImpl: async () => new Response('{}', { status: 200 }),
+      fetchImpl: async () => new Response("{}", { status: 200 }),
     });
     const token = await login(app);
     await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
         },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
-    writeFileSync(join(sess.STATE_DIR, 'recipients.json'), 'not-json');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
-    expect(JSON.stringify(warn.mock.calls)).toContain('corrupt_recipients');
+    await expect(app.runPayout("2026-08-28")).resolves.toEqual({ exitCode: 0 });
+    writeFileSync(join(sess.STATE_DIR, "recipients.json"), "not-json");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(app.runPayout("2026-08-28")).resolves.toEqual({ exitCode: 4 });
+    expect(JSON.stringify(warn.mock.calls)).toContain("corrupt_recipients");
     warn.mockRestore();
   });
 
-  it('notifies Telegram on corrupt recipients once; catch-up stays silent after runPayout', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
-    writeFileSync(join(dir, 'recipients.json'), '{');
+  it("notifies Telegram on corrupt recipients once; catch-up stays silent after runPayout", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-corrupt-tg-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
+    writeFileSync(join(dir, "recipients.json"), "{");
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-08-28T12:00:00.000Z'),
+      now: () => new Date("2026-08-28T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
+    await expect(app.runPayout("2026-08-28")).resolves.toEqual({ exitCode: 4 });
     expect(runDay).not.toHaveBeenCalled();
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
-      chat_id: '-1001234567890',
-      text: expect.stringContaining('corrupt_recipients'),
+      chat_id: "-1001234567890",
+      text: expect.stringContaining("corrupt_recipients"),
       disable_web_page_preview: true,
     });
-    expect(String((telegramBodies[0] as { text: string }).text)).toContain('exit=4');
-    expect(String((telegramBodies[0] as { text: string }).text)).toContain('ok=false');
+    expect(String((telegramBodies[0] as { text: string }).text)).toContain(
+      "exit=4",
+    );
+    expect(String((telegramBodies[0] as { text: string }).text)).toContain(
+      "ok=false",
+    );
 
     telegramBodies.length = 0;
     await expect(app.startCatchup()).resolves.toBeNull();
@@ -2607,31 +3384,34 @@ describe('recipient editor', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('startCatchup is a no-op when live recipients are corrupt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-corrupt-tg-cu-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
-    writeFileSync(join(dir, 'recipients.json'), '{');
+  it("startCatchup is a no-op when live recipients are corrupt", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-corrupt-tg-cu-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
+    writeFileSync(join(dir, "recipients.json"), "{");
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-08-28T12:00:00.000Z'),
+      now: () => new Date("2026-08-28T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
     await expect(app.startCatchup()).resolves.toBeNull();
@@ -2641,19 +3421,22 @@ describe('recipient editor', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('dedupes ping insufficient_balance Telegram until a paid run', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-cu-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("dedupes ping insufficient_balance Telegram until a paid run", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-tg-dedupe-cu-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const telegramBodies: unknown[] = [];
     const insufficient = {
       exitCode: 3,
       summary: {
-        day: '2026-09-06',
+        day: "2026-09-06",
         live: true,
         ok: false,
         exitCode: 3,
-        reason: 'insufficient_balance',
+        reason: "insufficient_balance",
         needed: 1500,
         available: 10,
         paid: [] as Array<{ address: string; amountSats?: number }>,
@@ -2673,42 +3456,48 @@ describe('recipient editor', () => {
       .mockResolvedValueOnce({
         exitCode: 0,
         summary: {
-          day: '2026-09-06',
+          day: "2026-09-06",
           live: true,
           ok: true,
           exitCode: 0,
-          paid: [{ address: 'a@b.com', amountSats: 1000 }],
+          paid: [{ address: "a@b.com", amountSats: 1000 }],
           skipped: [],
           failed: [],
           uncertain: [],
           dryRun: [],
         },
       });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      now: () => new Date("2026-09-06T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
     const ping = (): Promise<Response> =>
       app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "a@b.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
     expect((await ping()).status).toBe(202);
@@ -2719,7 +3508,7 @@ describe('recipient editor', () => {
       expect(telegramBodies).toHaveLength(1);
     });
     expect(telegramBodies[0]).toMatchObject({
-      text: expect.stringContaining('insufficient_balance'),
+      text: expect.stringContaining("insufficient_balance"),
     });
     expect((await ping()).status).toBe(202);
     await vi.waitFor(() => {
@@ -2734,26 +3523,29 @@ describe('recipient editor', () => {
       expect(telegramBodies).toHaveLength(2);
     });
     expect(telegramBodies[1]).toMatchObject({
-      text: expect.stringContaining('a@b.com'),
+      text: expect.stringContaining("a@b.com"),
     });
     await app.drainPayouts();
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('dedupes scheduler insufficient_balance Telegram across two runPayout calls', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-sched-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("dedupes scheduler insufficient_balance Telegram across two runPayout calls", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-tg-dedupe-sched-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 3,
       summary: {
-        day: '2026-09-06',
+        day: "2026-09-06",
         live: true,
         ok: false,
         exitCode: 3,
-        reason: 'insufficient_balance',
+        reason: "insufficient_balance",
         needed: 1500,
         available: 10,
         paid: [],
@@ -2768,73 +3560,82 @@ describe('recipient editor', () => {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    await expect(app.runPayout("2026-09-06")).resolves.toEqual({ exitCode: 3 });
+    await expect(app.runPayout("2026-09-06")).resolves.toEqual({ exitCode: 3 });
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
-      text: expect.stringContaining('insufficient_balance'),
+      text: expect.stringContaining("insufficient_balance"),
     });
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('dedupes ping usd_to_sats Telegram even when failed mirrors the preflight', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-dedupe-usd-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("dedupes ping usd_to_sats Telegram even when failed mirrors the preflight", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-tg-dedupe-usd-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const telegramBodies: unknown[] = [];
     const runDay = vi.fn(async () => ({
       exitCode: 3,
       summary: {
-        day: '2026-09-06',
+        day: "2026-09-06",
         live: true,
         ok: false,
         exitCode: 3,
-        reason: 'usd_to_sats',
+        reason: "usd_to_sats",
         paid: [],
         skipped: [],
-        failed: [{ address: 'a@b.com' }],
+        failed: [{ address: "a@b.com" }],
         uncertain: [],
         dryRun: [],
       },
     }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
-      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      now: () => new Date("2026-09-06T12:00:00.000Z"),
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
-          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+        if (String(url).includes("api.telegram.org")) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
     const ping = (): Promise<Response> =>
       app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "a@b.com",
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
     expect((await ping()).status).toBe(202);
@@ -2850,27 +3651,30 @@ describe('recipient editor', () => {
     });
     expect(telegramBodies).toHaveLength(1);
     expect(telegramBodies[0]).toMatchObject({
-      text: expect.stringContaining('usd_to_sats'),
+      text: expect.stringContaining("usd_to_sats"),
     });
     await app.drainPayouts();
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('retries Telegram after a failed send; remember only after HTTP ok', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-tg-remember-fail-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("retries Telegram after a failed send; remember only after HTTP ok", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-tg-remember-fail-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const telegramOkBodies: unknown[] = [];
     let telegramAttempts = 0;
     const runDay = vi.fn(async () => ({
       exitCode: 3,
       summary: {
-        day: '2026-09-06',
+        day: "2026-09-06",
         live: true,
         ok: false,
         exitCode: 3,
-        reason: 'insufficient_balance',
+        reason: "insufficient_balance",
         needed: 1500,
         available: 10,
         paid: [],
@@ -2880,556 +3684,646 @@ describe('recipient editor', () => {
         dryRun: [],
       },
     }));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        SPEND_LIVE: 'true',
-        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
-        TELEGRAM_CHAT_ID: '-1001234567890',
+        SPEND_LIVE: "true",
+        TELEGRAM_BOT_TOKEN: "123456:AA-testtoken_notreal_xxxxxx",
+        TELEGRAM_CHAT_ID: "-1001234567890",
       },
       runDay,
       fetchImpl: async (url, init) => {
-        if (String(url).includes('api.telegram.org')) {
+        if (String(url).includes("api.telegram.org")) {
           telegramAttempts += 1;
           if (telegramAttempts === 1) {
-            return new Response('fail', { status: 500 });
+            return new Response("fail", { status: 500 });
           }
-          telegramOkBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          telegramOkBodies.push(JSON.parse(String(init?.body ?? "{}")));
           return new Response('{"ok":true}', { status: 200 });
         }
-        return new Response('{}', { status: 200 });
+        return new Response("{}", { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    await expect(app.runPayout("2026-09-06")).resolves.toEqual({ exitCode: 3 });
     expect(telegramAttempts).toBe(1);
     expect(telegramOkBodies).toHaveLength(0);
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
+    await expect(app.runPayout("2026-09-06")).resolves.toEqual({ exitCode: 3 });
     expect(telegramAttempts).toBe(2);
     expect(telegramOkBodies).toHaveLength(1);
     expect(telegramOkBodies[0]).toMatchObject({
-      text: expect.stringContaining('insufficient_balance'),
+      text: expect.stringContaining("insufficient_balance"),
     });
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('POST /recipients/add is 503 when the password is unset', async () => {
+  it("POST /recipients/add is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/recipients/add', { method: 'POST' }));
+    const res = await app.fetch(
+      req("http://127.0.0.1/recipients/add", { method: "POST" }),
+    );
     expect(res.status).toBe(503);
   });
 
-  it('POST /recipients/update with a blank address is unknown', async () => {
+  it("POST /recipients/update with a blank address is unknown", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
         },
-        body: 'address=&amountUsd=3',
+        body: "address=&amountUsd=3",
       }),
     );
-    expect(await res.text()).toContain('Unknown address');
+    expect(await res.text()).toContain("Unknown address");
   });
 
-  it('POST /recipients/delete with a blank address is unknown', async () => {
+  it("POST /recipients/delete with a blank address is unknown", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
         },
-        body: 'address=',
+        body: "address=",
       }),
     );
-    expect(await res.text()).toContain('Unknown address');
+    expect(await res.text()).toContain("Unknown address");
   });
 
-  it('POST /recipients/comment saves the comment and leaves recipients unchanged', async () => {
+  it("POST /recipients/comment saves the comment and leaves recipients unchanged", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'comment=hello+gifts',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "comment=hello+gifts",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
-    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(res.headers.get("location")).toBe("/");
+    const listed = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
     expect(listed.status).toBe(200);
-    expect(await listed.text()).toContain('>hello gifts</textarea>');
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    expect(await listed.text()).toContain(">hello gifts</textarea>");
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
       recipients: Array<{ address: string; amountUsd: number }>;
     };
-    expect(live.comment).toBe('hello gifts');
-    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
+    expect(live.comment).toBe("hello gifts");
+    expect(live.recipients).toEqual([
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+    ]);
   });
 
-  it('POST /recipients/comment collapses whitespace and newlines', async () => {
+  it("POST /recipients/comment collapses whitespace and newlines", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'comment=%0A%20foo%0Abar%20',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "comment=%0A%20foo%0Abar%20",
       }),
     );
     expect(res.status).toBe(303);
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
     };
-    expect(live.comment).toBe('foo bar');
+    expect(live.comment).toBe("foo bar");
   });
 
-  it('POST /recipients/comment allows an empty comment', async () => {
+  it("POST /recipients/comment allows an empty comment", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'comment=',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "comment=",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    expect(res.headers.get("location")).toBe("/");
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
     };
-    expect(live.comment).toBe('');
+    expect(live.comment).toBe("");
   });
 
-  it('POST /recipients/comment rejects a missing comment field without writing', async () => {
+  it("POST /recipients/comment rejects a missing comment field without writing", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: '',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "",
       }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Invalid comment');
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    expect(html).toContain("Invalid comment");
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
     };
-    expect(live.comment).toBe('21gifts daily');
+    expect(live.comment).toBe("21gifts daily");
   });
 
-  it('POST /recipients/comment rejects a 501-character comment without writing', async () => {
+  it("POST /recipients/comment rejects a 501-character comment without writing", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
-    const tooLong = 'x'.repeat(501);
+    const tooLong = "x".repeat(501);
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
         body: `comment=${tooLong}`,
       }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Invalid comment');
+    expect(html).toContain("Invalid comment");
     expect(html).toContain(tooLong);
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
       recipients: Array<{ address: string }>;
     };
-    expect(live.comment).toBe('21gifts daily');
-    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
+    expect(live.comment).toBe("21gifts daily");
+    expect(live.recipients).toEqual([
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+    ]);
   });
 
-  it('unauthenticated POST /recipients/comment redirects to /', async () => {
+  it("unauthenticated POST /recipients/comment redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'comment=hello+gifts',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "comment=hello+gifts",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('POST /recipients/comment without Origin is 403', async () => {
+  it("POST /recipients/comment without Origin is 403", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const headers = new Headers();
-    headers.set('host', '127.0.0.1');
-    headers.set('content-type', 'application/x-www-form-urlencoded');
-    headers.set('cookie', `spend_session=${token}`);
+    headers.set("host", "127.0.0.1");
+    headers.set("content-type", "application/x-www-form-urlencoded");
+    headers.set("cookie", `spend_session=${token}`);
     const res = await app.fetch(
-      new Request('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
+      new Request("http://127.0.0.1/recipients/comment", {
+        method: "POST",
         headers,
-        body: 'comment=hello+gifts',
+        body: "comment=hello+gifts",
       }),
     );
     expect(res.status).toBe(403);
   });
 
-  it('POST /recipients/comment is 503 when the password is unset', async () => {
+  it("POST /recipients/comment is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'comment=hello+gifts',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "comment=hello+gifts",
       }),
     );
     expect(res.status).toBe(503);
   });
 
-  it('add, update, and delete preserve the file comment', async () => {
+  it("add, update, and delete preserve the file comment", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'comment=hello+gifts',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "comment=hello+gifts",
       }),
     );
     await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(
-      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
-        .comment,
-    ).toBe('hello gifts');
+      (
+        JSON.parse(
+          readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+        ) as { comment: string }
+      ).comment,
+    ).toBe("hello gifts");
     await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=3",
       }),
     );
     expect(
-      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
-        .comment,
-    ).toBe('hello gifts');
+      (
+        JSON.parse(
+          readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+        ) as { comment: string }
+      ).comment,
+    ).toBe("hello gifts");
     await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com",
       }),
     );
-    const live = JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+    const live = JSON.parse(
+      readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8"),
+    ) as {
       comment: string;
       recipients: Array<{ address: string }>;
     };
-    expect(live.comment).toBe('hello gifts');
-    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
+    expect(live.comment).toBe("hello gifts");
+    expect(live.recipients).toEqual([
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+    ]);
   });
 });
 
-describe('moderator editor', () => {
-  it('adds, updates, and deletes moderators', async () => {
+describe("moderator editor", () => {
+  it("adds, updates, and deletes moderators", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const add = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(add.status).toBe(303);
-    expect(add.headers.get('location')).toBe('/');
+    expect(add.headers.get("location")).toBe("/");
     expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
-      { address: 'bob@walletofsatoshi.com', amountUsd: 2 },
+      { address: "bob@walletofsatoshi.com", amountUsd: 2 },
     ]);
     expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
-      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
     ]);
     const dup = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=9',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=9",
       }),
     );
     expect(dup.status).toBe(200);
-    expect(await dup.text()).toContain('Address already listed');
+    expect(await dup.text()).toContain("Address already listed");
     const dupCase = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=Bob@WalletOfSatoshi.com&amountUsd=9',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=Bob@WalletOfSatoshi.com&amountUsd=9",
       }),
     );
     expect(dupCase.status).toBe(200);
-    expect(await dupCase.text()).toContain('Address already listed');
+    expect(await dupCase.text()).toContain("Address already listed");
     expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
-      { address: 'bob@walletofsatoshi.com', amountUsd: 2 },
+      { address: "bob@walletofsatoshi.com", amountUsd: 2 },
     ]);
     const badAdd = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=not-an-address&amountUsd=2',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=not-an-address&amountUsd=2",
       }),
     );
-    expect(await badAdd.text()).toContain('Invalid address or amount');
+    expect(await badAdd.text()).toContain("Invalid address or amount");
     const update = await app.fetch(
-      req('http://127.0.0.1/moderators/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/moderators/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=3",
       }),
     );
     expect(update.status).toBe(303);
-    expect(update.headers.get('location')).toBe('/');
+    expect(update.headers.get("location")).toBe("/");
     expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([
-      { address: 'bob@walletofsatoshi.com', amountUsd: 3 },
+      { address: "bob@walletofsatoshi.com", amountUsd: 3 },
     ]);
     const unknown = await app.fetch(
-      req('http://127.0.0.1/moderators/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=nobody@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/moderators/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=nobody@walletofsatoshi.com&amountUsd=3",
       }),
     );
-    expect(await unknown.text()).toContain('Unknown address');
+    expect(await unknown.text()).toContain("Unknown address");
     const badUsd = await app.fetch(
-      req('http://127.0.0.1/moderators/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=0',
+      req("http://127.0.0.1/moderators/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com&amountUsd=0",
       }),
     );
-    expect(await badUsd.text()).toContain('Invalid address or amount');
-    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    expect(await badUsd.text()).toContain("Invalid address or amount");
+    const listed = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
     expect(await listed.text()).toContain('value="3"');
     const del = await app.fetch(
-      req('http://127.0.0.1/moderators/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com',
+      req("http://127.0.0.1/moderators/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com",
       }),
     );
     expect(del.status).toBe(303);
-    expect(del.headers.get('location')).toBe('/');
+    expect(del.headers.get("location")).toBe("/");
     expect(readLiveRoster(sess.STATE_DIR).moderators).toEqual([]);
     const delUnknown = await app.fetch(
-      req('http://127.0.0.1/moderators/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=bob@walletofsatoshi.com',
+      req("http://127.0.0.1/moderators/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=bob@walletofsatoshi.com",
       }),
     );
-    expect(await delUnknown.text()).toContain('Unknown address');
-    const empty = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
-    expect(await empty.text()).toContain('No moderators');
+    expect(await delUnknown.text()).toContain("Unknown address");
+    const empty = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
+    expect(await empty.text()).toContain("No moderators");
     expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
-      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
     ]);
   });
 
-  it('unauthenticated POST /moderators/add redirects to /', async () => {
+  it("unauthenticated POST /moderators/add redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('rejects a cross-origin moderator mutation', async () => {
+  it("rejects a cross-origin moderator mutation", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
-          origin: 'https://evil.example',
+          origin: "https://evil.example",
         },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=2',
+        body: "address=bob@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(res.status).toBe(403);
   });
 
-  it('POST /moderators/add is 503 when the password is unset', async () => {
+  it("POST /moderators/add is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/moderators/add', { method: 'POST' }));
+    const res = await app.fetch(
+      req("http://127.0.0.1/moderators/add", { method: "POST" }),
+    );
     expect(res.status).toBe(503);
   });
 
-  it('POST /moderators/update with a blank address is unknown', async () => {
+  it("POST /moderators/update with a blank address is unknown", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/update', {
-        method: 'POST',
+      req("http://127.0.0.1/moderators/update", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
         },
-        body: 'address=&amountUsd=3',
+        body: "address=&amountUsd=3",
       }),
     );
-    expect(await res.text()).toContain('Unknown address');
+    expect(await res.text()).toContain("Unknown address");
   });
 
-  it('POST /moderators/delete with a blank address is unknown', async () => {
+  it("POST /moderators/delete with a blank address is unknown", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/delete', {
-        method: 'POST',
+      req("http://127.0.0.1/moderators/delete", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
         },
-        body: 'address=',
+        body: "address=",
       }),
     );
-    expect(await res.text()).toContain('Unknown address');
+    expect(await res.text()).toContain("Unknown address");
   });
 
-  it('editing one roster leaves the other list byte-for-byte unchanged', async () => {
+  it("editing one roster leaves the other list byte-for-byte unchanged", async () => {
     const sess = sessionEnv();
     const recipients = [
-      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-      { address: 'carol@walletofsatoshi.com', amountUsd: 4 },
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+      { address: "carol@walletofsatoshi.com", amountUsd: 4 },
     ];
-    const moderators = [{ address: 'dana@walletofsatoshi.com', amountUsd: 7.5 }];
+    const moderators = [
+      { address: "dana@walletofsatoshi.com", amountUsd: 7.5 },
+    ];
     writeFileSync(
       sess.RECIPIENTS_FILE,
       `${JSON.stringify({
-        comment: '21gifts daily',
+        comment: "21gifts daily",
         recipients,
         moderators,
       })}\n`,
@@ -3437,116 +4331,155 @@ describe('moderator editor', () => {
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
-    const recipientsBytes = JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients);
+    const recipientsBytes = JSON.stringify(
+      readLiveRoster(sess.STATE_DIR).recipients,
+    );
     const addMod = await app.fetch(
-      req('http://127.0.0.1/moderators/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=erin@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/moderators/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=erin@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(addMod.status).toBe(303);
     const afterModAdd = readLiveRoster(sess.STATE_DIR);
     expect(JSON.stringify(afterModAdd.recipients)).toBe(recipientsBytes);
     expect(afterModAdd.moderators).toEqual([
-      { address: 'dana@walletofsatoshi.com', amountUsd: 7.5 },
-      { address: 'erin@walletofsatoshi.com', amountUsd: 2 },
+      { address: "dana@walletofsatoshi.com", amountUsd: 7.5 },
+      { address: "erin@walletofsatoshi.com", amountUsd: 2 },
     ]);
     const updateMod = await app.fetch(
-      req('http://127.0.0.1/moderators/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=dana@walletofsatoshi.com&amountUsd=8',
+      req("http://127.0.0.1/moderators/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=dana@walletofsatoshi.com&amountUsd=8",
       }),
     );
     expect(updateMod.status).toBe(303);
-    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(recipientsBytes);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(
+      recipientsBytes,
+    );
     const delMod = await app.fetch(
-      req('http://127.0.0.1/moderators/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=erin@walletofsatoshi.com',
+      req("http://127.0.0.1/moderators/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=erin@walletofsatoshi.com",
       }),
     );
     expect(delMod.status).toBe(303);
-    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(recipientsBytes);
-    const moderatorsBytes = JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).recipients)).toBe(
+      recipientsBytes,
+    );
+    const moderatorsBytes = JSON.stringify(
+      readLiveRoster(sess.STATE_DIR).moderators,
+    );
     const addRec = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=frank@walletofsatoshi.com&amountUsd=9',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=frank@walletofsatoshi.com&amountUsd=9",
       }),
     );
     expect(addRec.status).toBe(303);
     const afterRecAdd = readLiveRoster(sess.STATE_DIR);
     expect(JSON.stringify(afterRecAdd.moderators)).toBe(moderatorsBytes);
     expect(afterRecAdd.recipients).toEqual([
-      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-      { address: 'carol@walletofsatoshi.com', amountUsd: 4 },
-      { address: 'frank@walletofsatoshi.com', amountUsd: 9 },
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+      { address: "carol@walletofsatoshi.com", amountUsd: 4 },
+      { address: "frank@walletofsatoshi.com", amountUsd: 9 },
     ]);
     const updateRec = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=carol@walletofsatoshi.com&amountUsd=5',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=carol@walletofsatoshi.com&amountUsd=5",
       }),
     );
     expect(updateRec.status).toBe(303);
-    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(moderatorsBytes);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(
+      moderatorsBytes,
+    );
     const delRec = await app.fetch(
-      req('http://127.0.0.1/recipients/delete', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=frank@walletofsatoshi.com',
+      req("http://127.0.0.1/recipients/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=frank@walletofsatoshi.com",
       }),
     );
     expect(delRec.status).toBe(303);
-    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(moderatorsBytes);
+    expect(JSON.stringify(readLiveRoster(sess.STATE_DIR).moderators)).toBe(
+      moderatorsBytes,
+    );
   });
 });
 
-describe('payment switches', () => {
-  it('POST /recipients/payments persists Off and preserves the other flag and both rosters', async () => {
+describe("payment switches", () => {
+  it("POST /recipients/payments persists Off and preserves the other flag and both rosters", async () => {
     const sess = sessionEnv();
     writeFileSync(
       sess.RECIPIENTS_FILE,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'enabled=off',
+      req("http://127.0.0.1/recipients/payments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "enabled=off",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
     const live = readLiveRoster(sess.STATE_DIR);
-    expect(live.comment).toBe('21gifts daily');
-    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
-    expect(live.moderators).toEqual([{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }]);
+    expect(live.comment).toBe("21gifts daily");
+    expect(live.recipients).toEqual([
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+    ]);
+    expect(live.moderators).toEqual([
+      { address: "bob@walletofsatoshi.com", amountUsd: 7.5 },
+    ]);
     expect(live.paymentsEnabled).toBe(false);
     expect(live.moderatorPaymentsEnabled).toBe(true);
-    const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
+    const listed = await app.fetch(
+      req("http://127.0.0.1/", { headers: { cookie } }),
+    );
     const html = await listed.text();
     expect(html).toContain(
       'action="/recipients/payments" aria-label="Daily payments"',
@@ -3556,14 +4489,14 @@ describe('payment switches', () => {
     );
   });
 
-  it('POST /moderators/payments persists Off and leaves daily payments unchanged', async () => {
+  it("POST /moderators/payments persists Off and leaves daily payments unchanged", async () => {
     const sess = sessionEnv();
     writeFileSync(
       sess.RECIPIENTS_FILE,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         paymentsEnabled: false,
         moderatorPaymentsEnabled: true,
       })}\n`,
@@ -3571,29 +4504,39 @@ describe('payment switches', () => {
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'enabled=off',
+      req("http://127.0.0.1/moderators/payments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "enabled=off",
       }),
     );
     expect(res.status).toBe(303);
     const live = readLiveRoster(sess.STATE_DIR);
     expect(live.paymentsEnabled).toBe(false);
     expect(live.moderatorPaymentsEnabled).toBe(false);
-    expect(live.recipients).toEqual([{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }]);
-    expect(live.moderators).toEqual([{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }]);
+    expect(live.recipients).toEqual([
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+    ]);
+    expect(live.moderators).toEqual([
+      { address: "bob@walletofsatoshi.com", amountUsd: 7.5 },
+    ]);
     const on = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'enabled=on',
+      req("http://127.0.0.1/recipients/payments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "enabled=on",
       }),
     );
     expect(on.status).toBe(303);
@@ -3602,166 +4545,177 @@ describe('payment switches', () => {
     expect(afterOn.moderatorPaymentsEnabled).toBe(false);
   });
 
-  it('rejects an invalid enabled value without writing', async () => {
+  it("rejects an invalid enabled value without writing", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
-    const before = readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8');
-    for (const body of ['', 'enabled=', 'enabled=true', 'enabled=yes']) {
+    const before = readFileSync(
+      join(sess.STATE_DIR, "recipients.json"),
+      "utf8",
+    );
+    for (const body of ["", "enabled=", "enabled=true", "enabled=yes"]) {
       const res = await app.fetch(
-        req('http://127.0.0.1/recipients/payments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+        req("http://127.0.0.1/recipients/payments", {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            cookie,
+          },
           body,
         }),
       );
       expect(res.status).toBe(200);
-      expect(await res.text()).toContain('Invalid payments switch');
+      expect(await res.text()).toContain("Invalid payments switch");
     }
     const modInvalid = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'enabled=true',
+      req("http://127.0.0.1/moderators/payments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "enabled=true",
       }),
     );
     expect(modInvalid.status).toBe(200);
-    expect(await modInvalid.text()).toContain('Invalid payments switch');
-    expect(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')).toBe(before);
+    expect(await modInvalid.text()).toContain("Invalid payments switch");
+    expect(readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8")).toBe(
+      before,
+    );
   });
 
-  it('unauthenticated POST /recipients/payments redirects to /', async () => {
+  it("unauthenticated POST /recipients/payments redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'enabled=off',
+      req("http://127.0.0.1/recipients/payments", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "enabled=off",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('unauthenticated POST /moderators/payments redirects to /', async () => {
+  it("unauthenticated POST /moderators/payments redirects to /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'enabled=off',
+      req("http://127.0.0.1/moderators/payments", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "enabled=off",
       }),
     );
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get("location")).toBe("/");
   });
 
-  it('rejects a cross-origin payments switch', async () => {
+  it("rejects a cross-origin payments switch", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const daily = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
-        method: 'POST',
+      req("http://127.0.0.1/recipients/payments", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
-          origin: 'https://evil.example',
+          origin: "https://evil.example",
         },
-        body: 'enabled=off',
+        body: "enabled=off",
       }),
     );
     expect(daily.status).toBe(403);
     const moderator = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
-        method: 'POST',
+      req("http://127.0.0.1/moderators/payments", {
+        method: "POST",
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
+          "content-type": "application/x-www-form-urlencoded",
           cookie: `spend_session=${token}`,
-          origin: 'https://evil.example',
+          origin: "https://evil.example",
         },
-        body: 'enabled=off',
+        body: "enabled=off",
       }),
     );
     expect(moderator.status).toBe(403);
   });
 
-  it('POST payments is 503 when the password is unset', async () => {
+  it("POST payments is 503 when the password is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const daily = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'enabled=off',
+      req("http://127.0.0.1/recipients/payments", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "enabled=off",
       }),
     );
     expect(daily.status).toBe(503);
-    expect(await daily.text()).toContain('Recipient editor is not configured');
+    expect(await daily.text()).toContain("Recipient editor is not configured");
     const moderator = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'enabled=off',
+      req("http://127.0.0.1/moderators/payments", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "enabled=off",
       }),
     );
     expect(moderator.status).toBe(503);
   });
 
-  it('GET /recipients/payments and GET /moderators/payments are 404', async () => {
+  it("GET /recipients/payments and GET /moderators/payments are 404", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const daily = await app.fetch(
-      req('http://127.0.0.1/recipients/payments', {
+      req("http://127.0.0.1/recipients/payments", {
         headers: { cookie: `spend_session=${token}` },
       }),
     );
     expect(daily.status).toBe(404);
     const moderator = await app.fetch(
-      req('http://127.0.0.1/moderators/payments', {
+      req("http://127.0.0.1/moderators/payments", {
         headers: { cookie: `spend_session=${token}` },
       }),
     );
     expect(moderator.status).toBe(404);
   });
 
-  it('add, update, and comment save do not reset a stored false flag', async () => {
+  it("add, update, and comment save do not reset a stored false flag", async () => {
     const sess = sessionEnv();
     writeFileSync(
       sess.RECIPIENTS_FILE,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
         paymentsEnabled: false,
         moderatorPaymentsEnabled: false,
       })}\n`,
@@ -3769,194 +4723,214 @@ describe('payment switches', () => {
     const app = createServer({
       env: sess,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
     const add = await app.fetch(
-      req('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=carol@walletofsatoshi.com&amountUsd=2',
+      req("http://127.0.0.1/recipients/add", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=carol@walletofsatoshi.com&amountUsd=2",
       }),
     );
     expect(add.status).toBe(303);
     expect(readLiveRoster(sess.STATE_DIR).paymentsEnabled).toBe(false);
     expect(readLiveRoster(sess.STATE_DIR).moderatorPaymentsEnabled).toBe(false);
     const update = await app.fetch(
-      req('http://127.0.0.1/recipients/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'address=carol@walletofsatoshi.com&amountUsd=3',
+      req("http://127.0.0.1/recipients/update", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "address=carol@walletofsatoshi.com&amountUsd=3",
       }),
     );
     expect(update.status).toBe(303);
     const comment = await app.fetch(
-      req('http://127.0.0.1/recipients/comment', {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
-        body: 'comment=hello+gifts',
+      req("http://127.0.0.1/recipients/comment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          cookie,
+        },
+        body: "comment=hello+gifts",
       }),
     );
     expect(comment.status).toBe(303);
     const live = readLiveRoster(sess.STATE_DIR);
-    expect(live.comment).toBe('hello gifts');
+    expect(live.comment).toBe("hello gifts");
     expect(live.paymentsEnabled).toBe(false);
     expect(live.moderatorPaymentsEnabled).toBe(false);
     expect(live.recipients).toEqual([
-      { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-      { address: 'carol@walletofsatoshi.com', amountUsd: 3 },
+      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+      { address: "carol@walletofsatoshi.com", amountUsd: 3 },
     ]);
-    expect(live.moderators).toEqual([{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }]);
+    expect(live.moderators).toEqual([
+      { address: "bob@walletofsatoshi.com", amountUsd: 7.5 },
+    ]);
   });
 });
 
-describe('GET /debug/recipients', () => {
-  it('is 503 when DEBUG_TOKEN is unset', async () => {
+describe("GET /debug/recipients", () => {
+  it("is 503 when DEBUG_TOKEN is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    const res = await app.fetch(req("http://127.0.0.1/debug/recipients"));
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'Debug is not configured' });
+    expect(await res.json()).toEqual({ error: "Debug is not configured" });
   });
 
-  it('boots and is 503 when DEBUG_TOKEN is empty', async () => {
+  it("boots and is 503 when DEBUG_TOKEN is empty", async () => {
     const app = createServer({
-      env: { ...env, DEBUG_TOKEN: '' },
+      env: { ...env, DEBUG_TOKEN: "" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    const res = await app.fetch(req("http://127.0.0.1/debug/recipients"));
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'Debug is not configured' });
+    expect(await res.json()).toEqual({ error: "Debug is not configured" });
   });
 
-  it('is 401 when the token is set but the header is missing', async () => {
+  it("is 401 when the token is set but the header is missing", async () => {
     const app = createServer({
-      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/debug/recipients'));
+    const res = await app.fetch(req("http://127.0.0.1/debug/recipients"));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it('is 401 when the token is set but the bearer is wrong', async () => {
+  it("is 401 when the token is set but the bearer is wrong", async () => {
     const app = createServer({
-      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/debug/recipients', { headers: { authorization: 'Bearer nope' } }),
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer nope" },
+      }),
     );
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it('returns the live comment and roster without a session cookie', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it("returns the live comment and roster without a session cookie", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const sess = sessionEnv();
     writeFileSync(
       sess.RECIPIENTS_FILE,
       `${JSON.stringify({
-        comment: '21gifts daily',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+        moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       })}\n`,
     );
     const app = createServer({
-      env: { ...sess, DEBUG_TOKEN: 'secret-debug' },
+      env: { ...sess, DEBUG_TOKEN: "secret-debug" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/debug/recipients', {
-        headers: { authorization: 'Bearer secret-debug' },
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer secret-debug" },
       }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      comment: '21gifts daily',
-      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-      moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      comment: "21gifts daily",
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
       paymentsEnabled: true,
       moderatorPaymentsEnabled: true,
     });
-    const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(logged).toContain('spend.debug.recipients');
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("spend.debug.recipients");
     expect(logged).toContain('"count":1');
-    expect(logged).not.toContain('21gifts daily');
-    expect(logged).not.toContain('secret-debug');
-    expect(logged).not.toContain('alice@walletofsatoshi.com');
+    expect(logged).not.toContain("21gifts daily");
+    expect(logged).not.toContain("secret-debug");
+    expect(logged).not.toContain("alice@walletofsatoshi.com");
     warn.mockRestore();
   });
 
-  it('HEAD with a matching Bearer is 200 with an empty JSON body', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it("HEAD with a matching Bearer is 200 with an empty JSON body", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = createServer({
-      env: { ...sessionEnv(), DEBUG_TOKEN: 'secret-debug' },
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
     const res = await app.fetch(
-      req('http://127.0.0.1/debug/recipients', {
-        method: 'HEAD',
-        headers: { authorization: 'Bearer secret-debug' },
+      req("http://127.0.0.1/debug/recipients", {
+        method: "HEAD",
+        headers: { authorization: "Bearer secret-debug" },
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
-    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("content-type")).toBe(
+      "application/json; charset=utf-8",
+    );
     warn.mockRestore();
   });
 
-  it('is 500 when the live file is corrupt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-debug-bad-'));
-    const seed = join(dir, 'seed.json');
-    writeFileSync(seed, '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n');
+  it("is 500 when the live file is corrupt", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-debug-bad-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      '{"comment":"x","recipients":[{"address":"a@b.com","amountUsd":1}]}\n',
+    );
     const app = createServer({
       env: {
         ...env,
         STATE_DIR: dir,
         RECIPIENTS_FILE: seed,
-        DEBUG_TOKEN: 'secret-debug',
+        DEBUG_TOKEN: "secret-debug",
       },
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    writeFileSync(join(dir, 'recipients.json'), '{');
+    writeFileSync(join(dir, "recipients.json"), "{");
     const res = await app.fetch(
-      req('http://127.0.0.1/debug/recipients', {
-        headers: { authorization: 'Bearer secret-debug' },
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer secret-debug" },
       }),
     );
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
+    expect(await res.json()).toEqual({ error: "Recipient list is unreadable" });
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('HEAD is 503 with an empty body when the token is unset', async () => {
+  it("HEAD is 503 with an empty body when the token is unset", async () => {
     const app = createServer({
       env,
       fetchImpl: async () => {
-        throw new Error('no network');
+        throw new Error("no network");
       },
     });
-    const res = await app.fetch(req('http://127.0.0.1/debug/recipients', { method: 'HEAD' }));
+    const res = await app.fetch(
+      req("http://127.0.0.1/debug/recipients", { method: "HEAD" }),
+    );
     expect(res.status).toBe(503);
-    expect(await res.text()).toBe('');
+    expect(await res.text()).toBe("");
   });
 });
