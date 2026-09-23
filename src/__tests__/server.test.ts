@@ -1774,6 +1774,132 @@ describe('createServer', () => {
     }
   });
 
+  it('POST /ping kind welcome enqueues one retry row on insufficient_balance and does not write welcome.jsonl', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-welcome-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'carol@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            kind: 'welcome',
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+        {
+          address: 'carol@walletofsatoshi.com',
+          bucket: 'welcome',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+        },
+      ]);
+      expect(existsSync(join(dir, 'welcome.jsonl'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays an owed welcome gift at 1 USD with comment Welcome', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-welcome-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 4.5 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'carol@walletofsatoshi.com',
+      bucket: 'welcome',
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.objectContaining({
+            recipients: [
+              {
+                address: 'carol@walletofsatoshi.com',
+                amountUsd: 1,
+                comment: 'Welcome',
+              },
+            ],
+            comment: 'Welcome',
+          }),
+          expect.objectContaining({
+            onlyAddresses: ['carol@walletofsatoshi.com'],
+            bucket: 'welcome',
+            messageIdByAddress: {
+              'carol@walletofsatoshi.com': PING_MESSAGE_ID,
+            },
+            checkFundingEligible: false,
+          }),
+        );
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('POST /ping kind moderator skips only the moderator JSONL and is independent of the daily file', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-'));
     const seed = join(dir, 'seed.json');
