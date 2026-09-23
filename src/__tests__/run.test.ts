@@ -2394,6 +2394,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: 'Welcome',
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     });
