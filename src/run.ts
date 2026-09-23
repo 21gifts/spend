@@ -1,7 +1,7 @@
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
-import { fetchBtcUsdSpot, usdToSats } from './price';
+import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
 import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
@@ -219,6 +219,7 @@ async function runDayLocked(
   const targets = selectTargets(config.recipients, options.onlyAddresses);
 
   const satsByAddress = new Map<string, number>();
+  const amountUsdByAddress = new Map<string, string>();
   for (const recipient of targets) {
     const sats = usdToSats(recipient.amountUsd, rate);
     if (sats === null) {
@@ -236,7 +237,20 @@ async function runDayLocked(
       });
       return finish(3, { reason: 'usd_to_sats' });
     }
+    const formattedUsd = formatAmountUsd(recipient.amountUsd);
+    if (formattedUsd === null) {
+      log('spend.done', {
+        ok: false,
+        reason: 'usd_to_sats',
+        address: recipient.address,
+        amountUsd: recipient.amountUsd,
+        btcUsd: rate,
+      });
+      failed.push({ address: recipient.address, amountUsd: recipient.amountUsd, reason: 'usd_to_sats' });
+      return finish(3, { reason: 'usd_to_sats' });
+    }
     satsByAddress.set(recipient.address, sats);
+    amountUsdByAddress.set(recipient.address, formattedUsd);
   }
 
   const noPasskey = new Set<string>();
@@ -375,7 +389,8 @@ async function runDayLocked(
 
   for (const recipient of targets) {
     const amountSats = satsByAddress.get(recipient.address);
-    if (amountSats === undefined) {
+    const formattedUsd = amountUsdByAddress.get(recipient.address);
+    if (amountSats === undefined || formattedUsd === undefined) {
       throw new Error('satsByAddress incomplete');
     }
     const lineBase = {
@@ -441,10 +456,11 @@ async function runDayLocked(
       invoice =
         invoiceMessageId === undefined
           ? groupMessageId === undefined
-            ? await gifts.createInvoice(recipient.address, amountSats * 1000, comment)
+            ? await gifts.createInvoice(recipient.address, amountSats * 1000, formattedUsd, comment)
             : await gifts.createInvoice(
                 recipient.address,
                 amountSats * 1000,
+                formattedUsd,
                 comment,
                 undefined,
                 groupMessageId,
@@ -452,6 +468,7 @@ async function runDayLocked(
           : await gifts.createInvoice(
               recipient.address,
               amountSats * 1000,
+              formattedUsd,
               comment,
               invoiceMessageId,
             );

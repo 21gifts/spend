@@ -379,6 +379,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: '21gifts daily',
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     });
@@ -438,6 +439,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: '21gifts daily',
     });
     expect(invoiceBody).not.toHaveProperty('groupMessageId');
@@ -498,6 +500,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: '21gifts daily',
       groupMessageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     });
@@ -841,6 +844,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: '21gifts daily',
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     });
@@ -2233,12 +2237,21 @@ describe('runDay', () => {
   });
 
   it('aborts when usd cannot convert to sats', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        invoices += 1;
+        return new Response('{}', { status: 500 });
+      }),
+    );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(
       { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1e-12 }] },
       { live: true, day: '2026-08-23' },
       {
-        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        gifts,
         lndhub: new LndhubClient(target),
         state: memoryState(),
         lock: openLock,
@@ -2247,6 +2260,35 @@ describe('runDay', () => {
     );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
+    expect(invoices).toBe(0);
+  });
+
+  it('aborts when usd cannot format as two-decimal amountUsd', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        invoices += 1;
+        return new Response('{}', { status: 500 });
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1.005 }] },
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(3);
+    expect(invoices).toBe(0);
+    expect(result.summary.reason).toBe('usd_to_sats');
   });
 
   it('treats API 409 as already paid and does not create a second invoice pay', async () => {
@@ -2352,6 +2394,7 @@ describe('runDay', () => {
     expect(invoiceBody).toEqual({
       address: 'a@b.com',
       amountMsat: 1_000_000,
+      amountUsd: '1.00',
       comment: 'Welcome',
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     });

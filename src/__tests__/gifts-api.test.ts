@@ -9,7 +9,7 @@ describe('GiftsApi', () => {
         { status: 200 },
       ),
     );
-    const inv = await api.createInvoice('a@b.com', 1000, 'hi');
+    const inv = await api.createInvoice('a@b.com', 1000, '1.00', 'hi');
     expect(inv.id).toBe('1');
   });
 
@@ -25,7 +25,7 @@ describe('GiftsApi', () => {
         { status: 200 },
       ),
     );
-    const inv = await api.createInvoice('a@b.com', 1000);
+    const inv = await api.createInvoice('a@b.com', 1000, '1.00');
     expect(inv.paymentHash).toBe('aa'.repeat(32));
   });
 
@@ -33,7 +33,7 @@ describe('GiftsApi', () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
       new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }),
     );
-    await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 401 });
+    await expect(api.createInvoice('a@b.com', 1000, '1.00')).rejects.toMatchObject({ status: 401 });
   });
 
   it('maps network failure to status 0', async () => {
@@ -45,7 +45,7 @@ describe('GiftsApi', () => {
 
   it('rejects a malformed 200 body', async () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () => new Response('{}', { status: 200 }));
-    await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
+    await expect(api.createInvoice('a@b.com', 1000, '1.00')).rejects.toMatchObject({ status: 0 });
   });
 
   it('rejects a malformed paymentHash as status 0', async () => {
@@ -55,7 +55,7 @@ describe('GiftsApi', () => {
         { status: 200 },
       ),
     );
-    await expect(api.createInvoice('a@b.com', 1000)).rejects.toMatchObject({ status: 0 });
+    await expect(api.createInvoice('a@b.com', 1000, '1.00')).rejects.toMatchObject({ status: 0 });
   });
 
   it('hasPasskey returns true', async () => {
@@ -298,7 +298,7 @@ describe('GiftsApi', () => {
     });
   });
 
-  it('createInvoice JSON includes messageId when the 4th argument is passed', async () => {
+  it('createInvoice JSON includes messageId when the 5th argument is passed', async () => {
     let sent: unknown;
     const api = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
       sent = JSON.parse(String(init?.body ?? '{}'));
@@ -307,10 +307,11 @@ describe('GiftsApi', () => {
         { status: 200 },
       );
     });
-    await api.createInvoice('a@b.com', 1000, 'hi', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    await api.createInvoice('a@b.com', 1000, '5.00', 'hi', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
     expect(sent).toEqual({
       address: 'a@b.com',
       amountMsat: 1000,
+      amountUsd: '5.00',
       comment: 'hi',
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     });
@@ -325,17 +326,18 @@ describe('GiftsApi', () => {
         { status: 200 },
       );
     });
-    await api.createInvoice('a@b.com', 1000, 'hi');
+    await api.createInvoice('a@b.com', 1000, '5.00', 'hi');
     expect(sent).toEqual({
       address: 'a@b.com',
       amountMsat: 1000,
+      amountUsd: '5.00',
       comment: 'hi',
     });
     expect(sent).not.toHaveProperty('messageId');
     expect(sent).not.toHaveProperty('groupMessageId');
   });
 
-  it('createInvoice JSON includes groupMessageId when the 5th argument is passed', async () => {
+  it('createInvoice JSON includes groupMessageId when the 6th argument is passed', async () => {
     let sent: unknown;
     const api = new GiftsApi('https://api.21.gifts', 'tok', async (_url, init) => {
       sent = JSON.parse(String(init?.body ?? '{}'));
@@ -347,6 +349,7 @@ describe('GiftsApi', () => {
     await api.createInvoice(
       'a@b.com',
       1000,
+      '5.00',
       'hi',
       undefined,
       'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
@@ -354,6 +357,7 @@ describe('GiftsApi', () => {
     expect(sent).toEqual({
       address: 'a@b.com',
       amountMsat: 1000,
+      amountUsd: '5.00',
       comment: 'hi',
       groupMessageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     });
