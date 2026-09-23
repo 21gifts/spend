@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { appendRetryOwed, loadRetryOwed, retryQueuePath } from '../retry-queue';
 import { createServer, parseBindAddr } from '../server';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
@@ -251,6 +252,641 @@ describe('createServer', () => {
     await vi.advanceTimersByTimeAsync(20);
     dryHandle.stop();
     expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it('startRetryCatchup is a no-op and does not invoke runDay when retryCatchupMs is 0 with an owed daily line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ms-zero-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 0,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup is a no-op and does not invoke runDay when SPEND_LIVE is unset with an owed daily line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-not-live-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping enqueues one daily retry row on insufficient_balance and does not write the day JSONL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-enqueue-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+        {
+          address: 'alice@walletofsatoshi.com',
+          bucket: 'daily',
+          messageId: PING_MESSAGE_ID,
+        },
+      ]);
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping enqueues an unlisted admitted retry row at 1 USD on insufficient_balance', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-unlisted-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async (url) => {
+          if (String(url).includes('/invoices/eligible')) {
+            return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), {
+              status: 200,
+            });
+          }
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+        {
+          address: 'bob@walletofsatoshi.com',
+          bucket: 'daily',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+        },
+      ]);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays an unlisted owed daily address once and keeps the retry line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-catchup-unlisted-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'bob@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+    });
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledTimes(1);
+        expect(runDay).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            onlyAddresses: ['bob@walletofsatoshi.com'],
+            messageIdByAddress: {
+              'bob@walletofsatoshi.com': PING_MESSAGE_ID,
+            },
+            checkFundingEligible: false,
+          }),
+        );
+        const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
+        expect(catchupArgs?.[1]).not.toHaveProperty('bucket');
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'bob@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+          },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays a listed owed daily roster row without a synthetic recipient', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-catchup-listed-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            onlyAddresses: ['alice@walletofsatoshi.com'],
+            messageIdByAddress: {
+              'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+            },
+            checkFundingEligible: false,
+          }),
+        );
+        const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
+        expect(catchupArgs?.[1]).not.toHaveProperty('bucket');
+        expect((catchupArgs?.[0] as { recipients: unknown } | undefined)?.recipients).toEqual([
+          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup does not invoke runDay when paymentsEnabled is false and keeps the daily retry line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-pay-off-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        paymentsEnabled: false,
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: PING_MESSAGE_ID,
+          },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays an owed moderator at the roster amountUsd', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-mod-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'bob@walletofsatoshi.com',
+      bucket: 'moderator',
+      groupMessageId: GROUP_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.objectContaining({
+            recipients: [
+              {
+                address: 'bob@walletofsatoshi.com',
+                amountUsd: 7.5,
+                comment: '21gifts moderator',
+              },
+            ],
+            comment: '21gifts moderator',
+          }),
+          expect.objectContaining({
+            onlyAddresses: ['bob@walletofsatoshi.com'],
+            bucket: 'moderator',
+            groupMessageIdByAddress: {
+              'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
+            },
+            checkFundingEligible: false,
+          }),
+        );
+        const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
+        expect(catchupArgs?.[1]).not.toHaveProperty('messageIdByAddress');
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup does not invoke runDay when moderatorPaymentsEnabled is false and keeps the moderator retry line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-mod-off-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+        moderatorPaymentsEnabled: false,
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'bob@walletofsatoshi.com',
+      bucket: 'moderator',
+      groupMessageId: GROUP_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'bob@walletofsatoshi.com',
+            bucket: 'moderator',
+            groupMessageId: GROUP_MESSAGE_ID,
+          },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup does not invoke runDay when the owed daily address is already paid', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-paid-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, '2026-08-25.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'alice@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: 'h',
+        status: 'paid',
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup does not invoke runDay for a previous UTC day retry file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-prev-day-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-27', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-28T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping does not enqueue a retry file when SPEND_LIVE is unset', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-dry-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(existsSync(retryQueuePath(dir, '2026-08-25'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('fails closed on boot when only one Telegram env is set', () => {
@@ -1071,6 +1707,248 @@ describe('createServer', () => {
     expect(pingArgs?.[1]).not.toHaveProperty('messageIdByAddress');
     await app.drainPayouts();
     warn.mockRestore();
+  });
+
+  it('POST /ping kind moderator enqueues one retry row on insufficient_balance without amountUsd and does not write the moderator JSONL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-mod-enqueue-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        moderators: [{ address: 'bob@walletofsatoshi.com', amountUsd: 7.5 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            groupMessageId: GROUP_MESSAGE_ID,
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+        {
+          address: 'bob@walletofsatoshi.com',
+          bucket: 'moderator',
+          groupMessageId: GROUP_MESSAGE_ID,
+        },
+      ]);
+      expect(existsSync(join(dir, '2026-08-25.moderator.jsonl'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping kind welcome enqueues one retry row on insufficient_balance and does not write welcome.jsonl', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-welcome-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: '2026-08-25',
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: 'insufficient_balance',
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'carol@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            kind: 'welcome',
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await app.drainPayouts();
+      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+        {
+          address: 'carol@walletofsatoshi.com',
+          bucket: 'welcome',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+        },
+      ]);
+      expect(existsSync(join(dir, 'welcome.jsonl'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup does not pay an owed row after the UTC day rolls while it waits', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-midnight-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    let calls = 0;
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => {
+          calls += 1;
+          return new Date(calls === 1 ? '2026-08-25T23:59:00.000Z' : '2026-08-26T00:00:01.000Z');
+        },
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await app.drainPayouts();
+        expect(runDay).not.toHaveBeenCalled();
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: PING_MESSAGE_ID,
+          },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays an owed welcome gift at 1 USD with comment Welcome', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-welcome-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 4.5 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'carol@walletofsatoshi.com',
+      bucket: 'welcome',
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.objectContaining({
+            recipients: [
+              {
+                address: 'carol@walletofsatoshi.com',
+                amountUsd: 1,
+                comment: 'Welcome',
+              },
+            ],
+            comment: 'Welcome',
+          }),
+          expect.objectContaining({
+            onlyAddresses: ['carol@walletofsatoshi.com'],
+            bucket: 'welcome',
+            messageIdByAddress: {
+              'carol@walletofsatoshi.com': PING_MESSAGE_ID,
+            },
+            checkFundingEligible: false,
+          }),
+        );
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('POST /ping kind moderator skips only the moderator JSONL and is independent of the daily file', async () => {
