@@ -88,21 +88,26 @@ function giftsFetch(
   };
 }
 
-function memoryState(existing = ''): DayState {
+function memoryState(existing = '', bucket: 'daily' | 'moderator' | 'welcome' = 'daily'): DayState {
   let file = existing;
   let finished = false;
-  return new DayState('/tmp', '2026-08-23', {
-    exists: (path) => (path.endsWith('.finished') ? finished : file !== ''),
-    read: () => file,
-    append: (path, data) => {
-      if (path.endsWith('.finished')) {
-        finished = true;
-        return;
-      }
-      file += data;
+  return new DayState(
+    '/tmp',
+    '2026-08-23',
+    {
+      exists: (path) => (path.endsWith('.finished') ? finished : file !== ''),
+      read: () => file,
+      append: (path, data) => {
+        if (path.endsWith('.finished')) {
+          finished = true;
+          return;
+        }
+        file += data;
+      },
+      mkdir: () => undefined,
     },
-    mkdir: () => undefined,
-  });
+    bucket,
+  );
 }
 
 const openLock = {
@@ -127,7 +132,13 @@ describe('runDay', () => {
     const dry = await runDay(
       { ...config, recipients: [config.recipients[0]!] },
       { live: false, day: '2026-08-23' },
-      { gifts: failing, lndhub: new LndhubClient(target), state, lock: openLock, btcUsd: async () => 100_000 },
+      {
+        gifts: failing,
+        lndhub: new LndhubClient(target),
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
     );
     expect(dry.exitCode).toBe(3);
     expect(state.load().some((row) => row.status === 'uncertain')).toBe(false);
@@ -149,7 +160,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
@@ -185,19 +198,25 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       paid += 1;
       return new Response('{}', { status: 200 });
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: false, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state: memoryState(),
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(paid).toBe(0);
@@ -224,7 +243,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
@@ -280,7 +301,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
@@ -700,7 +723,10 @@ describe('runDay', () => {
       if (href.endsWith('/proof')) {
         return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
       }
-      const body = JSON.parse(String(init?.body ?? '{}')) as { address?: string; amountMsat?: number };
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        address?: string;
+        amountMsat?: number;
+      };
       if (body.address === 'c@d.com') {
         bobInvoices += 1;
       }
@@ -719,7 +745,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
@@ -737,13 +765,17 @@ describe('runDay', () => {
       status: 'uncertain',
     })}\n`;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23', bucket: 'moderator' }, {
-      gifts,
-      lndhub,
-      state: memoryState(prior),
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub,
+        state: memoryState(prior),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.summary.reason).not.toBe('halted');
     expect(result.summary.skipped).toEqual([
@@ -828,7 +860,9 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const paid = `${JSON.stringify({
       ts: 't',
@@ -869,7 +903,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
@@ -882,22 +918,24 @@ describe('runDay', () => {
     })}\n`;
     const state = memoryState(prior);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(invoices).toBe(1);
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'failed' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.isFinished()).toBe(true);
   });
 
@@ -935,13 +973,17 @@ describe('runDay', () => {
     })}\n`;
     const state = memoryState(prior);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(result.summary.reason).not.toBe('insufficient_balance');
@@ -949,9 +991,7 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'failed' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.isFinished()).toBe(true);
   });
 
@@ -993,13 +1033,17 @@ describe('runDay', () => {
         neededInPreflight = parsed.needed;
       }
     });
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(result.summary.reason).toBeUndefined();
@@ -1008,9 +1052,7 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'no_passkey' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
     expect(state.isFinished()).toBe(false);
   });
@@ -1027,7 +1069,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       payCalls += 1;
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
@@ -1061,7 +1105,9 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1121,13 +1167,17 @@ describe('runDay', () => {
         neededInPreflight = parsed.needed;
       }
     });
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(result.summary.reason).toBeUndefined();
@@ -1136,9 +1186,7 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'no_post' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
     expect(state.isFinished()).toBe(false);
   });
@@ -1148,14 +1196,18 @@ describe('runDay', () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
-      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, { 'a@b.com': 'throw' }),
+      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, {
+        'a@b.com': 'throw',
+      }),
     );
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       payCalls += 1;
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
@@ -1189,7 +1241,9 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1250,13 +1304,17 @@ describe('runDay', () => {
         neededInPreflight = parsed.needed;
       }
     });
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(result.summary.reason).toBeUndefined();
@@ -1265,9 +1323,7 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'not_eligible' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
     expect(state.isFinished()).toBe(false);
   });
@@ -1286,7 +1342,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       payCalls += 1;
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
@@ -1310,9 +1368,14 @@ describe('runDay', () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
-      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, { 'a@b.com': false }, {
-        'a@b.com': 'throw',
-      }),
+      giftsFetch(
+        async () => new Response('{}', { status: 500 }),
+        undefined,
+        { 'a@b.com': false },
+        {
+          'a@b.com': 'throw',
+        },
+      ),
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(
@@ -1413,7 +1476,9 @@ describe('runDay', () => {
       if (href.includes('/invoices/posted')) {
         const address = new URL(href).searchParams.get('address') ?? '';
         if (address === 'a@b.com') {
-          return new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), { status: 200 });
+          return new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), {
+            status: 200,
+          });
         }
         return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
       }
@@ -1452,13 +1517,17 @@ describe('runDay', () => {
         neededInPreflight = parsed.needed;
       }
     });
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(result.summary.reason).toBeUndefined();
@@ -1467,9 +1536,7 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
     ]);
-    expect(result.summary.paid).toEqual([
-      expect.objectContaining({ address: 'c@d.com' }),
-    ]);
+    expect(result.summary.paid).toEqual([expect.objectContaining({ address: 'c@d.com' })]);
     expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
     expect(state.isFinished()).toBe(false);
   });
@@ -1522,9 +1589,14 @@ describe('runDay', () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
-      giftsFetch(async () => new Response('{}', { status: 500 }), undefined, { 'a@b.com': false }, {
-        'a@b.com': 'throw',
-      }),
+      giftsFetch(
+        async () => new Response('{}', { status: 500 }),
+        undefined,
+        { 'a@b.com': false },
+        {
+          'a@b.com': 'throw',
+        },
+      ),
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(
@@ -1663,17 +1735,21 @@ describe('runDay', () => {
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts: new GiftsApi(
-        'https://api.21.gifts',
-        'tok',
-        giftsFetch(async () => new Response('{}', { status: 500 })),
-      ),
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi(
+          'https://api.21.gifts',
+          'tok',
+          giftsFetch(async () => new Response('{}', { status: 500 })),
+        ),
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(result.summary).toMatchObject({
@@ -1703,17 +1779,23 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(invoices).toBe(2);
@@ -1740,17 +1822,23 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(state.load()).toEqual([]);
@@ -1765,18 +1853,21 @@ describe('runDay', () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
-      giftsFetch(async () =>
-        new Response(
-          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: 'nope', amountMsat: 1_000_000 }),
-          { status: 200 },
-        ),
+      giftsFetch(
+        async () =>
+          new Response(
+            JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: 'nope', amountMsat: 1_000_000 }),
+            { status: 200 },
+          ),
       ),
     );
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1795,14 +1886,14 @@ describe('runDay', () => {
     expect(result.exitCode).toBe(4);
     expect(state.isFinished()).toBe(true);
     expect(
-      state.load().some(
-        (row) =>
-          (row.address === 'a@b.com' || row.address === '*halt*') && row.status === 'uncertain',
-      ),
+      state
+        .load()
+        .some(
+          (row) =>
+            (row.address === 'a@b.com' || row.address === '*halt*') && row.status === 'uncertain',
+        ),
     ).toBe(true);
-    expect(result.summary.uncertain).toEqual([
-      expect.objectContaining({ address: 'a@b.com' }),
-    ]);
+    expect(result.summary.uncertain).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
   });
 
   it('retries invoice_unreachable on a later live run after a partial success', async () => {
@@ -1835,43 +1926,59 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const first = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const first = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     expect(first.exitCode).toBe(3);
     expect(first.summary.reason).toBeUndefined();
     expect(first.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'invoice_unreachable' }),
     ]);
-    expect(state.load().filter((row) => row.status === 'paid').map((row) => row.address)).toEqual([
-      'c@d.com',
-    ]);
+    expect(
+      state
+        .load()
+        .filter((row) => row.status === 'paid')
+        .map((row) => row.address),
+    ).toEqual(['c@d.com']);
     expect(state.isFinished()).toBe(false);
 
-    const second = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const second = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(second.exitCode).toBe(0);
     expect(state.isFinished()).toBe(true);
-    expect(state.load().filter((row) => row.status === 'paid').map((row) => row.address).sort()).toEqual([
-      'a@b.com',
-      'c@d.com',
-    ]);
+    expect(
+      state
+        .load()
+        .filter((row) => row.status === 'paid')
+        .map((row) => row.address)
+        .sort(),
+    ).toEqual(['a@b.com', 'c@d.com']);
   });
 
   it('treats gifts API 401 as failed and continues to the next recipient', async () => {
@@ -1888,17 +1995,23 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
     expect(invoices).toBe(2);
@@ -1909,7 +2022,9 @@ describe('runDay', () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
-      giftsFetch(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })),
+      giftsFetch(
+        async () => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }),
+      ),
     );
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1951,7 +2066,9 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ payment_preimage: '22'.repeat(32) }), { status: 200 });
     });
@@ -1968,13 +2085,17 @@ describe('runDay', () => {
 
   it('aborts live when the day JSONL is corrupt', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts: new GiftsApi('https://api.21.gifts', 'tok'),
-      lndhub: new LndhubClient(target),
-      state: memoryState('not-json\n'),
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        lndhub: new LndhubClient(target),
+        state: memoryState('not-json\n'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
   });
@@ -1982,13 +2103,17 @@ describe('runDay', () => {
   it('exits 3 when the live day lock is held', async () => {
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts: new GiftsApi('https://api.21.gifts', 'tok'),
-      lndhub: new LndhubClient(target),
-      state,
-      lock: heldLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        lndhub: new LndhubClient(target),
+        state,
+        lock: heldLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(state.isFinished()).toBe(false);
@@ -2006,7 +2131,12 @@ describe('runDay', () => {
         invoices += 1;
         const bodyAmount = invoices === 1 ? 1_000_000 : 500_000;
         return new Response(
-          JSON.stringify({ id: `id${invoices}`, pr: 'lnbc1', paymentHash: HASH, amountMsat: bodyAmount }),
+          JSON.stringify({
+            id: `id${invoices}`,
+            pr: 'lnbc1',
+            paymentHash: HASH,
+            amountMsat: bodyAmount,
+          }),
           { status: 200 },
         );
       }),
@@ -2016,30 +2146,42 @@ describe('runDay', () => {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
       if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
       }
       throw new Error('pay failed');
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const first = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const first = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     expect(first.exitCode).toBe(4);
     expect(invoices).toBe(1);
-    expect(state.load().some((row) => row.address === '*halt*' && row.status === 'uncertain')).toBe(true);
+    expect(state.load().some((row) => row.address === '*halt*' && row.status === 'uncertain')).toBe(
+      true,
+    );
     expect(state.isFinished()).toBe(true);
-    const second = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state,
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const second = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(second.exitCode).toBe(4);
     expect(invoices).toBe(1);
@@ -2062,7 +2204,9 @@ describe('runDay', () => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const prior = `${JSON.stringify({
       ts: 't',
@@ -2072,13 +2216,17 @@ describe('runDay', () => {
       status: 'uncertain',
     })}\n`;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts,
-      lndhub,
-      state: memoryState(prior),
-      lock: openLock,
-      btcUsd: async () => 100_000,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub,
+        state: memoryState(prior),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(4);
     expect(invoices).toBe(0);
@@ -2122,7 +2270,9 @@ describe('runDay', () => {
           if (String(url).endsWith('/auth')) {
             return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
           }
-          return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+          return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+            status: 200,
+          });
         }),
         state,
         lock: openLock,
@@ -2132,22 +2282,116 @@ describe('runDay', () => {
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(invoices).toBe(1);
-    expect(state.load().some((row) => row.status === 'paid' && row.invoiceId === 'already-paid')).toBe(true);
+    expect(
+      state.load().some((row) => row.status === 'paid' && row.invoiceId === 'already-paid'),
+    ).toBe(true);
     expect(state.isFinished()).toBe(true);
   });
 
   it('aborts when Coinbase spot is unreadable', async () => {
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
-      gifts: new GiftsApi('https://api.21.gifts', 'tok'),
-      lndhub: new LndhubClient(target),
-      state,
-      lock: openLock,
-      btcUsd: async () => null,
-    });
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-08-23' },
+      {
+        gifts: new GiftsApi('https://api.21.gifts', 'tok'),
+        lndhub: new LndhubClient(target),
+        state,
+        lock: openLock,
+        btcUsd: async () => null,
+      },
+    );
     warn.mockRestore();
     expect(result.exitCode).toBe(3);
     expect(state.isFinished()).toBe(false);
+  });
+
+  it('welcome bucket invoices 1 USD with comment Welcome when hasMedia', async () => {
+    let invoiceBody: unknown;
+    let eligibleCalls = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async (url, init) => {
+        if (String(url).includes('/invoices/eligible')) {
+          eligibleCalls += 1;
+        }
+        invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      {
+        ...config,
+        comment: 'Welcome',
+        recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }],
+      },
+      {
+        live: false,
+        day: '2026-08-23',
+        bucket: 'welcome',
+        checkFundingEligible: true,
+        messageIdByAddress: { 'a@b.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+      },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(eligibleCalls).toBe(0);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      comment: 'Welcome',
+      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+  });
+
+  it('welcome bucket skips no_media when hasMedia is false', async () => {
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            hasMedia: false,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            postedAt: '2026-08-23T12:00:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error('no invoice');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }] },
+      { live: false, day: '2026-08-23', bucket: 'welcome' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary?.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
   });
 });

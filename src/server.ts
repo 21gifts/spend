@@ -14,11 +14,7 @@ import {
   saveLiveRecipients,
   type LiveRecipients,
 } from './recipients-store';
-import {
-  renderDashboardHtml,
-  renderUnconfiguredHtml,
-  type SpendPanel,
-} from './recipients-html';
+import { renderDashboardHtml, renderUnconfiguredHtml, type SpendPanel } from './recipients-html';
 import { runDay, type RunOptions } from './run';
 import {
   SESSION_TTL_SEC,
@@ -42,6 +38,8 @@ const SERVICE_NAME = 'spend';
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** New-member handbook cap (USD) for an unlisted daily ping with grant admitted or trial. */
 const NEW_MEMBER_DAILY_USD = 1;
+/** Once-per-Lightning-Address lifetime welcome gift (USD). */
+const WELCOME_USD = 1;
 
 /**
  * Parse `BIND_ADDR` (`host:port`).
@@ -49,7 +47,10 @@ const NEW_MEMBER_DAILY_USD = 1;
  * @param raw - Env value.
  * @returns Hostname and port.
  */
-export function parseBindAddr(raw: string | undefined): { hostname: string; port: number } {
+export function parseBindAddr(raw: string | undefined): {
+  hostname: string;
+  port: number;
+} {
   const value = raw === undefined || raw.trim() === '' ? '0.0.0.0:3000' : raw.trim();
   const idx = value.lastIndexOf(':');
   if (idx <= 0 || idx === value.length - 1) {
@@ -223,7 +224,14 @@ function editorPanel(
   error?: string,
 ): SpendPanel {
   return error === undefined
-    ? { kind: 'editor', comment, recipients, moderators, paymentsEnabled, moderatorPaymentsEnabled }
+    ? {
+        kind: 'editor',
+        comment,
+        recipients,
+        moderators,
+        paymentsEnabled,
+        moderatorPaymentsEnabled,
+      }
     : {
         kind: 'editor',
         comment,
@@ -249,10 +257,7 @@ export function createServer(opts: {
   fetchImpl?: typeof fetch;
   now?: () => Date;
   retryCatchupMs?: number;
-  runDay?: (
-    config: SpendConfig,
-    options: RunOptions,
-  ) => Promise<{ exitCode: number }>;
+  runDay?: (config: SpendConfig, options: RunOptions) => Promise<{ exitCode: number }>;
 }): {
   fetch: (req: Request) => Promise<Response>;
   startScheduler: () => { stop: () => void };
@@ -333,9 +338,7 @@ export function createServer(opts: {
     return htmlResponse(renderUnconfiguredHtml(data), 503);
   };
 
-  const loadOrError = ():
-    | { ok: true } & LiveRecipients
-    | { ok: false; response: Response } => {
+  const loadOrError = (): ({ ok: true } & LiveRecipients) | { ok: false; response: Response } => {
     try {
       const liveList = loadLiveRecipients(config.stateDir);
       return {
@@ -350,7 +353,9 @@ export function createServer(opts: {
       if (err instanceof CorruptRecipientsError) {
         return {
           ok: false,
-          response: new Response('Recipient list is unreadable', { status: 500 }),
+          response: new Response('Recipient list is unreadable', {
+            status: 500,
+          }),
         };
       }
       throw err;
@@ -360,7 +365,11 @@ export function createServer(opts: {
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') {
-      const body = JSON.stringify({ status: 'ok', service: SERVICE_NAME, version });
+      const body = JSON.stringify({
+        status: 'ok',
+        service: SERVICE_NAME,
+        version,
+      });
       return new Response(req.method === 'HEAD' ? null : body, {
         status: 200,
         headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -407,7 +416,9 @@ export function createServer(opts: {
           status,
           headers: { 'content-type': 'application/json; charset=utf-8' },
         });
-      if (!bearerMatchesToken(config.giftsApiToken, req.headers.get('authorization') ?? undefined)) {
+      if (
+        !bearerMatchesToken(config.giftsApiToken, req.headers.get('authorization') ?? undefined)
+      ) {
         return json(401, { error: 'Unauthorized' });
       }
       let body: unknown;
@@ -432,28 +443,47 @@ export function createServer(opts: {
         groupMessageId?: unknown;
       };
       const kindRaw = pingBody.kind;
-      if (kindRaw !== undefined && kindRaw !== 'daily' && kindRaw !== 'moderator') {
-        return json(400, { error: 'Expected a JSON body with address and kind' });
+      if (
+        kindRaw !== undefined &&
+        kindRaw !== 'daily' &&
+        kindRaw !== 'moderator' &&
+        kindRaw !== 'welcome'
+      ) {
+        return json(400, {
+          error: 'Expected a JSON body with address and kind',
+        });
       }
-      const kind: 'daily' | 'moderator' = kindRaw === 'moderator' ? 'moderator' : 'daily';
+      const kind: 'daily' | 'moderator' | 'welcome' =
+        kindRaw === 'moderator' ? 'moderator' : kindRaw === 'welcome' ? 'welcome' : 'daily';
       let groupMessageId: string | undefined;
       if (kind === 'moderator') {
         if ('messageId' in pingBody) {
-          return json(400, { error: 'Expected a JSON body with address and kind' });
+          return json(400, {
+            error: 'Expected a JSON body with address and kind',
+          });
         }
         const rawGroupMessageId = pingBody.groupMessageId;
         if (rawGroupMessageId !== undefined) {
           if (typeof rawGroupMessageId !== 'string' || !MESSAGE_ID_RE.test(rawGroupMessageId)) {
-            return json(400, { error: 'Expected a JSON body with address and kind' });
+            return json(400, {
+              error: 'Expected a JSON body with address and kind',
+            });
           }
           groupMessageId = rawGroupMessageId;
         }
-      } else if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
-        return json(400, { error: 'Expected a JSON body with address and messageId' });
+      } else if (
+        kind === 'daily' &&
+        (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId))
+      ) {
+        return json(400, {
+          error: 'Expected a JSON body with address and messageId',
+        });
       }
       const parsed = parseLightningAddress(pingBody.address);
       if (parsed === null) {
-        return json(400, { error: 'Not a valid Lightning Address (expected name@domain)' });
+        return json(400, {
+          error: 'Not a valid Lightning Address (expected name@domain)',
+        });
       }
       const logPing = (status: string, reason?: string): void => {
         console.warn(
@@ -463,12 +493,87 @@ export function createServer(opts: {
             address: parsed,
             status,
             ...(reason !== undefined ? { reason } : {}),
-            ...(kind === 'moderator' ? { kind: 'moderator' } : {}),
+            ...(kind === 'daily' ? {} : { kind }),
           }),
         );
       };
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
+      if (kind === 'welcome') {
+        if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
+          return json(400, {
+            error: 'Expected a JSON body with address and messageId',
+          });
+        }
+        const messageId = pingBody.messageId;
+        let liveList: LiveRecipients;
+        try {
+          liveList = loadLiveRecipients(config.stateDir);
+        } catch (err) {
+          if (err instanceof CorruptRecipientsError) {
+            return json(500, { error: 'Recipient list is unreadable' });
+          }
+          throw err;
+        }
+        let storedAddress = parsed;
+        let rows;
+        try {
+          rows = new DayState(config.stateDir, day, undefined, 'welcome').load();
+        } catch (err) {
+          if (!(err instanceof CorruptStateError)) {
+            throw err;
+          }
+          rows = undefined;
+        }
+        if (rows !== undefined) {
+          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
+          if (persisted !== undefined) {
+            storedAddress = persisted.address;
+          }
+          const block = dayBlock(rows, storedAddress);
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
+          }
+          if (block === 'uncertain') {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
+          }
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
+          }
+        }
+        if (liveList.paymentsEnabled === false) {
+          logPing('skipped', 'payments_disabled');
+          return json(200, { status: 'skipped', reason: 'payments_disabled' });
+        }
+        logPing('accepted');
+        void payout(day, 'ping', [storedAddress], messageId, {
+          bucket: 'welcome',
+          recipients: [
+            {
+              address: storedAddress,
+              amountUsd: WELCOME_USD,
+              comment: 'Welcome',
+            },
+          ],
+          comment: 'Welcome',
+        }).catch((err: unknown) => {
+          const error = err instanceof Error ? err.message : 'ping';
+          console.warn(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'spend.ping',
+              address: storedAddress,
+              status: 'error',
+              error,
+              kind: 'welcome',
+            }),
+          );
+        });
+        return json(202, { status: 'accepted' });
+      }
       if (kind === 'moderator') {
         let liveList: LiveRecipients;
         try {
@@ -497,9 +602,7 @@ export function createServer(opts: {
           rows = undefined;
         }
         if (rows !== undefined) {
-          const persisted = rows.find(
-            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
-          );
+          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
           if (persisted !== undefined) {
             storedAddress = persisted.address;
           }
@@ -573,7 +676,10 @@ export function createServer(opts: {
           ).fundingGrantStatus(parsed);
         } catch {
           logPing('skipped', 'eligible_unreachable');
-          return json(200, { status: 'skipped', reason: 'eligible_unreachable' });
+          return json(200, {
+            status: 'skipped',
+            reason: 'eligible_unreachable',
+          });
         }
         if (grant !== 'admitted' && grant !== 'trial') {
           logPing('skipped', 'not_listed');
@@ -620,7 +726,9 @@ export function createServer(opts: {
       const queued =
         extraRecipients === undefined
           ? payout(day, 'ping', [storedAddress], messageId)
-          : payout(day, 'ping', [storedAddress], messageId, { recipients: extraRecipients });
+          : payout(day, 'ping', [storedAddress], messageId, {
+              recipients: extraRecipients,
+            });
       void queued.catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
         console.warn(
@@ -708,9 +816,7 @@ export function createServer(opts: {
     const paymentsMatch = PAYMENTS_SWITCH.exec(url.pathname);
     if (
       req.method === 'POST' &&
-      (rosterMatch !== null ||
-        paymentsMatch !== null ||
-        url.pathname === '/recipients/comment')
+      (rosterMatch !== null || paymentsMatch !== null || url.pathname === '/recipients/comment')
     ) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
@@ -824,7 +930,7 @@ export function createServer(opts: {
     onlyAddresses?: string[],
     messageId?: string,
     extras?: {
-      bucket?: 'moderator';
+      bucket?: 'moderator' | 'welcome';
       recipients?: Recipient[];
       comment?: string;
       groupMessageId?: string;
@@ -832,11 +938,12 @@ export function createServer(opts: {
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
       const moderator = extras?.bucket === 'moderator';
+      const welcome = extras?.bucket === 'welcome';
       const groupMessageId = extras?.groupMessageId;
       let liveList: { comment: string; recipients: Recipient[] };
-      if (moderator) {
+      if (moderator || welcome) {
         liveList = {
-          comment: extras?.comment ?? '21gifts moderator',
+          comment: extras?.comment ?? (welcome ? 'Welcome' : '21gifts moderator'),
           recipients: extras?.recipients ?? [],
         };
       } else {
@@ -852,7 +959,10 @@ export function createServer(opts: {
                 reason: 'corrupt_recipients',
               }),
             );
-            const summary = { ...minimalRunSummary(day, live, 4), reason: 'corrupt_recipients' };
+            const summary = {
+              ...minimalRunSummary(day, live, 4),
+              reason: 'corrupt_recipients',
+            };
             if (telegramTarget !== null && notifyLog.allow(source, summary)) {
               const sent = await notifyPayout({
                 target: telegramTarget,
@@ -900,15 +1010,19 @@ export function createServer(opts: {
                 messageIdByAddress: Object.fromEntries(
                   onlyAddresses.map((address) => [address.toLowerCase(), messageId]),
                 ),
+                ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
       if (source === 'ping') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
-        { ...config, recipients: liveList.recipients, comment: liveList.comment },
+        {
+          ...config,
+          recipients: liveList.recipients,
+          comment: liveList.comment,
+        },
         runOptions,
       );
       const withSummary = result as { exitCode: number; summary?: RunSummary };
-      const summary =
-        withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
+      const summary = withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
       if (telegramTarget !== null && notifyLog.allow(source, summary)) {
         const sent = await notifyPayout({
           target: telegramTarget,
@@ -933,7 +1047,9 @@ export function createServer(opts: {
    *
    * @returns Handle whose `stop` does nothing.
    */
-  const startRetryCatchup = (): { stop: () => void } => ({ stop: () => undefined });
+  const startRetryCatchup = (): { stop: () => void } => ({
+    stop: () => undefined,
+  });
 
   return {
     fetch: fetchHandler,
@@ -963,7 +1079,12 @@ if (meta.main === true) {
       }
     ).Bun;
     if (bun === undefined) {
-      console.error(JSON.stringify({ event: 'spend.config', error: 'Bun.serve is required' }));
+      console.error(
+        JSON.stringify({
+          event: 'spend.config',
+          error: 'Bun.serve is required',
+        }),
+      );
       process.exit(2);
     }
     bun.serve({
