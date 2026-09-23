@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_BTC_USD_SPOT_URL, btcUsdSpotUrl, fetchBtcUsdSpot, usdToSats } from '../price';
+import { DEFAULT_BTC_USD_SPOT_URL, btcUsdSpotUrl, fetchBtcUsdSpot, formatAmountUsd, usdToSats } from '../price';
 
 describe('btcUsdSpotUrl', () => {
   it('defaults to Coinbase and honours BTC_USD_SPOT_URL', () => {
@@ -40,5 +40,17 @@ describe('usdToSats', () => {
     expect(usdToSats(0, 100_000)).toBeNull();
     expect(usdToSats(1, 0)).toBeNull();
     expect(usdToSats(1, NaN)).toBeNull();
+  });
+});
+
+describe('formatAmountUsd', () => {
+  it('formats two-decimal USD strings from roster amounts', () => {
+    expect(formatAmountUsd(5)).toBe('5.00');
+    expect(formatAmountUsd(0.5)).toBe('0.50');
+  });
+
+  it('returns null for amounts that are not two-decimal positive USD', () => {
+    expect(formatAmountUsd(1.005)).toBeNull();
+    expect(formatAmountUsd(1e-12)).toBeNull();
   });
 });

@@ -33,6 +33,38 @@ export function usdToSats(usd: number, btcUsd: number): number | null {
 }
 
 /**
+ * Format a roster USD amount as a two-decimal string.
+ *
+ * Cents come from the decimal text (`toString`), not from binary `* 100`
+ * rounding. Scientific notation and more than two fractional digits are rejected.
+ *
+ * @param usd - Gift amount in USD.
+ * @returns Two-decimal string such as `"5.00"`, or `null` when unusable.
+ */
+export function formatAmountUsd(usd: number): string | null {
+  if (!Number.isFinite(usd) || usd <= 0) {
+    return null;
+  }
+  const text = usd.toString();
+  if (text.includes('e') || text.includes('E')) {
+    return null;
+  }
+  const dot = text.indexOf('.');
+  const whole = dot === -1 ? text : text.slice(0, dot);
+  const frac = dot === -1 ? '' : text.slice(dot + 1);
+  if (frac.length > 2) {
+    return null;
+  }
+  const cents = Number.parseInt(whole, 10) * 100 + Number.parseInt((frac + '00').slice(0, 2), 10);
+  if (!Number.isInteger(cents) || cents < 1) {
+    return null;
+  }
+  const dollars = Math.trunc(cents / 100);
+  const remainder = cents % 100;
+  return `${dollars}.${remainder.toString().padStart(2, '0')}`;
+}
+
+/**
  * Coinbase BTC-USD spot price.
  *
  * @param fetchImpl - Injected fetch (tests).
