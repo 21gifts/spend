@@ -177,6 +177,7 @@ function formatSwissNumber(n: number): string {
 const SKIP_REASON_DISPLAY: Readonly<Record<string, string>> = {
   no_passkey: 'kein Passwort',
   no_post: 'hat sich nicht vorgestellt',
+  no_media: 'kein Foto oder Video',
   not_eligible: 'nicht berechtigt',
 };
 

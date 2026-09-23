@@ -19,6 +19,9 @@ export class GiftsApiError extends Error {
 
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Grant `status` from `GET /invoices/eligible`. */
+export type FundingGrantStatus = 'none' | 'pending' | 'trial' | 'admitted' | 'rejected';
+
 /**
  * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `GET /invoices/eligible`,
  * `POST /invoices`, and `POST /invoices/proof`.
@@ -47,21 +50,23 @@ export class GiftsApi {
   }
 
   /**
-   * Live forum-post flag, post UUID, and post timestamp for this Lightning Address.
+   * Live forum-post flag, media flag, post UUID, and post timestamp for this Lightning Address.
    *
    * @param address - LUD-16 address.
-   * @returns `{ hasPosted, messageId, postedAt }` — `messageId` is a UUID or `null`;
+   * @returns `{ hasPosted, hasMedia, messageId, postedAt }` — `hasMedia` is boolean
+   *   (missing or non-true JSON → `false`); `messageId` is a UUID or `null`;
    *   `postedAt` is an ISO-8601 instant or `null` when missing or unparseable.
    */
   async hasPosted(
     address: string,
-  ): Promise<{ hasPosted: boolean; messageId: string | null; postedAt: string | null }> {
+  ): Promise<{ hasPosted: boolean; hasMedia: boolean; messageId: string | null; postedAt: string | null }> {
     const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
     const has = json['hasPosted'];
     if (typeof has !== 'boolean') {
       throw new GiftsApiError(0, 'malformed posted response');
     }
+    const hasMedia = json['hasMedia'] === true;
     const rawId = json['messageId'];
     const messageId = typeof rawId === 'string' && MESSAGE_ID_RE.test(rawId) ? rawId : null;
     const rawAt = json['postedAt'];
@@ -69,7 +74,7 @@ export class GiftsApi {
     if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
       postedAt = new Date(rawAt).toISOString();
     }
-    return { hasPosted: has, messageId, postedAt };
+    return { hasPosted: has, hasMedia, messageId, postedAt };
   }
 
   /**
@@ -86,6 +91,28 @@ export class GiftsApi {
       throw new GiftsApiError(0, 'malformed eligible response');
     }
     return eligible;
+  }
+
+  /**
+   * Funding-grant status 21.gifts reports for this Lightning Address.
+   *
+   * @param address - LUD-16 address.
+   * @returns Grant `status` from `GET /invoices/eligible`.
+   */
+  async fundingGrantStatus(address: string): Promise<FundingGrantStatus> {
+    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
+    const json = await this.getJson(path);
+    const status = json['status'];
+    if (
+      status !== 'none' &&
+      status !== 'pending' &&
+      status !== 'trial' &&
+      status !== 'admitted' &&
+      status !== 'rejected'
+    ) {
+      throw new GiftsApiError(0, 'malformed eligible status');
+    }
+    return status;
   }
 
   /**

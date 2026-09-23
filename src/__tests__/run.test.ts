@@ -31,10 +31,11 @@ if (target === null) {
 
 /**
  * Answer GET /invoices/passkey with `{ hasPasskey: true }`, GET
- * /invoices/posted with `{ hasPosted: true }`, and GET /invoices/eligible
- * with `{ eligible: true }` by default so existing POST /invoices mocks
- * keep working. Override via `passkeyByAddress` / `postedByAddress` /
- * `eligibleByAddress` when needed.
+ * /invoices/posted with `{ hasPosted: true, hasMedia: true }` when posted,
+ * `{ hasPosted: false }` when `postedByAddress[address] === false`, and GET
+ * /invoices/eligible with `{ eligible: true }` by default so existing POST
+ * /invoices mocks keep working. Override via `passkeyByAddress` /
+ * `postedByAddress` / `eligibleByAddress` when needed.
  */
 function giftsFetch(
   postHandler: (url: string, init?: RequestInit) => Promise<Response>,
@@ -66,7 +67,10 @@ function giftsFetch(
         return new Response(JSON.stringify({ error: 'down' }), { status: override });
       }
       const hasPosted = override === undefined ? true : override;
-      return new Response(JSON.stringify({ hasPosted }), { status: 200 });
+      return new Response(
+        JSON.stringify(hasPosted ? { hasPosted: true, hasMedia: true } : { hasPosted: false }),
+        { status: 200 },
+      );
     }
     if (href.includes('/invoices/eligible')) {
       const address = new URL(href).searchParams.get('address') ?? '';
@@ -318,6 +322,7 @@ describe('runDay', () => {
         return new Response(
           JSON.stringify({
             hasPosted: true,
+            hasMedia: true,
             messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
           }),
           { status: 200 },
@@ -767,6 +772,7 @@ describe('runDay', () => {
         return new Response(
           JSON.stringify({
             hasPosted: true,
+            hasMedia: true,
             messageId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
           }),
           { status: 200 },
@@ -1332,6 +1338,190 @@ describe('runDay', () => {
     ]);
   });
 
+  it('skips no_media without calling eligible when hasPosted is true and hasMedia is false', async () => {
+    const state = memoryState();
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), { status: 200 });
+      }
+      return new Response('{}', { status: 500 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).not.toBe('eligible_unreachable');
+    expect(result.summary.reason).not.toBe('posted_unreachable');
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('skips no_media when hasMedia is missing and does not abort as posted_unreachable', async () => {
+    const state = memoryState();
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
+      }
+      return new Response('{}', { status: 500 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state,
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).not.toBe('posted_unreachable');
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+    expect(state.load()).toEqual([]);
+  });
+
+  it('skips no_media recipients, excludes them from needed, and leaves the day unfinished', async () => {
+    let invoices = 0;
+    let neededInPreflight: number | undefined;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        const address = new URL(href).searchParams.get('address') ?? '';
+        if (address === 'a@b.com') {
+          return new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
+      if (href.endsWith('/proof')) {
+        return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+      }
+      invoices += 1;
+      const body = JSON.parse(String(init?.body ?? '{}')) as { amountMsat?: number };
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1',
+          paymentHash: HASH,
+          amountMsat: body.amountMsat ?? 500_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 600 } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation((msg) => {
+      const line = typeof msg === 'string' ? msg : '';
+      if (line.includes('"reason":"insufficient_balance"')) {
+        const parsed = JSON.parse(line) as { needed?: number };
+        neededInPreflight = parsed.needed;
+      }
+    });
+    const result = await runDay(config, { live: true, day: '2026-08-23' }, {
+      gifts,
+      lndhub,
+      state,
+      lock: openLock,
+      btcUsd: async () => 100_000,
+    });
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).toBeUndefined();
+    expect(neededInPreflight).toBeUndefined();
+    expect(invoices).toBe(1);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+    expect(result.summary.paid).toEqual([
+      expect.objectContaining({ address: 'c@d.com' }),
+    ]);
+    expect(state.load().some((row) => row.address === 'a@b.com')).toBe(false);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('daily dry-run proceeds when hasPosted and hasMedia are true', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 });
+      }
+      invoices += 1;
+      const body = JSON.parse(String(init?.body ?? '{}')) as { amountMsat?: number };
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1',
+          paymentHash: HASH,
+          amountMsat: body.amountMsat ?? 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoices).toBe(1);
+    expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    expect(result.summary.skipped.some((row) => row.reason === 'no_media')).toBe(false);
+  });
+
   it('moderator bucket skips no_post without calling eligible when hasPosted is false', async () => {
     const gifts = new GiftsApi(
       'https://api.21.gifts',
@@ -1358,6 +1548,57 @@ describe('runDay', () => {
     expect(result.summary.skipped).toEqual([
       expect.objectContaining({ address: 'a@b.com', reason: 'no_post' }),
     ]);
+  });
+
+  it('moderator bucket dry-runs when postedAt matches even if hasMedia is false', async () => {
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            hasMedia: false,
+            postedAt: '2026-08-23T12:00:00.000Z',
+          }),
+          { status: 200 },
+        );
+      }
+      invoices += 1;
+      const body = JSON.parse(String(init?.body ?? '{}')) as { amountMsat?: number };
+      return new Response(
+        JSON.stringify({
+          id: 'id1',
+          pr: 'lnbc1',
+          paymentHash: HASH,
+          amountMsat: body.amountMsat ?? 1_000_000,
+        }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: false, day: '2026-08-23', bucket: 'moderator' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoices).toBe(1);
+    expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    expect(result.summary.skipped.some((row) => row.reason === 'no_media')).toBe(false);
   });
 
   it('skips the eligible lookup when checkFundingEligible is false', async () => {

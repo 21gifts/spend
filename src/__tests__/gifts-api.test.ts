@@ -134,6 +134,39 @@ describe('GiftsApi', () => {
     });
   });
 
+  it('fundingGrantStatus returns admitted', async () => {
+    let seenUrl = '';
+    let auth = '';
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      seenUrl = String(url);
+      auth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), { status: 200 });
+    });
+    await expect(api.fundingGrantStatus('a@b.com')).resolves.toBe('admitted');
+    expect(seenUrl).toBe('https://api.21.gifts/invoices/eligible?address=a%40b.com');
+    expect(auth).toBe('Bearer tok');
+  });
+
+  it('fundingGrantStatus returns none', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ status: 'none' }), { status: 200 }),
+    );
+    await expect(api.fundingGrantStatus('a@b.com')).resolves.toBe('none');
+  });
+
+  it('fundingGrantStatus rejects a malformed status as status 0', async () => {
+    const payloads: unknown[] = [{}, { eligible: true }, { status: 'nope' }, { status: 1 }];
+    for (const payload of payloads) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+      await expect(api.fundingGrantStatus('a@b.com')).rejects.toMatchObject({
+        status: 0,
+        message: 'malformed eligible status',
+      });
+    }
+  });
+
   it('hasPosted returns true', async () => {
     let seenUrl = '';
     let auth = '';
@@ -144,6 +177,7 @@ describe('GiftsApi', () => {
     });
     await expect(api.hasPosted('a@b.com')).resolves.toEqual({
       hasPosted: true,
+      hasMedia: false,
       messageId: null,
       postedAt: null,
     });
@@ -157,9 +191,55 @@ describe('GiftsApi', () => {
     );
     await expect(api.hasPosted('a@b.com')).resolves.toEqual({
       hasPosted: false,
+      hasMedia: false,
       messageId: null,
       postedAt: null,
     });
+  });
+
+  it('hasPosted returns hasMedia true', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 }),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      hasMedia: true,
+      messageId: null,
+      postedAt: null,
+    });
+  });
+
+  it('hasPosted returns hasMedia false', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), { status: 200 }),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      hasMedia: false,
+      messageId: null,
+      postedAt: null,
+    });
+  });
+
+  it('hasPosted returns hasMedia false for missing / non-boolean JSON', async () => {
+    const payloads: unknown[] = [
+      { hasPosted: true },
+      { hasPosted: true, hasMedia: null },
+      { hasPosted: true, hasMedia: 1 },
+      { hasPosted: true, hasMedia: 'yes' },
+      { hasPosted: true, hasMedia: {} },
+    ];
+    for (const payload of payloads) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+      await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+        hasPosted: true,
+        hasMedia: false,
+        messageId: null,
+        postedAt: null,
+      });
+    }
   });
 
   it('hasPosted returns messageId when the JSON includes a valid UUID', async () => {
@@ -171,6 +251,7 @@ describe('GiftsApi', () => {
     );
     await expect(api.hasPosted('a@b.com')).resolves.toEqual({
       hasPosted: true,
+      hasMedia: false,
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       postedAt: null,
     });
@@ -191,6 +272,7 @@ describe('GiftsApi', () => {
       );
       await expect(api.hasPosted('a@b.com')).resolves.toEqual({
         hasPosted: true,
+        hasMedia: false,
         messageId: null,
         postedAt: null,
       });
@@ -210,6 +292,7 @@ describe('GiftsApi', () => {
     );
     await expect(api.hasPosted('a@b.com')).resolves.toEqual({
       hasPosted: true,
+      hasMedia: false,
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       postedAt: '2026-08-23T12:00:00.000Z',
     });
