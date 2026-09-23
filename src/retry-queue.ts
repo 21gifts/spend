@@ -19,7 +19,7 @@ export interface RetryOwed {
   bucket: 'daily' | 'moderator' | 'welcome';
   messageId?: string;
   groupMessageId?: string;
-  /** Present only for an unlisted daily ping. USD amount of the synthetic recipient. */
+  /** USD amount for an unlisted daily ping or a welcome gift. Moderator rows omit it. */
   amountUsd?: number;
 }
 
