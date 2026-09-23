@@ -938,6 +938,12 @@ export function createServer(opts: {
     },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
+      if (source === 'catchup') {
+        const today = (opts.now ?? (() => new Date()))().toISOString().slice(0, 10);
+        if (today !== day) {
+          return { exitCode: 0 };
+        }
+      }
       const moderator = extras?.bucket === 'moderator';
       const welcome = extras?.bucket === 'welcome';
       const groupMessageId = extras?.groupMessageId;

@@ -1839,6 +1839,57 @@ describe('createServer', () => {
     }
   });
 
+  it('startRetryCatchup does not pay an owed row after the UTC day rolls while it waits', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-midnight-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+    });
+    let calls = 0;
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => {
+          calls += 1;
+          return new Date(calls === 1 ? '2026-08-25T23:59:00.000Z' : '2026-08-26T00:00:01.000Z');
+        },
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await app.drainPayouts();
+        expect(runDay).not.toHaveBeenCalled();
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: PING_MESSAGE_ID,
+          },
+        ]);
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('startRetryCatchup pays an owed welcome gift at 1 USD with comment Welcome', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-welcome-'));
     const seed = join(dir, 'seed.json');
