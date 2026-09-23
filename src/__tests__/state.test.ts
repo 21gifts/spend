@@ -26,7 +26,8 @@ describe('DayState', () => {
   it('throws CorruptStateError on a JSON object with an invalid status', () => {
     const state = new DayState('/tmp', '2026-08-23', {
       exists: () => true,
-      read: () => `${JSON.stringify({ ts: 't', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paif' })}\n`,
+      read: () =>
+        `${JSON.stringify({ ts: 't', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paif' })}\n`,
       append: () => undefined,
       mkdir: () => undefined,
     });
@@ -78,6 +79,31 @@ describe('DayState', () => {
     expect(appendPath.endsWith('.moderator.jsonl')).toBe(true);
   });
 
+  it('welcome bucket appends to a welcome.jsonl path', () => {
+    let appendPath = '';
+    const state = new DayState(
+      '/tmp',
+      '2026-08-23',
+      {
+        exists: () => false,
+        read: () => '',
+        append: (path) => {
+          appendPath = path;
+        },
+        mkdir: () => undefined,
+      },
+      'welcome',
+    );
+    state.append({
+      ts: 't',
+      address: 'a@b.com',
+      invoiceId: '1',
+      paymentHash: 'h',
+      status: 'paid',
+    });
+    expect(appendPath.endsWith('welcome.jsonl')).toBe(true);
+  });
+
   it('markFinished appends once and isFinished becomes true', () => {
     const writes: string[] = [];
     const files = new Set<string>();
@@ -104,8 +130,20 @@ describe('latestStatus', () => {
     expect(
       latestStatus(
         [
-          { ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'dry-run' },
-          { ts: '2', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' },
+          {
+            ts: '1',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'dry-run',
+          },
+          {
+            ts: '2',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'paid',
+          },
         ],
         'a@b.com',
       ),
@@ -115,7 +153,15 @@ describe('latestStatus', () => {
   it('matches an address case-insensitively', () => {
     expect(
       latestStatus(
-        [{ ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' }],
+        [
+          {
+            ts: '1',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'paid',
+          },
+        ],
         'A@b.com',
       ),
     ).toBe('paid');
@@ -127,8 +173,20 @@ describe('dayBlock', () => {
     expect(
       dayBlock(
         [
-          { ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'paid' },
-          { ts: '2', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'dry-run' },
+          {
+            ts: '1',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'paid',
+          },
+          {
+            ts: '2',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'dry-run',
+          },
         ],
         'a@b.com',
       ),
@@ -138,7 +196,15 @@ describe('dayBlock', () => {
   it('matches an address case-insensitively', () => {
     expect(
       dayBlock(
-        [{ ts: '1', address: 'a@b.com', invoiceId: '1', paymentHash: 'h', status: 'uncertain' }],
+        [
+          {
+            ts: '1',
+            address: 'a@b.com',
+            invoiceId: '1',
+            paymentHash: 'h',
+            status: 'uncertain',
+          },
+        ],
         'A@b.com',
       ),
     ).toBe('uncertain');

@@ -28,10 +28,12 @@ export interface StateRow {
 }
 
 /**
- * File-backed per-day payout log.
+ * File-backed payout log.
  *
  * `bucket` `'daily'` (default) uses `${day}.jsonl` / `${day}.finished`.
  * `'moderator'` uses `${day}.moderator.jsonl` / `${day}.moderator.finished`.
+ * `'welcome'` uses dateless `welcome.jsonl` / `welcome.finished` (the `day`
+ * argument is ignored for the filename).
  */
 export class DayState {
   constructor(
@@ -56,7 +58,7 @@ export class DayState {
       },
       mkdir: (path) => mkdirSync(path, { recursive: true }),
     },
-    private readonly bucket: 'daily' | 'moderator' = 'daily',
+    private readonly bucket: 'daily' | 'moderator' | 'welcome' = 'daily',
   ) {}
 
   /**
@@ -116,6 +118,9 @@ export class DayState {
   }
 
   private path(): string {
+    if (this.bucket === 'welcome') {
+      return join(this.dir, 'welcome.jsonl');
+    }
     if (this.bucket === 'moderator') {
       return join(this.dir, `${this.day}.moderator.jsonl`);
     }
@@ -123,6 +128,9 @@ export class DayState {
   }
 
   private finishedPath(): string {
+    if (this.bucket === 'welcome') {
+      return join(this.dir, 'welcome.finished');
+    }
     if (this.bucket === 'moderator') {
       return join(this.dir, `${this.day}.moderator.finished`);
     }
@@ -158,7 +166,13 @@ function parseStateRow(line: string): StateRow {
   ) {
     throw new CorruptStateError();
   }
-  return { ts, address, invoiceId, paymentHash, status: status as StateRow['status'] };
+  return {
+    ts,
+    address,
+    invoiceId,
+    paymentHash,
+    status: status as StateRow['status'],
+  };
 }
 
 /**
@@ -188,7 +202,10 @@ export function latestStatus(rows: StateRow[], address: string): StateRow['statu
 export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain' | undefined {
   let found: 'paid' | 'uncertain' | undefined;
   for (const row of rows) {
-    if (row.address.toLowerCase() === address.toLowerCase() && (row.status === 'paid' || row.status === 'uncertain')) {
+    if (
+      row.address.toLowerCase() === address.toLowerCase() &&
+      (row.status === 'paid' || row.status === 'uncertain')
+    ) {
       found = row.status;
     }
   }

@@ -13,7 +13,7 @@ const HALT_ADDRESS = '*halt*';
 export interface RunOptions {
   live: boolean;
   day: string;
-  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: the pinged address as listed on the moderator roster (the server gates the ping; the daily roster does not apply). */
+  /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: the pinged address as listed on the moderator roster (the server gates the ping; the daily roster does not apply). Welcome: the pinged address as a synthetic one-address list (the daily roster does not apply). */
   onlyAddresses?: string[];
   /**
    * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
@@ -27,9 +27,9 @@ export interface RunOptions {
    * included `groupMessageId`. Used only when {@link RunOptions.bucket} is `'moderator'`.
    */
   groupMessageIdByAddress?: Record<string, string>;
-  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. */
-  bucket?: 'daily' | 'moderator';
-  /** Default true. False on HTTP ping: API already gated eligibleToday. */
+  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. `'welcome'` uses dateless `welcome.jsonl`, requires `hasPosted` and `hasMedia` like daily (no `postedAt` UTC-day match), never calls `isFundingEligible`, and forwards `messageId` on `createInvoice`. */
+  bucket?: 'daily' | 'moderator' | 'welcome';
+  /** Default true. False on HTTP ping: API already gated eligibleToday. Welcome treats this as false even when omitted or true. */
   checkFundingEligible?: boolean;
 }
 
@@ -87,14 +87,17 @@ function selectTargets(
 /**
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
  *
- * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster.
+ * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster. Welcome `markFinished` writes `welcome.finished` (never the daily `${day}.finished`).
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  * Daily requires `hasPosted` and `hasMedia`; missing or non-true `hasMedia` skips as
  * `no_media` (no JSONL). When {@link RunOptions.bucket} is `'moderator'`, uses the
  * moderator JSONL, requires a living-room `hasPosted` whose `postedAt` UTC day matches
  * {@link RunOptions.day}, does not inspect `hasMedia`, and never sends `messageId` on
- * `createInvoice`. When
+ * `createInvoice`. When {@link RunOptions.bucket} is `'welcome'`, uses dateless
+ * `welcome.jsonl`, requires `hasPosted` and `hasMedia` like daily (no `postedAt`
+ * UTC-day match), never calls `isFundingEligible`, and forwards `messageId` like daily.
+ * When
  * {@link RunOptions.groupMessageIdByAddress} has an entry for the recipient, that id
  * is sent as `groupMessageId` on `createInvoice` (moderator only).
  *
@@ -119,16 +122,23 @@ export async function runDay(
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
     log('spend.done', { ok: false, reason: 'bad_lndhub_uri' });
-    return { exitCode: 2, summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }) };
+    return {
+      exitCode: 2,
+      summary: makeSummary(options, 2, { reason: 'bad_lndhub_uri' }),
+    };
   }
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
-  const state = deps?.state ?? new DayState(config.stateDir, options.day, undefined, options.bucket ?? 'daily');
+  const state =
+    deps?.state ?? new DayState(config.stateDir, options.day, undefined, options.bucket ?? 'daily');
   const now = deps?.now ?? (() => new Date());
 
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
   if (!lock.tryAcquire()) {
     log('spend.done', { ok: false, reason: 'locked' });
-    return { exitCode: 3, summary: makeSummary(options, 3, { reason: 'locked' }) };
+    return {
+      exitCode: 3,
+      summary: makeSummary(options, 3, { reason: 'locked' }),
+    };
   }
 
   try {
@@ -153,10 +163,18 @@ async function runDayLocked(
   const uncertain: PayoutLine[] = [];
   const dryRun: PayoutLine[] = [];
   let btcUsd: number | undefined;
+  const isolatedBucket = options.bucket === 'moderator' || options.bucket === 'welcome';
+  const checkFundingEligible =
+    options.bucket === 'welcome' ? false : options.checkFundingEligible !== false;
 
   const finish = (
     exitCode: number,
-    extra: Partial<Omit<RunSummary, 'day' | 'live' | 'ok' | 'exitCode' | 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'>> = {},
+    extra: Partial<
+      Omit<
+        RunSummary,
+        'day' | 'live' | 'ok' | 'exitCode' | 'paid' | 'skipped' | 'failed' | 'uncertain' | 'dryRun'
+      >
+    > = {},
   ): RunResult => ({
     exitCode,
     summary: makeSummary(options, exitCode, {
@@ -180,7 +198,7 @@ async function runDayLocked(
     }
     throw err;
   }
-  if (options.live && options.bucket !== 'moderator') {
+  if (options.live && !isolatedBucket) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
     );
@@ -212,7 +230,11 @@ async function runDayLocked(
         amountUsd: recipient.amountUsd,
         btcUsd: rate,
       });
-      failed.push({ address: recipient.address, amountUsd: recipient.amountUsd, reason: 'usd_to_sats' });
+      failed.push({
+        address: recipient.address,
+        amountUsd: recipient.amountUsd,
+        reason: 'usd_to_sats',
+      });
       return finish(3, { reason: 'usd_to_sats' });
     }
     const formattedUsd = formatAmountUsd(recipient.amountUsd);
@@ -277,7 +299,7 @@ async function runDayLocked(
       log('spend.done', { ok: false, reason: 'posted_unreachable' });
       return finish(3, { reason: 'posted_unreachable' });
     }
-    if (options.checkFundingEligible !== false) {
+    if (checkFundingEligible) {
       try {
         const eligible = await gifts.isFundingEligible(recipient.address);
         if (!eligible) {
@@ -326,11 +348,20 @@ async function runDayLocked(
       available = bal;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'lndhub';
-      log('spend.done', { ok: false, reason: 'lndhub_preflight', error: message });
+      log('spend.done', {
+        ok: false,
+        reason: 'lndhub_preflight',
+        error: message,
+      });
       return finish(3, { reason: 'lndhub_preflight' });
     }
     if (needed > 0 && needed + feeMargin(available) > available) {
-      log('spend.done', { ok: false, reason: 'insufficient_balance', needed, available });
+      log('spend.done', {
+        ok: false,
+        reason: 'insufficient_balance',
+        needed,
+        available,
+      });
       return finish(3, { reason: 'insufficient_balance', needed, available });
     }
   }
@@ -339,7 +370,7 @@ async function runDayLocked(
   let stopLive = false;
 
   const haltDay = (): void => {
-    if (options.bucket === 'moderator') {
+    if (isolatedBucket) {
       return;
     }
     if (!options.live || dayBlock(rows, HALT_ADDRESS) === 'uncertain') {
@@ -362,7 +393,11 @@ async function runDayLocked(
     if (amountSats === undefined || formattedUsd === undefined) {
       throw new Error('satsByAddress incomplete');
     }
-    const lineBase = { address: recipient.address, amountSats, amountUsd: recipient.amountUsd };
+    const lineBase = {
+      address: recipient.address,
+      amountSats,
+      amountUsd: recipient.amountUsd,
+    };
 
     const prior = dayBlock(rows, recipient.address);
     if (prior !== undefined) {
@@ -439,7 +474,10 @@ async function runDayLocked(
             );
     } catch (err) {
       if (err instanceof GiftsApiError && err.status === 409) {
-        log('spend.skip', { address: recipient.address, reason: 'already_paid' });
+        log('spend.skip', {
+          address: recipient.address,
+          reason: 'already_paid',
+        });
         skipped.push({ ...lineBase, reason: 'already_paid' });
         const claimed: StateRow = {
           ts: now().toISOString(),
@@ -476,13 +514,16 @@ async function runDayLocked(
         message === 'malformed invoice response' || message === 'malformed paymentHash';
       const unreachable = !parseFail && (status === 0 || status >= 500);
       if (unreachable) {
-        log('spend.skip', { address: recipient.address, reason: 'invoice_unreachable' });
+        log('spend.skip', {
+          address: recipient.address,
+          reason: 'invoice_unreachable',
+        });
         skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
         continue;
       }
       if (parseFail) {
         sawProblem = true;
-        if (options.bucket !== 'moderator') {
+        if (!isolatedBucket) {
           stopLive = true;
         }
         haltDay();
@@ -507,7 +548,11 @@ async function runDayLocked(
         continue;
       }
       sawProblem = true;
-      log('spend.failed', { address: recipient.address, amountSats, error: message });
+      log('spend.failed', {
+        address: recipient.address,
+        amountSats,
+        error: message,
+      });
       failed.push(lineBase);
       if (!options.live) {
         continue;
@@ -527,7 +572,7 @@ async function runDayLocked(
     const expectedMsat = amountSats * 1000;
     if (invoice.amountMsat !== expectedMsat) {
       sawProblem = true;
-      if (options.bucket !== 'moderator') {
+      if (!isolatedBucket) {
         stopLive = true;
       }
       haltDay();
@@ -592,7 +637,7 @@ async function runDayLocked(
       preimage = paidInvoice.preimage;
     } catch (err) {
       sawProblem = true;
-      if (options.bucket !== 'moderator') {
+      if (!isolatedBucket) {
         stopLive = true;
       }
       haltDay();
@@ -610,7 +655,7 @@ async function runDayLocked(
     const digest = preimage === null ? null : hashPreimage(preimage);
     if (preimage === null || digest === null || digest !== invoice.paymentHash) {
       sawProblem = true;
-      if (options.bucket !== 'moderator') {
+      if (!isolatedBucket) {
         stopLive = true;
       }
       haltDay();
@@ -648,7 +693,7 @@ async function runDayLocked(
       await gifts.submitProof(invoice.id, preimage);
     } catch (err) {
       sawProblem = true;
-      if (options.bucket !== 'moderator') {
+      if (!isolatedBucket) {
         stopLive = true;
       }
       haltDay();

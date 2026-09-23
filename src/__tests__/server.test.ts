@@ -480,7 +480,9 @@ describe('createServer', () => {
       runDay,
       fetchImpl: async (url) => {
         if (String(url).includes('/invoices/eligible')) {
-          return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), { status: 200 });
+          return new Response(JSON.stringify({ eligible: true, status: 'admitted' }), {
+            status: 200,
+          });
         }
         throw new Error('no network');
       },
@@ -616,7 +618,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'nobody@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -859,7 +864,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -909,7 +917,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1603,6 +1614,118 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
+  it('POST /ping welcome is 202 and pays 1 USD with comment Welcome', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date('2026-08-25T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'nobody@walletofsatoshi.com',
+          messageId: PING_MESSAGE_ID,
+          kind: 'welcome',
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    expect(runDay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        comment: 'Welcome',
+        recipients: [
+          expect.objectContaining({
+            address: 'nobody@walletofsatoshi.com',
+            amountUsd: 1,
+            comment: 'Welcome',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        bucket: 'welcome',
+        onlyAddresses: ['nobody@walletofsatoshi.com'],
+        messageIdByAddress: { 'nobody@walletofsatoshi.com': PING_MESSAGE_ID },
+        checkFundingEligible: false,
+      }),
+    );
+    warn.mockRestore();
+  });
+
+  it('POST /ping welcome is 200 skipped paid when welcome.jsonl already has paid', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-ping-welcome-paid-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, 'welcome.jsonl'),
+      `${JSON.stringify({
+        ts: 't',
+        address: 'nobody@walletofsatoshi.com',
+        invoiceId: '1',
+        paymentHash: '',
+        status: 'paid',
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        runDay,
+        fetchImpl: async () => new Response('{}', { status: 200 }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'nobody@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            kind: 'welcome',
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'skipped', reason: 'paid' });
+      expect(runDay).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /ping welcome is 400 without messageId', async () => {
+    const app = createServer({
+      env,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', kind: 'welcome' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Expected a JSON body with address and messageId',
+    });
+  });
+
   it('POST /ping is 400 for an invalid kind', async () => {
     const app = createServer({
       env,
@@ -1646,7 +1769,10 @@ describe('createServer', () => {
       const daily = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(200);
@@ -1703,7 +1829,10 @@ describe('createServer', () => {
       const daily = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(202);
@@ -1739,7 +1868,9 @@ describe('createServer', () => {
         runDay,
         fetchImpl: async (url) => {
           if (String(url).includes('/invoices/eligible')) {
-            return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
+            return new Response(JSON.stringify({ eligible: false, status: 'none' }), {
+              status: 200,
+            });
           }
           throw new Error('no network');
         },
@@ -1747,7 +1878,10 @@ describe('createServer', () => {
       const daily = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'nobody@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(daily.status).toBe(200);
@@ -1802,7 +1936,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1852,7 +1989,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1899,7 +2039,10 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -2155,7 +2298,10 @@ function readLiveRoster(stateDir: string): LiveRosterFile {
   return JSON.parse(readFileSync(join(stateDir, 'recipients.json'), 'utf8')) as LiveRosterFile;
 }
 
-async function login(app: ReturnType<typeof createServer>, password = 'test-password'): Promise<string> {
+async function login(
+  app: ReturnType<typeof createServer>,
+  password = 'test-password',
+): Promise<string> {
   const res = await app.fetch(
     req('http://127.0.0.1/login', {
       method: 'POST',
@@ -2534,7 +2680,10 @@ describe('recipient editor', () => {
   it('payout reloads the live list and skips a corrupt file', async () => {
     const sess = sessionEnv();
     const runDay = vi.fn(async (cfg: { recipients: Array<{ address: string }> }) => {
-      expect(cfg.recipients.map((r) => r.address)).toEqual(['alice@walletofsatoshi.com', 'bob@walletofsatoshi.com']);
+      expect(cfg.recipients.map((r) => r.address)).toEqual([
+        'alice@walletofsatoshi.com',
+        'bob@walletofsatoshi.com',
+      ]);
       return { exitCode: 0 };
     });
     const app = createServer({
@@ -3186,8 +3335,11 @@ describe('recipient editor', () => {
       }),
     );
     expect(
-      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
-        .comment,
+      (
+        JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+          comment: string;
+        }
+      ).comment,
     ).toBe('hello gifts');
     await app.fetch(
       req('http://127.0.0.1/recipients/update', {
@@ -3197,8 +3349,11 @@ describe('recipient editor', () => {
       }),
     );
     expect(
-      (JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as { comment: string })
-        .comment,
+      (
+        JSON.parse(readFileSync(join(sess.STATE_DIR, 'recipients.json'), 'utf8')) as {
+          comment: string;
+        }
+      ).comment,
     ).toBe('hello gifts');
     await app.fetch(
       req('http://127.0.0.1/recipients/delete', {
@@ -3548,9 +3703,7 @@ describe('payment switches', () => {
     expect(live.moderatorPaymentsEnabled).toBe(true);
     const listed = await app.fetch(req('http://127.0.0.1/', { headers: { cookie } }));
     const html = await listed.text();
-    expect(html).toContain(
-      'action="/recipients/payments" aria-label="Daily payments"',
-    );
+    expect(html).toContain('action="/recipients/payments" aria-label="Daily payments"');
     expect(html).toContain(
       '<button type="submit" name="enabled" value="off" class="primary" aria-pressed="true">Off</button>',
     );
