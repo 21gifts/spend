@@ -24,7 +24,8 @@ import {
   sessionCookieHeader,
   sessionCookieValid,
 } from './session';
-import { CorruptStateError, DayState, dayBlock, latestStatus } from './state';
+import { appendRetryOwed, loadRetryOwed, type RetryOwed } from './retry-queue';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
 import {
   loadTelegram,
   minimalRunSummary,
@@ -249,8 +250,8 @@ const PAYMENTS_SWITCH = /^\/(recipients|moderators)\/payments$/;
 /**
  * HTTP app for the dashboard, recipient editor, health probe, operator debug, and ping-triggered payouts.
  *
- * @param opts - Env, fetch, clock, and optional `retryCatchupMs` (kept for tests; boot does not start a retry timer).
- * @returns Fetch handler, no-op scheduler/catch-up starters (kept for tests), payout runner, and payout drain.
+ * @param opts - Env, fetch, clock, and optional `retryCatchupMs` (overrides `RETRY_CATCHUP_MS`).
+ * @returns Fetch handler, no-op midnight scheduler and boot catch-up, retry catch-up for owed `insufficient_balance` addresses when live and the interval is enabled, payout runner, and payout drain.
  */
 export function createServer(opts: {
   env: Record<string, string | undefined>;
@@ -1012,7 +1013,7 @@ export function createServer(opts: {
                 ),
                 ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
-      if (source === 'ping') runOptions.checkFundingEligible = false;
+      if (source === 'ping' || source === 'catchup') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
         {
           ...config,
@@ -1022,7 +1023,60 @@ export function createServer(opts: {
         runOptions,
       );
       const withSummary = result as { exitCode: number; summary?: RunSummary };
-      const summary = withSummary.summary ?? minimalRunSummary(day, live, withSummary.exitCode);
+      const returnedSummary = withSummary.summary;
+      const summary =
+        returnedSummary ?? minimalRunSummary(day, live, withSummary.exitCode);
+      if (
+        live &&
+        onlyAddresses !== undefined &&
+        onlyAddresses.length > 0 &&
+        (source === 'ping' || source === 'catchup') &&
+        returnedSummary?.reason === 'insufficient_balance'
+      ) {
+        const bucket =
+          extras?.bucket === 'moderator'
+            ? 'moderator'
+            : extras?.bucket === 'welcome'
+              ? 'welcome'
+              : 'daily';
+        for (const address of onlyAddresses) {
+          const row: RetryOwed = { address, bucket };
+          if (
+            (bucket === 'daily' || bucket === 'welcome') &&
+            messageId !== undefined &&
+            MESSAGE_ID_RE.test(messageId)
+          ) {
+            row.messageId = messageId;
+          }
+          if (
+            bucket === 'moderator' &&
+            extras?.groupMessageId !== undefined &&
+            MESSAGE_ID_RE.test(extras.groupMessageId)
+          ) {
+            row.groupMessageId = extras.groupMessageId;
+          }
+          if ((bucket === 'daily' || bucket === 'welcome') && extras?.recipients !== undefined) {
+            const extra = extras.recipients.find(
+              (recipient) => recipient.address.toLowerCase() === address.toLowerCase(),
+            );
+            if (extra !== undefined) {
+              row.amountUsd = extra.amountUsd;
+            }
+          }
+          try {
+            appendRetryOwed(config.stateDir, day, row);
+          } catch (err: unknown) {
+            const error = err instanceof Error ? err.message : 'enqueue';
+            console.warn(
+              JSON.stringify({
+                ts: new Date().toISOString(),
+                event: 'spend.retry.enqueue',
+                error,
+              }),
+            );
+          }
+        }
+      }
       if (telegramTarget !== null && notifyLog.allow(source, summary)) {
         const sent = await notifyPayout({
           target: telegramTarget,
@@ -1043,13 +1097,221 @@ export function createServer(opts: {
   const startCatchup = async (): Promise<{ exitCode: number } | null> => null;
 
   /**
-   * No-op. Kept so tests can still call `startRetryCatchup().stop()`.
+   * Same-UTC-day retry of owed `insufficient_balance` addresses when live and the
+   * interval is enabled. Midnight scheduler and boot catch-up stay no-ops.
    *
-   * @returns Handle whose `stop` does nothing.
+   * @returns Handle whose `stop` clears the interval (no-op when disabled).
    */
-  const startRetryCatchup = (): { stop: () => void } => ({
-    stop: () => undefined,
-  });
+  const startRetryCatchup = (): { stop: () => void } => {
+    const intervalMs = retryCatchupIntervalMs();
+    if (!live || intervalMs <= 0) {
+      return { stop: () => undefined };
+    }
+    let stopped = false;
+    let inProgress = false;
+    const tick = async (): Promise<void> => {
+      if (stopped || inProgress) {
+        return;
+      }
+      inProgress = true;
+      try {
+        await runRetryTick();
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : 'retry';
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.retry',
+            error,
+          }),
+        );
+      } finally {
+        inProgress = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => {
+      void tick();
+    }, intervalMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    return {
+      stop: () => {
+        stopped = true;
+        clearInterval(timer);
+      },
+    };
+  };
+
+  const retryCatchupIntervalMs = (): number => {
+    if (typeof opts.retryCatchupMs === 'number' && Number.isFinite(opts.retryCatchupMs)) {
+      return opts.retryCatchupMs;
+    }
+    const raw = opts.env['RETRY_CATCHUP_MS'];
+    if (raw === undefined || raw.trim() === '') {
+      return 900_000;
+    }
+    const parsed = Number(raw.trim());
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+    return parsed;
+  };
+
+  const runRetryTick = async (): Promise<void> => {
+    const clock = opts.now ?? (() => new Date());
+    const day = clock().toISOString().slice(0, 10);
+    const owed = loadRetryOwed(config.stateDir, day);
+    let liveList: LiveRecipients;
+    try {
+      liveList = loadLiveRecipients(config.stateDir);
+    } catch (err) {
+      if (err instanceof CorruptRecipientsError) {
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.retry',
+            error: err.message,
+          }),
+        );
+        return;
+      }
+      throw err;
+    }
+    let dailyRows: StateRow[] | undefined;
+    try {
+      dailyRows = new DayState(config.stateDir, day).load();
+    } catch (err) {
+      if (!(err instanceof CorruptStateError)) {
+        throw err;
+      }
+    }
+    let moderatorRows: StateRow[] | undefined;
+    try {
+      moderatorRows = new DayState(config.stateDir, day, undefined, 'moderator').load();
+    } catch (err) {
+      if (!(err instanceof CorruptStateError)) {
+        throw err;
+      }
+    }
+    let welcomeRows: StateRow[] | undefined;
+    try {
+      welcomeRows = new DayState(config.stateDir, day, undefined, 'welcome').load();
+    } catch (err) {
+      if (!(err instanceof CorruptStateError)) {
+        throw err;
+      }
+    }
+    let dailyBlocked = false;
+    if (dailyRows !== undefined) {
+      const rows = dailyRows;
+      dailyBlocked =
+        dayBlock(rows, '*halt*') === 'uncertain' ||
+        liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain');
+    }
+    for (const row of owed) {
+      try {
+        if (row.bucket === 'daily') {
+          if (dailyRows === undefined) {
+            continue;
+          }
+          if (liveList.paymentsEnabled === false) {
+            continue;
+          }
+          if (dailyBlocked) {
+            continue;
+          }
+          const block = dayBlock(dailyRows, row.address);
+          if (block === 'paid' || block === 'uncertain' || latestStatus(dailyRows, row.address) === 'failed') {
+            continue;
+          }
+          const listed = liveList.recipients.find(
+            (recipient) => recipient.address.toLowerCase() === row.address.toLowerCase(),
+          );
+          if (listed !== undefined) {
+            await payout(day, 'catchup', [listed.address], row.messageId);
+            continue;
+          }
+          if (row.amountUsd !== undefined) {
+            await payout(day, 'catchup', [row.address], row.messageId, {
+              recipients: [{ address: row.address, amountUsd: row.amountUsd }],
+            });
+          }
+          continue;
+        }
+        if (row.bucket === 'welcome') {
+          if (welcomeRows === undefined) {
+            continue;
+          }
+          if (liveList.paymentsEnabled === false) {
+            continue;
+          }
+          const block = dayBlock(welcomeRows, row.address);
+          if (
+            block === 'paid' ||
+            block === 'uncertain' ||
+            latestStatus(welcomeRows, row.address) === 'failed'
+          ) {
+            continue;
+          }
+          await payout(day, 'catchup', [row.address], row.messageId, {
+            bucket: 'welcome',
+            recipients: [
+              {
+                address: row.address,
+                amountUsd: row.amountUsd ?? WELCOME_USD,
+                comment: 'Welcome',
+              },
+            ],
+            comment: 'Welcome',
+          });
+          continue;
+        }
+        if (moderatorRows === undefined) {
+          continue;
+        }
+        if (liveList.moderatorPaymentsEnabled === false) {
+          continue;
+        }
+        const block = dayBlock(moderatorRows, row.address);
+        if (
+          block === 'paid' ||
+          block === 'uncertain' ||
+          latestStatus(moderatorRows, row.address) === 'failed'
+        ) {
+          continue;
+        }
+        const listed = liveList.moderators.find(
+          (recipient) => recipient.address.toLowerCase() === row.address.toLowerCase(),
+        );
+        if (listed === undefined) {
+          continue;
+        }
+        await payout(day, 'catchup', [listed.address], undefined, {
+          bucket: 'moderator',
+          recipients: [
+            {
+              address: listed.address,
+              amountUsd: listed.amountUsd,
+              comment: '21gifts moderator',
+            },
+          ],
+          comment: '21gifts moderator',
+          ...(row.groupMessageId === undefined ? {} : { groupMessageId: row.groupMessageId }),
+        });
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : 'retry';
+        console.warn(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'spend.retry',
+            error,
+          }),
+        );
+      }
+    }
+  };
 
   return {
     fetch: fetchHandler,
@@ -1092,7 +1354,9 @@ if (meta.main === true) {
       port: bind.port,
       fetch: app.fetch,
     });
+    const retryCatchup = app.startRetryCatchup();
     const shutdown = (): void => {
+      retryCatchup.stop();
       void app.drainPayouts().finally(() => {
         process.exit(0);
       });
