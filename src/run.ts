@@ -27,7 +27,7 @@ export interface RunOptions {
    * included `groupMessageId`. Used only when {@link RunOptions.bucket} is `'moderator'`.
    */
   groupMessageIdByAddress?: Record<string, string>;
-  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. `'welcome'` uses dateless `welcome.jsonl`, requires `hasPosted` and `hasMedia` like daily (no `postedAt` UTC-day match), never calls `isFundingEligible`, and forwards `messageId` on `createInvoice`. */
+  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. `'welcome'` uses dateless `welcome.jsonl`, pays when `welcomeHasMedia` is true (About-me photo counts) or, when that field is absent, when `hasPosted` and `hasMedia` are both true. No `postedAt` UTC-day match. Never calls `isFundingEligible`. Forwards `messageId` on `createInvoice`. */
   bucket?: 'daily' | 'moderator' | 'welcome';
   /** Default true. False on HTTP ping: API already gated eligibleToday. Welcome treats this as false even when omitted or true. */
   checkFundingEligible?: boolean;
@@ -95,8 +95,10 @@ function selectTargets(
  * moderator JSONL, requires a living-room `hasPosted` whose `postedAt` UTC day matches
  * {@link RunOptions.day}, does not inspect `hasMedia`, and never sends `messageId` on
  * `createInvoice`. When {@link RunOptions.bucket} is `'welcome'`, uses dateless
- * `welcome.jsonl`, requires `hasPosted` and `hasMedia` like daily (no `postedAt`
- * UTC-day match), never calls `isFundingEligible`, and forwards `messageId` like daily.
+ * `welcome.jsonl`. Media is `welcomeHasMedia` when the api sends a boolean
+ * (an About-me photo counts); when the field is absent, both `hasPosted` and
+ * `hasMedia` must be true. No `postedAt` UTC-day match. Never calls
+ * `isFundingEligible`, and forwards `messageId` like daily.
  * When
  * {@link RunOptions.groupMessageIdByAddress} has an entry for the recipient, that id
  * is sent as `groupMessageId` on `createInvoice` (moderator only).
@@ -284,6 +286,19 @@ async function runDayLocked(
           noPost.add(recipient.address);
           continue;
         }
+      } else if (options.bucket === 'welcome') {
+        const welcomeMedia =
+          posted.welcomeHasMedia === null
+            ? posted.hasPosted && posted.hasMedia
+            : posted.welcomeHasMedia;
+        if (!welcomeMedia) {
+          noMedia.add(recipient.address);
+          continue;
+        }
+        postedMessageId.set(
+          recipient.address,
+          posted.welcomeMessageId ?? posted.messageId,
+        );
       } else {
         if (!posted.hasPosted) {
           noPost.add(recipient.address);
@@ -504,8 +519,9 @@ async function runDayLocked(
         err.status === 403 &&
         err.message === 'Forum post required'
       ) {
-        log('spend.skip', { address: recipient.address, reason: 'no_post' });
-        skipped.push({ ...lineBase, reason: 'no_post' });
+        const reason = options.bucket === 'welcome' ? 'no_media' : 'no_post';
+        log('spend.skip', { address: recipient.address, reason });
+        skipped.push({ ...lineBase, reason });
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;

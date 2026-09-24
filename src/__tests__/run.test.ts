@@ -2437,4 +2437,120 @@ describe('runDay', () => {
       expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
     ]);
   });
+
+  it('welcome bucket pays an About-me photo when welcomeHasMedia is true', async () => {
+    let invoiceBody: unknown;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: false,
+            hasMedia: false,
+            messageId: null,
+            postedAt: null,
+            welcomeHasMedia: true,
+            welcomeMessageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          }),
+          { status: 200 },
+        );
+      }
+      invoiceBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }] },
+      { live: false, day: '2026-08-23', bucket: 'welcome' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoiceBody).toEqual({
+      address: 'a@b.com',
+      amountMsat: 1_000_000,
+      amountUsd: '1.00',
+      comment: 'Welcome',
+      messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+  });
+
+  it('welcome bucket skips no_media when welcomeHasMedia is false', async () => {
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            hasMedia: true,
+            messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            postedAt: '2026-08-23T12:00:00.000Z',
+            welcomeHasMedia: false,
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error('no invoice');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }] },
+      { live: false, day: '2026-08-23', bucket: 'welcome' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary?.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+  });
+
+  it('welcome bucket skips no_media when invoice create says Forum post required', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Forum post required' }), { status: 403 });
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }] },
+      { live: false, day: '2026-08-23', bucket: 'welcome' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary?.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+    expect(result.summary?.failed).toEqual([]);
+  });
 });
