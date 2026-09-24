@@ -2525,4 +2525,32 @@ describe('runDay', () => {
       expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
     ]);
   });
+
+  it('welcome bucket skips no_media when invoice create says Forum post required', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Forum post required' }), { status: 403 });
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'Welcome' }] },
+      { live: false, day: '2026-08-23', bucket: 'welcome' },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState('', 'welcome'),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary?.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_media' }),
+    ]);
+    expect(result.summary?.failed).toEqual([]);
+  });
 });

@@ -519,8 +519,9 @@ async function runDayLocked(
         err.status === 403 &&
         err.message === 'Forum post required'
       ) {
-        log('spend.skip', { address: recipient.address, reason: 'no_post' });
-        skipped.push({ ...lineBase, reason: 'no_post' });
+        const reason = options.bucket === 'welcome' ? 'no_media' : 'no_post';
+        log('spend.skip', { address: recipient.address, reason });
+        skipped.push({ ...lineBase, reason });
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;
