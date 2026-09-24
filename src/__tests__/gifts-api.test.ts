@@ -180,6 +180,8 @@ describe('GiftsApi', () => {
       hasMedia: false,
       messageId: null,
       postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
     expect(seenUrl).toBe('https://api.21.gifts/invoices/posted?address=a%40b.com');
     expect(auth).toBe('Bearer tok');
@@ -194,6 +196,8 @@ describe('GiftsApi', () => {
       hasMedia: false,
       messageId: null,
       postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
   });
 
@@ -206,6 +210,8 @@ describe('GiftsApi', () => {
       hasMedia: true,
       messageId: null,
       postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
   });
 
@@ -218,6 +224,8 @@ describe('GiftsApi', () => {
       hasMedia: false,
       messageId: null,
       postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
   });
 
@@ -238,6 +246,8 @@ describe('GiftsApi', () => {
         hasMedia: false,
         messageId: null,
         postedAt: null,
+        welcomeHasMedia: null,
+        welcomeMessageId: null,
       });
     }
   });
@@ -254,6 +264,8 @@ describe('GiftsApi', () => {
       hasMedia: false,
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
   });
 
@@ -275,6 +287,8 @@ describe('GiftsApi', () => {
         hasMedia: false,
         messageId: null,
         postedAt: null,
+        welcomeHasMedia: null,
+        welcomeMessageId: null,
       });
     }
   });
@@ -295,6 +309,61 @@ describe('GiftsApi', () => {
       hasMedia: false,
       messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       postedAt: '2026-08-23T12:00:00.000Z',
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
+    });
+  });
+
+  it('hasPosted returns welcome media when the api sends it', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({
+          hasPosted: false,
+          hasMedia: false,
+          welcomeHasMedia: true,
+          welcomeMessageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: false,
+      hasMedia: false,
+      messageId: null,
+      postedAt: null,
+      welcomeHasMedia: true,
+      welcomeMessageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const absent = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({
+          hasPosted: true,
+          welcomeHasMedia: false,
+          welcomeMessageId: 'nope',
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(absent.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      hasMedia: false,
+      messageId: null,
+      postedAt: null,
+      welcomeHasMedia: false,
+      welcomeMessageId: null,
+    });
+    const weird = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ hasPosted: true, welcomeHasMedia: 1, welcomeMessageId: 2 }), {
+        status: 200,
+      }),
+    );
+    await expect(weird.hasPosted('a@b.com')).resolves.toEqual({
+      hasPosted: true,
+      hasMedia: false,
+      messageId: null,
+      postedAt: null,
+      welcomeHasMedia: null,
+      welcomeMessageId: null,
     });
   });
 
