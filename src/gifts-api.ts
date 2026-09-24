@@ -53,13 +53,21 @@ export class GiftsApi {
    * Live forum-post flag, media flag, post UUID, and post timestamp for this Lightning Address.
    *
    * @param address - LUD-16 address.
-   * @returns `{ hasPosted, hasMedia, messageId, postedAt }` — `hasMedia` is boolean
-   *   (missing or non-true JSON → `false`); `messageId` is a UUID or `null`;
+   * @returns `{ hasPosted, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId }`.
+   *   `hasMedia` is boolean (missing or non-true JSON → `false`). `messageId` is a UUID or `null`.
    *   `postedAt` is an ISO-8601 instant or `null` when missing or unparseable.
+   *   `welcomeHasMedia` is the boolean from the api, or `null` when the field is missing or
+   *   not a boolean (older api). `welcomeMessageId` is a UUID or `null`.
    */
-  async hasPosted(
-    address: string,
-  ): Promise<{ hasPosted: boolean; hasMedia: boolean; messageId: string | null; postedAt: string | null }> {
+  async hasPosted(address: string): Promise<{
+    hasPosted: boolean;
+    hasMedia: boolean;
+    messageId: string | null;
+    postedAt: string | null;
+    /** `null` when the api omitted the field (older api). */
+    welcomeHasMedia: boolean | null;
+    welcomeMessageId: string | null;
+  }> {
     const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
     const json = await this.getJson(path);
     const has = json['hasPosted'];
@@ -74,7 +82,12 @@ export class GiftsApi {
     if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
       postedAt = new Date(rawAt).toISOString();
     }
-    return { hasPosted: has, hasMedia, messageId, postedAt };
+    const rawWelcome = json['welcomeHasMedia'];
+    const welcomeHasMedia = typeof rawWelcome === 'boolean' ? rawWelcome : null;
+    const rawWelcomeId = json['welcomeMessageId'];
+    const welcomeMessageId =
+      typeof rawWelcomeId === 'string' && MESSAGE_ID_RE.test(rawWelcomeId) ? rawWelcomeId : null;
+    return { hasPosted: has, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId };
   }
 
   /**
