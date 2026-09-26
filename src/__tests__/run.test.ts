@@ -2554,3 +2554,56 @@ describe('runDay', () => {
     expect(result.summary?.failed).toEqual([]);
   });
 });
+
+describe('Sunday payment guard', () => {
+  it('returns before creating clients or acquiring the day lock', async () => {
+    const lock = { tryAcquire: vi.fn(), release: vi.fn() };
+    const result = await runDay(
+      config,
+      { live: true, day: '2026-09-26' },
+      {
+        now: () => new Date('2026-09-26T16:00:00Z'),
+        lock,
+      },
+    );
+    expect(result.summary.reason).toBe('sunday_rest');
+    expect(lock.tryAcquire).not.toHaveBeenCalled();
+  });
+  it('stops immediately before paying when invoice creation crosses midnight', async () => {
+    let time = new Date('2026-09-26T15:59:59Z');
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        time = new Date('2026-09-26T16:00:00Z');
+        return Response.json({
+          id: 'id1',
+          pr: 'lnbc1abcdefghijklmnop',
+          paymentHash: HASH,
+          amountMsat: 1000000,
+        });
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) return Response.json({ access_token: 't' });
+      return Response.json({ BTC: { AvailableBalance: 1000000 } });
+    });
+    const pay = vi.spyOn(lndhub, 'payInvoice');
+    const state = memoryState();
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-09-26' },
+      {
+        gifts,
+        lndhub,
+        state,
+        lock: openLock,
+        now: () => time,
+        btcUsd: async () => 100000,
+      },
+    );
+    expect(result.summary.reason).toBe('sunday_rest');
+    expect(pay).not.toHaveBeenCalled();
+    expect(state.load().some((row) => row.status === 'uncertain')).toBe(false);
+  });
+});

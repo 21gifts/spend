@@ -3721,7 +3721,7 @@ describe('recipient editor', () => {
         TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
         TELEGRAM_CHAT_ID: '-1001234567890',
       },
-      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      now: () => new Date('2026-09-07T12:00:00.000Z'),
       runDay,
       fetchImpl: async (url, init) => {
         if (String(url).includes('api.telegram.org')) {
@@ -3847,7 +3847,7 @@ describe('recipient editor', () => {
         TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
         TELEGRAM_CHAT_ID: '-1001234567890',
       },
-      now: () => new Date('2026-09-06T12:00:00.000Z'),
+      now: () => new Date('2026-09-07T12:00:00.000Z'),
       runDay,
       fetchImpl: async (url, init) => {
         if (String(url).includes('api.telegram.org')) {
@@ -4989,5 +4989,28 @@ describe('GET /debug/recipients', () => {
     const res = await app.fetch(req('http://127.0.0.1/debug/recipients', { method: 'HEAD' }));
     expect(res.status).toBe(503);
     expect(await res.text()).toBe('');
+  });
+});
+
+describe('Sunday rest', () => {
+  it('blocks HTTP, direct payouts and retry ticks without calling external services', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const fetchImpl = vi.fn<typeof fetch>();
+    let now = new Date('2026-09-26T16:00:00Z');
+    const app = createServer({ env, now: () => now, runDay, fetchImpl });
+    for (const path of ['/', '/ping']) {
+      const response = await app.fetch(req('http://127.0.0.1' + path));
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('86400');
+    }
+    await app.runPayout('2026-09-26');
+    const retries = app.startRetryCatchup();
+    await Promise.resolve();
+    retries.stop();
+    expect(runDay).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((await app.fetch(req('http://127.0.0.1/healthz'))).status).toBe(200);
+    now = new Date('2026-09-27T16:00:00Z');
+    expect((await app.fetch(req('http://127.0.0.1/healthz'))).status).toBe(200);
   });
 });

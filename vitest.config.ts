@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    setupFiles: ['./e2e/server-clock.mjs'],
     include: ['src/__tests__/**/*.test.ts'],
     exclude: ['src/__tests__/with-api.e2e.test.ts'],
     coverage: {

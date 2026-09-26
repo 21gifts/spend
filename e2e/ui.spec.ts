@@ -143,3 +143,19 @@ test('login and toggle daily and moderator payments', async ({ page }) => {
     'true',
   );
 });
+
+test('Manila Sunday blocks the dashboard and payouts while liveness remains available', async ({
+  request,
+}) => {
+  const origin = 'http://127.0.0.1:3351';
+  const dashboard = await request.get(origin);
+  expect(dashboard.status()).toBe(503);
+  expect(await dashboard.text()).toContain('Christ is risen!');
+  expect(dashboard.headers()['cache-control']).toBe('no-store');
+  expect(Number(dashboard.headers()['retry-after'])).toBeGreaterThan(0);
+  const ping = await request.post(`${origin}/ping`, {
+    data: { lightningAddress: 'alice@example.com' },
+  });
+  expect(ping.status()).toBe(503);
+  expect((await request.get(`${origin}/healthz`)).status()).toBe(200);
+});

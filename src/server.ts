@@ -1,3 +1,4 @@
+import { isSundayRest, sundayRetryAfter } from './sunday-rest';
 import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
@@ -364,6 +365,20 @@ export function createServer(opts: {
   };
 
   const fetchHandler = async (req: Request): Promise<Response> => {
+    const timestamp = (opts.now ?? (() => new Date()))().getTime();
+    if (new URL(req.url).pathname !== '/healthz' && isSundayRest(timestamp)) {
+      return new Response(
+        'Christ is risen! Rejoice in the risen Lord, visit him at Holy Mass, rest and set work and shopping aside. 21.gifts returns on Monday (Manila time).',
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Retry-After': String(sundayRetryAfter(timestamp)),
+          },
+        },
+      );
+    }
     const url = new URL(req.url);
     if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/healthz') {
       const body = JSON.stringify({
@@ -938,6 +953,7 @@ export function createServer(opts: {
     },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
+      if (isSundayRest((opts.now ?? (() => new Date()))().getTime())) return { exitCode: 0 };
       if (source === 'catchup') {
         const today = (opts.now ?? (() => new Date()))().toISOString().slice(0, 10);
         if (today !== day) {
@@ -1030,8 +1046,7 @@ export function createServer(opts: {
       );
       const withSummary = result as { exitCode: number; summary?: RunSummary };
       const returnedSummary = withSummary.summary;
-      const summary =
-        returnedSummary ?? minimalRunSummary(day, live, withSummary.exitCode);
+      const summary = returnedSummary ?? minimalRunSummary(day, live, withSummary.exitCode);
       if (
         live &&
         onlyAddresses !== undefined &&
@@ -1166,6 +1181,7 @@ export function createServer(opts: {
   };
 
   const runRetryTick = async (): Promise<void> => {
+    if (isSundayRest((opts.now ?? (() => new Date()))().getTime())) return;
     const clock = opts.now ?? (() => new Date());
     const day = clock().toISOString().slice(0, 10);
     const owed = loadRetryOwed(config.stateDir, day);
@@ -1229,7 +1245,11 @@ export function createServer(opts: {
             continue;
           }
           const block = dayBlock(dailyRows, row.address);
-          if (block === 'paid' || block === 'uncertain' || latestStatus(dailyRows, row.address) === 'failed') {
+          if (
+            block === 'paid' ||
+            block === 'uncertain' ||
+            latestStatus(dailyRows, row.address) === 'failed'
+          ) {
             continue;
           }
           const listed = liveList.recipients.find(
