@@ -4998,7 +4998,7 @@ describe('Sunday rest', () => {
     const fetchImpl = vi.fn<typeof fetch>();
     let now = new Date('2026-09-26T16:00:00Z');
     const app = createServer({ env, now: () => now, runDay, fetchImpl });
-    for (const path of ['/', '/healthz', '/ping']) {
+    for (const path of ['/', '/ping']) {
       const response = await app.fetch(req('http://127.0.0.1' + path));
       expect(response.status).toBe(503);
       expect(response.headers.get('retry-after')).toBe('86400');
@@ -5009,6 +5009,7 @@ describe('Sunday rest', () => {
     retries.stop();
     expect(runDay).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect((await app.fetch(req('http://127.0.0.1/healthz'))).status).toBe(200);
     now = new Date('2026-09-27T16:00:00Z');
     expect((await app.fetch(req('http://127.0.0.1/healthz'))).status).toBe(200);
   });

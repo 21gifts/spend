@@ -366,7 +366,7 @@ export function createServer(opts: {
 
   const fetchHandler = async (req: Request): Promise<Response> => {
     const timestamp = (opts.now ?? (() => new Date()))().getTime();
-    if (isSundayRest(timestamp)) {
+    if (new URL(req.url).pathname !== '/healthz' && isSundayRest(timestamp)) {
       return new Response(
         'Christ is risen! Rejoice in the risen Lord, visit him at Holy Mass, rest and set work and shopping aside. 21.gifts returns on Monday (Manila time).',
         {
