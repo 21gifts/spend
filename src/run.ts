@@ -1,3 +1,4 @@
+import { isSundayRest } from './sunday-rest';
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
@@ -120,6 +121,13 @@ export async function runDay(
     btcUsd?: () => Promise<number | null>;
   },
 ): Promise<RunResult> {
+  const now = deps?.now ?? (() => new Date());
+  if (isSundayRest(now().getTime())) {
+    return {
+      exitCode: 0,
+      summary: makeSummary(options, 0, { reason: 'sunday_rest' }),
+    };
+  }
   const gifts = deps?.gifts ?? new GiftsApi(config.giftsApiUrl, config.giftsApiToken);
   const target = parseLndhubUri(config.lndhubUri);
   if (target === null) {
@@ -132,8 +140,6 @@ export async function runDay(
   const lndhub = deps?.lndhub ?? new LndhubClient(target);
   const state =
     deps?.state ?? new DayState(config.stateDir, options.day, undefined, options.bucket ?? 'daily');
-  const now = deps?.now ?? (() => new Date());
-
   const lock = deps?.lock ?? fileDayLock(config.stateDir, options.day);
   if (!lock.tryAcquire()) {
     log('spend.done', { ok: false, reason: 'locked' });
@@ -248,7 +254,11 @@ async function runDayLocked(
         amountUsd: recipient.amountUsd,
         btcUsd: rate,
       });
-      failed.push({ address: recipient.address, amountUsd: recipient.amountUsd, reason: 'usd_to_sats' });
+      failed.push({
+        address: recipient.address,
+        amountUsd: recipient.amountUsd,
+        reason: 'usd_to_sats',
+      });
       return finish(3, { reason: 'usd_to_sats' });
     }
     satsByAddress.set(recipient.address, sats);
@@ -295,10 +305,7 @@ async function runDayLocked(
           noMedia.add(recipient.address);
           continue;
         }
-        postedMessageId.set(
-          recipient.address,
-          posted.welcomeMessageId ?? posted.messageId,
-        );
+        postedMessageId.set(recipient.address, posted.welcomeMessageId ?? posted.messageId);
       } else {
         if (!posted.hasPosted) {
           noPost.add(recipient.address);
@@ -637,6 +644,20 @@ async function runDayLocked(
       continue;
     }
 
+    // Recheck immediately before the irreversible external payment.
+    if (isSundayRest(now().getTime())) {
+      return {
+        exitCode: 0,
+        summary: makeSummary(options, 0, {
+          reason: 'sunday_rest',
+          paid,
+          skipped,
+          failed,
+          uncertain,
+          dryRun,
+        }),
+      };
+    }
     const attempting: StateRow = {
       ts: now().toISOString(),
       address: recipient.address,
