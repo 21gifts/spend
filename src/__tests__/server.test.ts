@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { GiftsApi } from '../gifts-api';
+import { LndhubClient, parseLndhubUri } from '../lndhub';
 import { appendRetryOwed, loadRetryOwed, retryQueuePath } from '../retry-queue';
+import { runDay as executeRunDay } from '../run';
 import { createServer, parseBindAddr } from '../server';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
@@ -3131,6 +3135,148 @@ describe('createServer', () => {
       text: expect.stringContaining('source=scheduler'),
       disable_web_page_preview: true,
     });
+  });
+
+  it('POST /ping daily does not invoice when a welcome pay for that address settles first', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-welcome-day-ping-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+      })}\n`,
+    );
+    const preimage = '11'.repeat(32);
+    const paymentHash = createHash('sha256').update(Buffer.from(preimage, 'hex')).digest('hex');
+    const hub = parseLndhubUri('lndhub://admin:secret@https://lightning.space/lndhub');
+    if (hub === null) {
+      throw new Error('fixture');
+    }
+    const clock = (): Date => new Date('2026-08-25T12:00:00.000Z');
+    let releasePay!: () => void;
+    const payHeld = new Promise<void>((resolve) => {
+      releasePay = resolve;
+    });
+    let markPayStarted!: () => void;
+    const payStarted = new Promise<void>((resolve) => {
+      markPayStarted = resolve;
+    });
+    let invoiceCreates = 0;
+    const telegramCalls: string[] = [];
+    const logs: string[] = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const href = String(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (href.includes('api.telegram.org')) {
+        telegramCalls.push(href);
+        return new Response('{"ok":true}', { status: 200 });
+      }
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(
+          JSON.stringify({
+            hasPosted: true,
+            hasMedia: true,
+            messageId: PING_MESSAGE_ID,
+            postedAt: '2026-08-25T11:00:00.000Z',
+            welcomeHasMedia: true,
+            welcomeMessageId: PING_MESSAGE_ID,
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.includes('/invoices/proof')) {
+        return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+      }
+      if (method === 'POST' && href.endsWith('/invoices')) {
+        invoiceCreates += 1;
+        return new Response(
+          JSON.stringify({
+            id: `inv${invoiceCreates}`,
+            pr: 'lnbc1',
+            paymentHash,
+            amountMsat: 1_000_000,
+          }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (href.endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      if (href.endsWith('/payinvoice')) {
+        markPayStarted();
+        await payHeld;
+        return new Response(JSON.stringify({ payment_preimage: preimage }), { status: 200 });
+      }
+      throw new Error(`unexpected ${method} ${href}`);
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: 'true',
+          TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+          TELEGRAM_CHAT_ID: '-1001234567890',
+        },
+        now: clock,
+        fetchImpl,
+        runDay: (config, options) =>
+          executeRunDay(config, options, {
+            gifts: new GiftsApi(config.giftsApiUrl, config.giftsApiToken, fetchImpl),
+            lndhub: new LndhubClient(hub, fetchImpl),
+            now: clock,
+            btcUsd: async () => 100_000,
+          }),
+      });
+      const welcome = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            kind: 'welcome',
+          }),
+        }),
+      );
+      expect(welcome.status).toBe(202);
+      expect(await welcome.json()).toEqual({ status: 'accepted' });
+      await payStarted;
+      const daily = await app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+          }),
+        }),
+      );
+      expect(daily.status).toBe(202);
+      expect(await daily.json()).toEqual({ status: 'accepted' });
+      releasePay();
+      await app.drainPayouts();
+      expect(invoiceCreates).toBe(1);
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
+      const welcomeLog = readFileSync(join(dir, 'welcome.jsonl'), 'utf8');
+      expect(welcomeLog).toContain('"status":"paid"');
+      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(true);
+      expect(telegramCalls).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
