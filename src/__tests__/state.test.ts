@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CorruptStateError, DayState, dayBlock, latestStatus } from '../state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, paidOnUtcDay } from '../state';
 
 describe('DayState', () => {
   it('returns no rows when the file is missing', () => {
@@ -208,5 +208,31 @@ describe('dayBlock', () => {
         'A@b.com',
       ),
     ).toBe('uncertain');
+  });
+});
+
+describe('paidOnUtcDay', () => {
+  const paid = {
+    ts: '2026-08-23T01:00:00.000Z',
+    address: 'a@b.com',
+    invoiceId: '1',
+    paymentHash: 'h',
+    status: 'paid' as const,
+  };
+
+  it('is true when a paid row falls on that UTC day', () => {
+    expect(paidOnUtcDay([paid], 'A@b.com', '2026-08-23')).toBe(true);
+    expect(paidOnUtcDay([{ ...paid, ts: '2026-08-23' }], 'a@b.com', '2026-08-23')).toBe(true);
+  });
+
+  it('is false for a short ts, another status, another day, or another address', () => {
+    expect(paidOnUtcDay([{ ...paid, ts: '2026-08-2' }], 'a@b.com', '2026-08-23')).toBe(false);
+    expect(paidOnUtcDay([{ ...paid, status: 'dry-run' }], 'a@b.com', '2026-08-23')).toBe(false);
+    expect(paidOnUtcDay([{ ...paid, status: 'failed' }], 'a@b.com', '2026-08-23')).toBe(false);
+    expect(paidOnUtcDay([{ ...paid, status: 'uncertain' }], 'a@b.com', '2026-08-23')).toBe(false);
+    expect(paidOnUtcDay([{ ...paid, ts: '2026-08-22T23:00:00.000Z' }], 'a@b.com', '2026-08-23')).toBe(
+      false,
+    );
+    expect(paidOnUtcDay([paid], 'c@d.com', '2026-08-23')).toBe(false);
   });
 });

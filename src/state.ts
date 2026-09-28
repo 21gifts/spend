@@ -211,3 +211,28 @@ export function dayBlock(rows: StateRow[], address: string): 'paid' | 'uncertain
   }
   return found;
 }
+
+/**
+ * Whether any `paid` row for an address falls on a UTC day.
+ *
+ * Match is case-insensitive on `address`, `status === 'paid'`, and
+ * `ts.slice(0, 10) === day`. A `ts` shorter than 10 characters, any other
+ * status (`dry-run`, `failed`, `uncertain`), or a different day does not match.
+ *
+ * @param rows - Loaded log.
+ * @param address - Recipient.
+ * @param day - UTC day `YYYY-MM-DD`.
+ * @returns True when a matching `paid` row exists.
+ */
+export function paidOnUtcDay(rows: StateRow[], address: string, day: string): boolean {
+  const want = address.toLowerCase();
+  for (const row of rows) {
+    if (row.address.toLowerCase() !== want || row.status !== 'paid' || row.ts.length < 10) {
+      continue;
+    }
+    if (row.ts.slice(0, 10) === day) {
+      return true;
+    }
+  }
+  return false;
+}
