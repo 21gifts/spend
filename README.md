@@ -98,12 +98,13 @@ docker run -p 3000:3000 -v spend-state:/data \
 
 ## CI / CD
 
-| Workflow               | Trigger                   | Action                                                                |
-| ---------------------- | ------------------------- | --------------------------------------------------------------------- |
-| `ci.yml`               | PR; push `main`/`develop` | typecheck + test                                                      |
-| `deploy-dev.yaml`      | push to `develop`         | Docker build → push `21gifts/spend:beta` → notify → wait for deploy   |
-| `deploy-prd.yaml`      | push to `main`            | Docker build → push `21gifts/spend:latest` → notify → wait for deploy |
-| `auto-release-pr.yaml` | push to `develop`         | Auto-create Release PR (`develop → main`)                             |
+| Workflow               | Trigger                                                           | Action                                                                                                                            |
+| ---------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`               | PR (including drafts; not `ready_for_review`); push `main`/`develop` | Typecheck (`bun run typecheck`) + test (100% coverage) + e2e                                                                      |
+| `deploy-dev.yaml`      | push to `develop`                                                 | Docker build → push `21gifts/spend:beta` → notify → wait for deploy                                                               |
+| `deploy-prd.yaml`      | push to `main`                                                    | Docker build → push `21gifts/spend:latest` → notify → wait for deploy                                                             |
+| `auto-release-pr.yaml` | push to `develop`                                                 | Auto-create Release PR (`develop → main`)                                                                                         |
+| `a38-guard.yml`        | `pull_request_target`; PR comments; schedule; `workflow_dispatch` | `dfx pr guard` verifies the A38 report, releases held fork runs of `ci.yml`, and sets ready; never checks out the PR code         |
 
 Images target `linux/arm64`.
 
