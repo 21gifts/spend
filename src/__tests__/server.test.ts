@@ -4496,6 +4496,341 @@ describe('payment switches', () => {
     expect(await json.json()).toEqual({ error: 'Unauthorized' });
   });
 
+  it('POST /daily-roster/payments with the wrong bearer is 401', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/payments', {
+        method: 'POST',
+        headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('GET /daily-roster without a bearer is 401', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(dailyRosterReq('/daily-roster'));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('GET /daily-roster with the wrong bearer is 401', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster', { headers: { authorization: 'Bearer wrong' } }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('GET /daily-roster with a session cookie and no bearer is 401', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster', { headers: { cookie: `spend_session=${token}` } }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+  });
+
+  it('POST /daily-roster/comment rejects a non-JSON body', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: 'not-json',
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Expected a JSON body' });
+  });
+
+  it('POST /daily-roster/comment rejects a JSON array and a JSON number', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const bearer = { authorization: 'Bearer tok', 'content-type': 'application/json' };
+    const arrayBody = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify([]),
+      }),
+    );
+    expect(arrayBody.status).toBe(400);
+    expect(await arrayBody.json()).toEqual({ error: 'Expected a JSON body' });
+    const numberBody = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify(1),
+      }),
+    );
+    expect(numberBody.status).toBe(400);
+    expect(await numberBody.json()).toEqual({ error: 'Expected a JSON body' });
+  });
+
+  it('POST /daily-roster/comment rejects a non-string and an overlong comment', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const bearer = { authorization: 'Bearer tok', 'content-type': 'application/json' };
+    const nonString = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ comment: 1 }),
+      }),
+    );
+    expect(nonString.status).toBe(400);
+    expect(await nonString.json()).toEqual({ error: 'Invalid comment' });
+    const overlong = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ comment: 'a'.repeat(501) }),
+      }),
+    );
+    expect(overlong.status).toBe(400);
+    expect(await overlong.json()).toEqual({ error: 'Invalid comment' });
+  });
+
+  it('POST /daily-roster/comment keeps an empty string', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ comment: '' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: '',
+      paymentsEnabled: true,
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    });
+  });
+
+  it('POST /daily-roster/recipients does not coerce a numeric amount string', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'new@example.com', amountUsd: '1' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid address or amount' });
+  });
+
+  it('POST /daily-roster/recipients rejects a different letter case of a listed address', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'Alice@walletofsatoshi.com', amountUsd: 1 }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Address already listed' });
+  });
+
+  it('POST /daily-roster/recipients rejects zero and negative amounts', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const bearer = { authorization: 'Bearer tok', 'content-type': 'application/json' };
+    const zero = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ address: 'zero@example.com', amountUsd: 0 }),
+      }),
+    );
+    expect(zero.status).toBe(400);
+    expect(await zero.json()).toEqual({ error: 'Invalid address or amount' });
+    const negative = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ address: 'neg@example.com', amountUsd: -1 }),
+      }),
+    );
+    expect(negative.status).toBe(400);
+    expect(await negative.json()).toEqual({ error: 'Invalid address or amount' });
+  });
+
+  it('POST /daily-roster/recipients/update rejects an unknown address', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/update', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'missing@example.com', amountUsd: 1 }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Unknown address' });
+  });
+
+  it('POST /daily-roster/recipients/update rejects a zero amount', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/update', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', amountUsd: 0 }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid address or amount' });
+  });
+
+  it('POST /daily-roster/recipients/delete rejects an unknown address', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/delete', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ address: 'missing@example.com' }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Unknown address' });
+  });
+
+  it('POST /daily-roster/recipients/delete rejects a non-string address', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const bearer = { authorization: 'Bearer tok', 'content-type': 'application/json' };
+    const numberAddr = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/delete', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ address: 1 }),
+      }),
+    );
+    expect(numberAddr.status).toBe(400);
+    expect(await numberAddr.json()).toEqual({ error: 'Unknown address' });
+    const missing = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/delete', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ error: 'Unknown address' });
+  });
+
+  it('GET /daily-roster is 500 when recipients.json is not JSON', async () => {
+    const sess = sessionEnv();
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    writeFileSync(join(sess.STATE_DIR, 'recipients.json'), 'not-json');
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster', { headers: { authorization: 'Bearer tok' } }),
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
+  });
+
+  it('GET /daily-roster returns only comment, paymentsEnabled, and recipients', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster', { headers: { authorization: 'Bearer tok' } }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    });
+  });
+
   it('unauthenticated POST /moderators/payments redirects to /', async () => {
     const app = createServer({
       env: sessionEnv(),
