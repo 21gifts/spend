@@ -4651,6 +4651,28 @@ describe('payment switches', () => {
     });
   });
 
+  it('POST /daily-roster/comment collapses newlines and trims', async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq('/daily-roster/comment', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({ comment: '\n foo\nbar ' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: 'foo bar',
+      paymentsEnabled: true,
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+    });
+  });
+
   it('POST /daily-roster/recipients does not coerce a numeric amount string', async () => {
     const app = createServer({
       env: sessionEnv(),
