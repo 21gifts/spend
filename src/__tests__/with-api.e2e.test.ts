@@ -237,30 +237,18 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         });
       },
     });
-    const login = await spend.fetch(
-      new Request('http://127.0.0.1/login', {
+    const added = await spend.fetch(
+      new Request('http://127.0.0.1/daily-roster/recipients', {
         method: 'POST',
         headers: {
-          'content-type': 'application/x-www-form-urlencoded',
-          origin: 'http://127.0.0.1',
+          authorization: 'Bearer e2e-spend-token',
+          'content-type': 'application/json',
           host: '127.0.0.1',
         },
-        body: 'password=test-password',
+        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', amountUsd: 1 }),
       }),
     );
-    const token = /spend_session=([^;]+)/.exec(login.headers.get('set-cookie') ?? '')?.[1] ?? '';
-    await spend.fetch(
-      new Request('http://127.0.0.1/recipients/add', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded',
-          cookie: `spend_session=${token}`,
-          origin: 'http://127.0.0.1',
-          host: '127.0.0.1',
-        },
-        body: 'address=bob@walletofsatoshi.com&amountUsd=1',
-      }),
-    );
+    expect(added.status).toBe(200);
     const invoices: string[] = [];
     const origWarn = console.warn;
     console.warn = ((msg?: unknown, ...rest: unknown[]) => {

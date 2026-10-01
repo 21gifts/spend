@@ -82,6 +82,13 @@ function htmlResponse(body: string, status = 200, headers?: HeadersInit): Respon
   });
 }
 
+function jsonResponse(status: number, payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+}
+
 function redirect(location: string, headers?: HeadersInit): Response {
   return new Response(null, {
     status: 303,
@@ -206,14 +213,56 @@ function mutateRosterList(
 }
 
 /**
+ * Build a form for {@link mutateRosterList} from a JSON body. Non-string
+ * `address` becomes `""`. When `includeAmount` is set, a non-number `amountUsd`
+ * becomes `""` so numeric strings are not coerced.
+ *
+ * @param body - Parsed JSON object.
+ * @param includeAmount - Whether to set `amountUsd` (add/update).
+ * @returns Form fields for {@link mutateRosterList}.
+ */
+function jsonRosterForm(body: Record<string, unknown>, includeAmount: boolean): URLSearchParams {
+  const form = new URLSearchParams();
+  form.set('address', typeof body.address === 'string' ? body.address : '');
+  if (includeAmount) {
+    form.set('amountUsd', typeof body.amountUsd === 'number' ? String(body.amountUsd) : '');
+  }
+  return form;
+}
+
+type DailyRosterJson = {
+  comment: string;
+  paymentsEnabled: boolean;
+  recipients: Array<{ address: string; amountUsd: number }>;
+};
+
+/**
+ * GET `/daily-roster` payload: file comment, daily switch, and daily rows
+ * without per-row comment, moderators, or `moderatorPaymentsEnabled`.
+ *
+ * @param live - Full live file.
+ * @returns JSON body for GET and successful daily-roster POSTs.
+ */
+function toDailyRosterJson(live: LiveRecipients): DailyRosterJson {
+  return {
+    comment: live.comment,
+    paymentsEnabled: live.paymentsEnabled,
+    recipients: live.recipients.map((row) => ({
+      address: row.address,
+      amountUsd: row.amountUsd,
+    })),
+  };
+}
+
+/**
  * Editor panel payload for the combined page.
  *
- * @param comment - Payment comment shown in the textarea.
- * @param recipients - Daily roster.
+ * @param comment - File-level payment comment (daily roster is JSON API).
+ * @param recipients - Daily roster (not rendered on the dashboard).
  * @param moderators - Moderator roster.
- * @param paymentsEnabled - Daily-payments switch.
+ * @param paymentsEnabled - Daily-payments switch (not rendered on the dashboard).
  * @param moderatorPaymentsEnabled - Moderator-payments switch.
- * @param error - Optional error shown above the comment heading.
+ * @param error - Optional error shown above the Moderators heading.
  * @returns `SpendPanel` editor variant.
  */
 function editorPanel(
@@ -244,11 +293,13 @@ function editorPanel(
       };
 }
 
-const ROSTER_MUTATION = /^\/(recipients|moderators)\/(add|update|delete)$/;
-const PAYMENTS_SWITCH = /^\/(recipients|moderators)\/payments$/;
+const ROSTER_MUTATION = /^\/moderators\/(add|update|delete)$/;
+const PAYMENTS_SWITCH = /^\/moderators\/payments$/;
+const DAILY_ROSTER_POST =
+  /^\/daily-roster\/(comment|payments|recipients|recipients\/update|recipients\/delete)$/;
 
 /**
- * HTTP app for the dashboard, recipient editor, health probe, operator debug, and ping-triggered payouts.
+ * HTTP app for the dashboard, moderator editor, daily-roster JSON API, health probe, operator debug, and ping-triggered payouts.
  *
  * @param opts - Env, fetch, clock, and optional `retryCatchupMs` (overrides `RETRY_CATCHUP_MS`).
  * @returns Fetch handler, no-op midnight scheduler and boot catch-up, retry catch-up for owed `insufficient_balance` addresses when live and the interval is enabled, payout runner, and payout drain.
@@ -357,6 +408,28 @@ export function createServer(opts: {
           response: new Response('Recipient list is unreadable', {
             status: 500,
           }),
+        };
+      }
+      throw err;
+    }
+  };
+
+  const loadLiveJson = (): ({ ok: true } & LiveRecipients) | { ok: false; response: Response } => {
+    try {
+      const liveList = loadLiveRecipients(config.stateDir);
+      return {
+        ok: true,
+        comment: liveList.comment,
+        recipients: liveList.recipients,
+        moderators: liveList.moderators,
+        paymentsEnabled: liveList.paymentsEnabled,
+        moderatorPaymentsEnabled: liveList.moderatorPaymentsEnabled,
+      };
+    } catch (err) {
+      if (err instanceof CorruptRecipientsError) {
+        return {
+          ok: false,
+          response: jsonResponse(500, { error: 'Recipient list is unreadable' }),
         };
       }
       throw err;
@@ -744,6 +817,96 @@ export function createServer(opts: {
       });
       return json(202, { status: 'accepted' });
     }
+    if (
+      (req.method === 'GET' && url.pathname === '/daily-roster') ||
+      (req.method === 'POST' && DAILY_ROSTER_POST.test(url.pathname))
+    ) {
+      if (
+        !bearerMatchesToken(config.giftsApiToken, req.headers.get('authorization') ?? undefined)
+      ) {
+        return jsonResponse(401, { error: 'Unauthorized' });
+      }
+      if (req.method === 'GET') {
+        const loadedLive = loadLiveJson();
+        if (!loadedLive.ok) {
+          return loadedLive.response;
+        }
+        return jsonResponse(200, toDailyRosterJson(loadedLive));
+      }
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return jsonResponse(400, { error: 'Expected a JSON body' });
+      }
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        return jsonResponse(400, { error: 'Expected a JSON body' });
+      }
+      const objectBody = body as Record<string, unknown>;
+      return recipientsGate.run(async () => {
+        const loadedLive = loadLiveJson();
+        if (!loadedLive.ok) {
+          return loadedLive.response;
+        }
+        const recipients = loadedLive.recipients.map((r) => ({ ...r }));
+        const moderators = loadedLive.moderators.map((r) => ({ ...r }));
+        const persist = (next: LiveRecipients): Response => {
+          saveLiveRecipients(config.stateDir, next);
+          return jsonResponse(200, toDailyRosterJson(next));
+        };
+
+        if (url.pathname === '/daily-roster/comment') {
+          const parsed = parseComment(
+            typeof objectBody.comment === 'string' ? objectBody.comment : null,
+          );
+          if (!parsed.ok) {
+            return jsonResponse(400, { error: 'Invalid comment' });
+          }
+          return persist({
+            comment: parsed.comment,
+            recipients,
+            moderators,
+            paymentsEnabled: loadedLive.paymentsEnabled,
+            moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
+          });
+        }
+
+        if (url.pathname === '/daily-roster/payments') {
+          if (typeof objectBody.enabled !== 'boolean') {
+            return jsonResponse(400, { error: 'Invalid payments switch' });
+          }
+          return persist({
+            comment: loadedLive.comment,
+            recipients,
+            moderators,
+            paymentsEnabled: objectBody.enabled,
+            moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
+          });
+        }
+
+        const action: RosterAction =
+          url.pathname === '/daily-roster/recipients/update'
+            ? 'update'
+            : url.pathname === '/daily-roster/recipients/delete'
+              ? 'delete'
+              : 'add';
+        const mutated = mutateRosterList(
+          action,
+          recipients,
+          jsonRosterForm(objectBody, action !== 'delete'),
+        );
+        if (!mutated.ok) {
+          return jsonResponse(400, { error: mutated.error });
+        }
+        return persist({
+          comment: loadedLive.comment,
+          recipients: mutated.list,
+          moderators,
+          paymentsEnabled: loadedLive.paymentsEnabled,
+          moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
+        });
+      });
+    }
     if (req.method === 'HEAD' && url.pathname === '/') {
       return new Response(null, {
         status: 200,
@@ -815,10 +978,7 @@ export function createServer(opts: {
 
     const rosterMatch = ROSTER_MUTATION.exec(url.pathname);
     const paymentsMatch = PAYMENTS_SWITCH.exec(url.pathname);
-    if (
-      req.method === 'POST' &&
-      (rosterMatch !== null || paymentsMatch !== null || url.pathname === '/recipients/comment')
-    ) {
+    if (req.method === 'POST' && (rosterMatch !== null || paymentsMatch !== null)) {
       if (config.dashboardPassword === null) {
         return unconfiguredPage();
       }
@@ -838,31 +998,6 @@ export function createServer(opts: {
         const recipients = loadedLive.recipients.map((r) => ({ ...r }));
         const moderators = loadedLive.moderators.map((r) => ({ ...r }));
 
-        if (url.pathname === '/recipients/comment') {
-          const raw = form.get('comment');
-          const parsed = parseComment(raw);
-          if (!parsed.ok) {
-            return combinedPage(
-              editorPanel(
-                raw ?? '',
-                recipients,
-                moderators,
-                loadedLive.paymentsEnabled,
-                loadedLive.moderatorPaymentsEnabled,
-                'Invalid comment',
-              ),
-            );
-          }
-          saveLiveRecipients(config.stateDir, {
-            comment: parsed.comment,
-            recipients,
-            moderators,
-            paymentsEnabled: loadedLive.paymentsEnabled,
-            moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
-          });
-          return redirect('/');
-        }
-
         if (paymentsMatch !== null) {
           const enabledRaw = form.get('enabled');
           if (enabledRaw !== 'on' && enabledRaw !== 'off') {
@@ -877,14 +1012,12 @@ export function createServer(opts: {
               ),
             );
           }
-          const enabled = enabledRaw === 'on';
-          const daily = paymentsMatch[1] === 'recipients';
           saveLiveRecipients(config.stateDir, {
             comment,
             recipients,
             moderators,
-            paymentsEnabled: daily ? enabled : loadedLive.paymentsEnabled,
-            moderatorPaymentsEnabled: daily ? loadedLive.moderatorPaymentsEnabled : enabled,
+            paymentsEnabled: loadedLive.paymentsEnabled,
+            moderatorPaymentsEnabled: enabledRaw === 'on',
           });
           return redirect('/');
         }
@@ -892,12 +1025,10 @@ export function createServer(opts: {
         if (rosterMatch === null) {
           return new Response('Not found', { status: 404 });
         }
-        const which = rosterMatch[1] === 'moderators' ? 'moderators' : 'recipients';
-        const actionRaw = rosterMatch[2];
+        const actionRaw = rosterMatch[1];
         const action: RosterAction =
           actionRaw === 'update' ? 'update' : actionRaw === 'delete' ? 'delete' : 'add';
-        const current = which === 'recipients' ? recipients : moderators;
-        const mutated = mutateRosterList(action, current, form);
+        const mutated = mutateRosterList(action, moderators, form);
         if (!mutated.ok) {
           return combinedPage(
             editorPanel(
@@ -912,8 +1043,8 @@ export function createServer(opts: {
         }
         saveLiveRecipients(config.stateDir, {
           comment,
-          recipients: which === 'recipients' ? mutated.list : recipients,
-          moderators: which === 'moderators' ? mutated.list : moderators,
+          recipients,
+          moderators: mutated.list,
           paymentsEnabled: loadedLive.paymentsEnabled,
           moderatorPaymentsEnabled: loadedLive.moderatorPaymentsEnabled,
         });
