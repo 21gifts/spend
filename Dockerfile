@@ -2,6 +2,7 @@
 #
 # Build:
 #   docker build -t 21gifts/spend:beta .
+#   docker build -t 21gifts/spend:staging .
 #   docker build -t 21gifts/spend:latest .
 #
 # Run (required: GIFTS_API_URL, GIFTS_API_TOKEN, LNDHUB_URI):
