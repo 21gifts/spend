@@ -2,7 +2,7 @@ name: Auto Release PR
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, staging]
   workflow_dispatch:
 
 permissions:
@@ -23,37 +23,81 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch main and develop
+      - name: Fetch main, develop, and staging
         run: |
           git fetch origin main || true
           git fetch origin develop || true
+          git fetch origin staging || true
+
+      - name: Resolve release pair
+        id: pair
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF}"
+          if [ "$ref" = "refs/heads/develop" ]; then
+            if ! git rev-parse --verify origin/staging >/dev/null 2>&1; then
+              echo "::notice::origin/staging is missing; not opening a release PR"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "base=staging" >> "$GITHUB_OUTPUT"
+            echo "head=develop" >> "$GITHUB_OUTPUT"
+            echo "title=Release: develop -> staging" >> "$GITHUB_OUTPUT"
+            echo "ready=Merge when ready for staging" >> "$GITHUB_OUTPUT"
+          elif [ "$ref" = "refs/heads/staging" ]; then
+            if ! git rev-parse --verify origin/staging >/dev/null 2>&1; then
+              echo "::notice::origin/staging is missing; not opening a release PR"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "base=main" >> "$GITHUB_OUTPUT"
+            echo "head=staging" >> "$GITHUB_OUTPUT"
+            echo "title=Release: staging -> main" >> "$GITHUB_OUTPUT"
+            echo "ready=Merge when ready for production" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::ref ${ref} is not a release source; not opening a release PR"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
       - name: Check for existing PR
         id: check-pr
+        if: steps.pair.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ steps.pair.outputs.base }}
+          HEAD: ${{ steps.pair.outputs.head }}
         run: |
-          PR_COUNT=$(gh pr list --base main --head develop --state open --json number --jq 'length')
-          echo "pr_exists=$([[ $PR_COUNT -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          PR_COUNT=$(gh pr list --base "$BASE" --head "$HEAD" --state open --json number --jq 'length')
+          echo "pr_exists=$([[ $PR_COUNT -gt 0 ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
 
       - name: Check for differences
         id: check-diff
-        if: steps.check-pr.outputs.pr_exists == 'false'
+        if: steps.pair.outputs.skip != 'true' && steps.check-pr.outputs.pr_exists == 'false'
+        env:
+          BASE: ${{ steps.pair.outputs.base }}
+          HEAD: ${{ steps.pair.outputs.head }}
         run: |
-          if git rev-parse --verify origin/main >/dev/null 2>&1 \
-            && git rev-parse --verify origin/develop >/dev/null 2>&1; then
-            DIFF_COUNT=$(git rev-list --count origin/main..origin/develop)
+          if git rev-parse --verify "origin/${BASE}" >/dev/null 2>&1 \
+            && git rev-parse --verify "origin/${HEAD}" >/dev/null 2>&1; then
+            DIFF_COUNT=$(git rev-list --count "origin/${BASE}..origin/${HEAD}")
           else
             DIFF_COUNT=0
           fi
-          echo "has_changes=$([[ $DIFF_COUNT -gt 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
-          echo "commit_count=$DIFF_COUNT" >> $GITHUB_OUTPUT
+          echo "has_changes=$([[ $DIFF_COUNT -gt 0 ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
+          echo "commit_count=$DIFF_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Create Release PR
-        if: steps.check-pr.outputs.pr_exists == 'false' && steps.check-diff.outputs.has_changes == 'true'
+        if: steps.pair.outputs.skip != 'true' && steps.check-pr.outputs.pr_exists == 'false' && steps.check-diff.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMIT_COUNT: ${{ steps.check-diff.outputs.commit_count }}
+          BASE: ${{ steps.pair.outputs.base }}
+          HEAD: ${{ steps.pair.outputs.head }}
+          TITLE: ${{ steps.pair.outputs.title }}
+          READY: ${{ steps.pair.outputs.ready }}
         run: |
           printf '%s\n' \
             "## Automatic Release PR" \
@@ -62,11 +106,11 @@ jobs:
             "" \
             "- [ ] Review all changes" \
             "- [ ] Verify CI passes" \
-            "- [ ] Merge when ready for production" \
+            "- [ ] ${READY}" \
             > /tmp/pr-body.md
 
           gh pr create \
-            --base main \
-            --head develop \
-            --title "Release: develop -> main" \
+            --base "$BASE" \
+            --head "$HEAD" \
+            --title "$TITLE" \
             --body-file /tmp/pr-body.md
