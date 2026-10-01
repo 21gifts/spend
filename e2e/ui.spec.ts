@@ -14,36 +14,53 @@ test('wrong password stays on / with error', async ({ page }) => {
   await expect(page.locator('body')).toContainText('Invalid password');
 });
 
-test('login, add, update, and delete recipients', async ({ page }) => {
-  await page.goto('/');
-  await page.fill('input[name=password]', 'test-password');
-  await page.click('button[type=submit]');
-  await expect(page).toHaveURL('/');
-  await expect(page.locator('body')).toContainText('alice@w...');
-  await expect(
-    page.locator('li.row:has(input[name="address"][value="alice@walletofsatoshi.com"]) input[name=amountUsd]'),
-  ).toHaveValue('1');
-  await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
+test('bearer token adds, updates, and deletes daily recipients', async ({ request }) => {
+  const headers = {
+    authorization: 'Bearer e2e-token',
+    'content-type': 'application/json',
+  };
+  const listed = await request.get('/daily-roster', { headers });
+  expect(listed.status()).toBe(200);
+  const before = (await listed.json()) as {
+    recipients: { address: string; amountUsd: number }[];
+  };
+  expect(before.recipients.map((row) => row.address)).toContain('alice@walletofsatoshi.com');
 
-  await page.locator('form[action="/recipients/add"] input[name=address]').fill('bob@walletofsatoshi.com');
-  await page.locator('form[action="/recipients/add"] input[name=amountUsd]').fill('2');
-  await page.locator('form[action="/recipients/add"] button').click();
-  await expect(page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"]) .addr')).toHaveText('bob@w...');
-  await expect(page.locator('li.row.total .usd-total')).toHaveText('3');
+  const added = await request.post('/daily-roster/recipients', {
+    headers,
+    data: { address: 'bob@walletofsatoshi.com', amountUsd: 2 },
+  });
+  expect(added.status()).toBe(200);
+  const afterAdd = (await added.json()) as {
+    recipients: { address: string; amountUsd: number }[];
+  };
+  expect(afterAdd.recipients).toContainEqual({
+    address: 'bob@walletofsatoshi.com',
+    amountUsd: 2,
+  });
 
-  await page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"]) input[name=amountUsd]').fill('3');
-  await page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"]) form[action="/recipients/update"] button').click();
-  await expect(page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"]) input[name=amountUsd]')).toHaveValue(
-    '3',
-  );
-  await expect(page.locator('li.row.total .usd-total')).toHaveText('4');
+  const updated = await request.post('/daily-roster/recipients/update', {
+    headers,
+    data: { address: 'bob@walletofsatoshi.com', amountUsd: 3 },
+  });
+  expect(updated.status()).toBe(200);
+  const afterUpdate = (await updated.json()) as {
+    recipients: { address: string; amountUsd: number }[];
+  };
+  expect(afterUpdate.recipients).toContainEqual({
+    address: 'bob@walletofsatoshi.com',
+    amountUsd: 3,
+  });
 
-  await page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"]) form[action="/recipients/delete"] button').click();
-  await expect(page.locator('li.row:has(input[name="address"][value="bob@walletofsatoshi.com"])')).toHaveCount(0);
-  await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
-  await page.locator('li.row:has(input[name="address"][value="alice@walletofsatoshi.com"]) form[action="/recipients/delete"] button').click();
-  await expect(page.locator('body')).toContainText('No recipients');
-  await expect(page.locator('li.row.total')).toHaveCount(0);
+  const deleted = await request.post('/daily-roster/recipients/delete', {
+    headers,
+    data: { address: 'bob@walletofsatoshi.com' },
+  });
+  expect(deleted.status()).toBe(200);
+  const afterDelete = (await deleted.json()) as {
+    recipients: { address: string; amountUsd: number }[];
+  };
+  expect(afterDelete.recipients.map((row) => row.address)).not.toContain('bob@walletofsatoshi.com');
 });
 
 test('login, add, update, and delete moderators', async ({ page }) => {
@@ -100,45 +117,45 @@ test('public / contains Log in and not the roster until logged in', async ({ req
   expect(html).not.toContain('action="/moderators/payments"');
 });
 
-test('login and edit the payment comment', async ({ page }) => {
-  await page.goto('/');
-  await page.fill('input[name=password]', 'test-password');
-  await page.click('button[type=submit]');
-  await expect(page).toHaveURL('/');
-  await expect(page.locator('textarea[name=comment]')).toHaveValue('21gifts daily');
-  await page.locator('form[action="/recipients/comment"] textarea[name=comment]').fill('hello gifts');
-  await page.locator('form[action="/recipients/comment"] button').click();
-  await expect(page).toHaveURL('/');
-  await expect(page.locator('textarea[name=comment]')).toHaveValue('hello gifts');
+test('bearer token edits the payment comment and the daily payments switch', async ({ request }) => {
+  const headers = {
+    authorization: 'Bearer e2e-token',
+    'content-type': 'application/json',
+  };
+  const comment = await request.post('/daily-roster/comment', {
+    headers,
+    data: { comment: 'hello gifts' },
+  });
+  expect(comment.status()).toBe(200);
+  expect(await comment.json()).toMatchObject({ comment: 'hello gifts' });
+  const off = await request.post('/daily-roster/payments', {
+    headers,
+    data: { enabled: false },
+  });
+  expect(off.status()).toBe(200);
+  expect(await off.json()).toMatchObject({ paymentsEnabled: false, comment: 'hello gifts' });
+  const on = await request.post('/daily-roster/payments', {
+    headers,
+    data: { enabled: true },
+  });
+  expect(on.status()).toBe(200);
+  expect(await on.json()).toMatchObject({ paymentsEnabled: true });
 });
 
-test('login and toggle daily and moderator payments', async ({ page }) => {
+test('login and toggle moderator payments', async ({ page }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
   await expect(page).toHaveURL('/');
-  const daily = page.locator('form[aria-label="Daily payments"]');
+  await expect(page.locator('form[aria-label="Daily payments"]')).toHaveCount(0);
   const moderator = page.locator('form[aria-label="Moderator payments"]');
-  await daily.locator('button[name="enabled"][value="off"]').click();
-  await expect(daily.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
   await moderator.locator('button[name="enabled"][value="off"]').click();
-  await expect(daily.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
   await expect(moderator.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await daily.locator('button[name="enabled"][value="on"]').click();
-  await expect(daily.locator('button[name="enabled"][value="on"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await expect(moderator.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
+  await moderator.locator('button[name="enabled"][value="on"]').click();
+  await expect(moderator.locator('button[name="enabled"][value="on"]')).toHaveAttribute(
     'aria-pressed',
     'true',
   );

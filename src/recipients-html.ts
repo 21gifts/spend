@@ -22,7 +22,7 @@ const TRASH_SVG =
  * Optional panel below the Spend block on the combined page.
  *
  * - `login` — password form when the editor is configured but there is no session
- * - `editor` — payment comment + daily and moderator rosters when the session is valid
+ * - `editor` — moderator roster when the session is valid (daily roster is JSON API)
  */
 export type SpendPanel =
   | { kind: 'login'; error?: string }
@@ -50,25 +50,24 @@ function formatUsdTotal(sum: number): string {
 }
 
 /**
- * One roster row. `actionPrefix` is `/recipients` or `/moderators`.
+ * One moderator roster row.
  *
  * @param row - Address and USD amount.
- * @param actionPrefix - POST path prefix for update/delete.
  * @returns List-item HTML.
  */
-function renderRow(row: Recipient, actionPrefix: '/recipients' | '/moderators'): string {
+function renderRow(row: Recipient): string {
   const full = slot(row.address);
   const display = slot(displayLightningAddress(row.address));
   const usd = slot(String(row.amountUsd));
-  const named = actionPrefix === '/moderators' ? `moderator ${full}` : full;
+  const named = `moderator ${full}`;
   return `<li class="row">
               <span class="addr" title="${full}">${display}</span>
-              <form class="inline" method="post" action="${actionPrefix}/update">
+              <form class="inline" method="post" action="/moderators/update">
                 <input type="hidden" name="address" value="${full}">
                 <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD amount for ${named}">
                 <button class="icon" type="submit" aria-label="Update ${named}" title="Update">${PENCIL_SVG}</button>
               </form>
-              <form class="inline" method="post" action="${actionPrefix}/delete">
+              <form class="inline" method="post" action="/moderators/delete">
                 <input type="hidden" name="address" value="${full}">
                 <button class="icon danger" type="submit" aria-label="Delete ${named}" title="Delete">${TRASH_SVG}</button>
               </form>
@@ -91,37 +90,31 @@ function renderTotalRow(recipients: Recipient[]): string {
 }
 
 /**
- * Roster card: rows plus Total, or a muted empty message.
+ * Moderator roster card: rows plus Total, or a muted empty message.
  *
  * @param rows - List to render.
- * @param actionPrefix - POST path prefix for row forms.
  * @param emptyMessage - Shown when `rows` is empty.
  * @returns Card HTML.
  */
-function renderRosterCard(
-  rows: Recipient[],
-  actionPrefix: '/recipients' | '/moderators',
-  emptyMessage: string,
-): string {
+function renderRosterCard(rows: Recipient[], emptyMessage: string): string {
   if (rows.length === 0) {
     return `<div class="card"><p class="muted">${emptyMessage}</p></div>`;
   }
   return `<div class="card">
           <ul class="roster">
-            ${rows.map((row) => renderRow(row, actionPrefix)).join('\n            ')}
+            ${rows.map((row) => renderRow(row)).join('\n            ')}
             ${renderTotalRow(rows)}
           </ul>
         </div>`;
 }
 
 /**
- * Add-row form posting to `/recipients/add` or `/moderators/add`.
+ * Add-row form posting to `/moderators/add`.
  *
- * @param action - Form action path.
  * @returns Form HTML.
  */
-function renderAddForm(action: '/recipients/add' | '/moderators/add'): string {
-  return `<form class="card add-grid" method="post" action="${action}">
+function renderAddForm(): string {
+  return `<form class="card add-grid" method="post" action="/moderators/add">
     <label class="field grow">
       <span>Address</span>
       <input name="address" type="text" autocomplete="off">
@@ -135,23 +128,17 @@ function renderAddForm(action: '/recipients/add' | '/moderators/add'): string {
 }
 
 /**
- * On/Off switch posting `enabled=on` or `enabled=off`.
+ * On/Off switch posting `enabled=on` or `enabled=off` to `/moderators/payments`.
  *
- * @param action - Form action path.
- * @param ariaLabel - Accessible name for the form.
  * @param enabled - Persisted flag; the matching button is primary and pressed.
  * @returns Form HTML.
  */
-function renderPaymentsSwitch(
-  action: '/recipients/payments' | '/moderators/payments',
-  ariaLabel: 'Daily payments' | 'Moderator payments',
-  enabled: boolean,
-): string {
+function renderPaymentsSwitch(enabled: boolean): string {
   const onClass = enabled ? 'primary' : 'ghost';
   const offClass = enabled ? 'ghost' : 'primary';
   const onPressed = enabled ? 'true' : 'false';
   const offPressed = enabled ? 'false' : 'true';
-  return `<form class="card payments-switch" method="post" action="${action}" aria-label="${ariaLabel}">
+  return `<form class="card payments-switch" method="post" action="/moderators/payments" aria-label="Moderator payments">
   <span class="switch-label">Payments</span>
   <button type="submit" name="enabled" value="on" class="${onClass}" aria-pressed="${onPressed}">On</button>
   <button type="submit" name="enabled" value="off" class="${offClass}" aria-pressed="${offPressed}">Off</button>
@@ -179,45 +166,26 @@ function renderLoginPanel(error?: string): string {
 }
 
 /**
- * Payment comment + daily roster + moderator roster + add forms (below Spend).
+ * Moderator roster + add form (below Spend). Daily comment and roster are JSON API.
  *
- * @param recipients - Current daily recipient list
- * @param comment - File-level LUD-12 payment comment
  * @param moderators - Current moderator stipend list
- * @param paymentsEnabled - Daily-payments switch
  * @param moderatorPaymentsEnabled - Moderator-payments switch
- * @param error - Optional error shown above the payment comment heading
+ * @param error - Optional error shown above the Moderators heading
  * @returns Inner HTML fragment
  */
 function renderEditorPanel(
-  recipients: Recipient[],
-  comment: string,
   moderators: Recipient[],
-  paymentsEnabled: boolean,
   moderatorPaymentsEnabled: boolean,
   error?: string,
 ): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   return `${errorHtml}
-  <h2>Payment comment</h2>
-  <form class="card comment-form" method="post" action="/recipients/comment">
-    <label class="field grow">
-      <span>Comment</span>
-      <textarea name="comment" rows="3" aria-label="Payment comment">${slot(comment)}</textarea>
-    </label>
-    <button class="primary" type="submit">Save</button>
-  </form>
-  <h2>Recipients</h2>
-  ${renderPaymentsSwitch('/recipients/payments', 'Daily payments', paymentsEnabled)}
-  ${renderRosterCard(recipients, '/recipients', 'No recipients')}
-  <h2>Add recipient</h2>
-  ${renderAddForm('/recipients/add')}
   <h2>Moderators</h2>
-  ${renderPaymentsSwitch('/moderators/payments', 'Moderator payments', moderatorPaymentsEnabled)}
-  ${renderRosterCard(moderators, '/moderators', 'No moderators')}
+  ${renderPaymentsSwitch(moderatorPaymentsEnabled)}
+  ${renderRosterCard(moderators, 'No moderators')}
   <h2>Add moderator</h2>
-  ${renderAddForm('/moderators/add')}`;
+  ${renderAddForm()}`;
 }
 
 function renderSpendFields(data: DashboardData): string {
@@ -247,7 +215,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.recipients, panel.comment, panel.moderators, panel.paymentsEnabled, panel.moderatorPaymentsEnabled, panel.error)}
+  ${renderEditorPanel(panel.moderators, panel.moderatorPaymentsEnabled, panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {
@@ -321,7 +289,7 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
  * @param opts.comment - File-level LUD-12 payment comment
  * @param opts.paymentsEnabled - Daily-payments switch
  * @param opts.moderatorPaymentsEnabled - Moderator-payments switch
- * @param opts.error - Optional error message shown above the payment comment heading
+ * @param opts.error - Optional error message shown above the Moderators heading
  * @returns Complete HTML document.
  */
 export function renderRecipientsHtml(opts: {
