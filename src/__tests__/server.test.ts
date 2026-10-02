@@ -3315,7 +3315,7 @@ function sessionEnv(): typeof env & { SPEND_DASHBOARD_PASSWORD: string } {
 /** Parsed `STATE_DIR/recipients.json` after an editor mutation. */
 type LiveRosterFile = {
   comment: string;
-  recipients: Array<{ address: string; amountUsd: number }>;
+  recipients: Array<{ address: string; amountUsd: number; comment?: string }>;
   moderators: Array<{ address: string; amountUsd: number }>;
   paymentsEnabled?: boolean;
   moderatorPaymentsEnabled?: boolean;
@@ -4755,6 +4755,53 @@ describe('payment switches', () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Unknown address' });
+  });
+
+  it('POST /daily-roster/recipients/update matches the trimmed address and keeps the row comment', async () => {
+    const sess = sessionEnv();
+    writeFileSync(
+      sess.RECIPIENTS_FILE,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1, comment: 'keep' }],
+      })}\n`,
+    );
+    const app = createServer({
+      env: sess,
+      fetchImpl: async () => {
+        throw new Error('no network');
+      },
+    });
+    const bearer = { authorization: 'Bearer tok', 'content-type': 'application/json' };
+    const wrongCase = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/update', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ address: 'Alice@walletofsatoshi.com', amountUsd: 4 }),
+      }),
+    );
+    expect(wrongCase.status).toBe(400);
+    expect(await wrongCase.json()).toEqual({ error: 'Unknown address' });
+    expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
+      { address: 'alice@walletofsatoshi.com', amountUsd: 1, comment: 'keep' },
+    ]);
+    const padded = await app.fetch(
+      dailyRosterReq('/daily-roster/recipients/update', {
+        method: 'POST',
+        headers: bearer,
+        body: JSON.stringify({ address: '  alice@walletofsatoshi.com  ', amountUsd: 4 }),
+      }),
+    );
+    expect(padded.status).toBe(200);
+    expect(await padded.json()).toEqual({
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      defaultAmountUsd: NEW_MEMBER_DAILY_USD,
+      recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 4 }],
+    });
+    expect(readLiveRoster(sess.STATE_DIR).recipients).toEqual([
+      { address: 'alice@walletofsatoshi.com', amountUsd: 4, comment: 'keep' },
+    ]);
   });
 
   it('POST /daily-roster/recipients/update rejects a zero amount', async () => {
