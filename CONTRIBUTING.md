@@ -9,7 +9,7 @@ at commit `7dd1cc257f3820814e90e08575b3ce702ee26222`. Repo job selection:
 `.github/pr-guard.json`. `dfx pr guard` is
 [wired in](https://github.com/DFXswiss/agent/blob/7dd1cc257f3820814e90e08575b3ce702ee26222/docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
 
-Feature pull requests target `develop`, not `main`.
+Feature pull requests always target `develop`, not `staging` and not `main`. Developers rebase `staging` onto `develop` regularly, because those pull requests land on `develop` and do not update `staging`.
 
 This is a **public** repository. GitHub-hosted runners execute the heavy suite
 (Vitest with the coverage gate, Playwright UI, the invoice path against the
