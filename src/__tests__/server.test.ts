@@ -3445,6 +3445,8 @@ describe('recipient editor', () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('Log out');
+    expect(html).toContain('href="https://21.gifts/grants/payments/comment"');
+    expect(html).toContain('href="https://21.gifts/grants/payments/amounts"');
     expect(html).toContain('<h2>Moderators</h2>');
     expect(html).toContain('No moderators');
     expect(html).toContain('aria-label="Moderator payments"');

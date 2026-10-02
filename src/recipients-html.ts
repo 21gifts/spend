@@ -6,6 +6,12 @@ import { bitcoinQrSvg } from './qr';
 
 const TITLE = '21.gifts spend';
 
+/** Daily payment text on 21.gifts. The spend page does not edit it. */
+const DAILY_TEXT_HREF = 'https://21.gifts/grants/payments/comment';
+
+/** Daily payment amounts on 21.gifts. The spend page does not edit them. */
+const DAILY_AMOUNTS_HREF = 'https://21.gifts/grants/payments/amounts';
+
 const NULL_DASHBOARD: DashboardData = {
   sats: null,
   usd: null,
@@ -166,11 +172,25 @@ function renderLoginPanel(error?: string): string {
 }
 
 /**
- * Moderator roster + add form (below Spend). Daily comment and roster are JSON API.
+ * Links to the two 21.gifts pages that edit daily payments.
+ *
+ * @returns Heading and two buttons. No roster and no comment field.
+ */
+function renderDailyLinks(): string {
+  return `<h2>Daily payments</h2>
+  <div class="card daily-links">
+    <a class="primary" href="${DAILY_TEXT_HREF}">Daily payment text</a>
+    <a class="primary" href="${DAILY_AMOUNTS_HREF}">Daily payment amounts</a>
+  </div>`;
+}
+
+/**
+ * Moderator roster + add form (below Spend). Daily comment and roster are not
+ * edited here; {@link renderDailyLinks} points at those pages on 21.gifts.
  *
  * @param moderators - Current moderator stipend list
  * @param moderatorPaymentsEnabled - Moderator-payments switch
- * @param error - Optional error shown above the Moderators heading
+ * @param error - Optional error shown above the daily-payment links
  * @returns Inner HTML fragment
  */
 function renderEditorPanel(
@@ -181,6 +201,7 @@ function renderEditorPanel(
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   return `${errorHtml}
+  ${renderDailyLinks()}
   <h2>Moderators</h2>
   ${renderPaymentsSwitch(moderatorPaymentsEnabled)}
   ${renderRosterCard(moderators, 'No moderators')}
@@ -283,7 +304,8 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
 
 /**
  * Moderator-editor HTML. Daily recipients, the file comment, and the daily
- * switch are accepted and not rendered; those fields are the Bearer JSON API.
+ * switch are accepted and not rendered. Two buttons link to the 21.gifts
+ * pages that edit them. Those fields are the Bearer JSON API.
  *
  * @param opts.recipients - Daily recipient list. Not rendered.
  * @param opts.moderators - Current moderator stipend list
