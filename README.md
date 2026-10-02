@@ -60,7 +60,7 @@ Match `welcome.jsonl` case-insensitively; the first persisted address is the pay
 
 ## Branches
 
-Open every feature PR against **`develop`**, not `main`.
+Open every feature pull request against **`develop`**, not `staging` and not `main`. Developers rebase `staging` onto `develop` regularly, because those pull requests land on `develop` and do not update `staging`.
 
 - Merge to `develop` → Deploy DEV (`21gifts/spend:beta`)
 - Push to `develop` also opens `Release: develop -> main` when `main` is behind
