@@ -28,7 +28,7 @@ Live roster: `STATE_DIR/recipients.json` (`comment`, `recipients`, `moderators`,
 
 Auth: `Authorization: Bearer` matching `GIFTS_API_TOKEN` (same token as `POST /ping`). Missing or mismatch → `401` `{ "error": "Unauthorized" }`. No Origin / same-origin check. Cookie sessions are not accepted.
 
-`GET /daily-roster` and every successful POST below return only `{ "comment", "paymentsEnabled", "recipients": [{ "address", "amountUsd" }] }`. The body has no per-row comment, no `moderators`, and no `moderatorPaymentsEnabled`. A corrupt live file → `500` `{ "error": "Recipient list is unreadable" }`. A body that is not a JSON object → `400` `{ "error": "Expected a JSON body" }`.
+`GET /daily-roster` and every successful POST below return `{ "comment", "paymentsEnabled", "defaultAmountUsd", "recipients": [{ "address", "amountUsd" }] }`. `defaultAmountUsd` is the USD amount an unlisted admitted or trial grant receives on a daily ping (`NEW_MEMBER_DAILY_USD`). It is not stored in the live file. The body has no per-row comment, no `moderators`, and no `moderatorPaymentsEnabled`. A corrupt live file → `500` `{ "error": "Recipient list is unreadable" }`. A body that is not a JSON object → `400` `{ "error": "Expected a JSON body" }`.
 
 - `POST /daily-roster/comment` `{ "comment": string }` — newlines become spaces, then trim, max 500 characters. Empty after trim is kept. A non-string → `400` `{ "error": "Invalid comment" }`.
 - `POST /daily-roster/payments` `{ "enabled": boolean }` only (`"on"`, `1`, and `"true"` are rejected) → `400` `{ "error": "Invalid payments switch" }`. Sets `paymentsEnabled` only.

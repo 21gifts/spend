@@ -38,7 +38,7 @@ import {
 const SERVICE_NAME = 'spend';
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** New-member handbook cap (USD) for an unlisted daily ping with grant admitted or trial. */
-const NEW_MEMBER_DAILY_USD = 1;
+export const NEW_MEMBER_DAILY_USD = 1;
 /** Once-per-Lightning-Address lifetime welcome gift (USD). */
 const WELCOME_USD = 1;
 
@@ -233,12 +233,15 @@ function jsonRosterForm(body: Record<string, unknown>, includeAmount: boolean): 
 type DailyRosterJson = {
   comment: string;
   paymentsEnabled: boolean;
+  /** {@link NEW_MEMBER_DAILY_USD}. Not stored in the live file. */
+  defaultAmountUsd: number;
   recipients: Array<{ address: string; amountUsd: number }>;
 };
 
 /**
- * GET `/daily-roster` payload: file comment, daily switch, and daily rows
- * without per-row comment, moderators, or `moderatorPaymentsEnabled`.
+ * GET `/daily-roster` payload: file comment, daily switch, the unlisted
+ * grant default, and daily rows. No per-row comment, moderators, or
+ * `moderatorPaymentsEnabled`.
  *
  * @param live - Full live file.
  * @returns JSON body for GET and successful daily-roster POSTs.
@@ -247,6 +250,7 @@ function toDailyRosterJson(live: LiveRecipients): DailyRosterJson {
   return {
     comment: live.comment,
     paymentsEnabled: live.paymentsEnabled,
+    defaultAmountUsd: NEW_MEMBER_DAILY_USD,
     recipients: live.recipients.map((row) => ({
       address: row.address,
       amountUsd: row.amountUsd,
