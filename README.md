@@ -66,7 +66,7 @@ Open every feature PR against **`develop`**, not `main`.
 - Push to `develop` also opens `Release: develop -> main` when `main` is behind
 - Merge that release PR to `main` → Deploy PRD (`21gifts/spend:latest`)
 - If the release PR has no file changes (identical trees even though develop is commit-ahead), close it instead of squash-merging. The next push to `develop` opens a new one; merge that only when it has a real diff.
-- Push to `staging` builds `21gifts/spend:staging` for the staging test stand. That branch is not a step on the way to `main`.
+- **Hard requirement:** `staging` is the environment for experimental testing. It builds `21gifts/spend:staging`. A change that is good there is released to `develop` first (`Release: staging -> develop`). `main` receives changes only from `develop` (`Release: develop -> main`). `staging` is never released directly to `main`.
 
 ## Setup
 
@@ -105,7 +105,7 @@ docker run -p 3000:3000 -v spend-state:/data \
 | `deploy-dev.yaml`        | push to `develop`                                                 | Docker build → push `21gifts/spend:beta` → notify → wait for deploy                                                               |
 | `deploy-staging.yaml`    | push to `staging`                                                 | Docker build → push `21gifts/spend:staging` → notify → wait for deploy                                                            |
 | `deploy-prd.yaml`        | push to `main`                                                    | Docker build → push `21gifts/spend:latest` → notify → wait for deploy                                                             |
-| `auto-release-pr.yaml`   | push to `develop`                                                 | Auto-create Release PR (`develop → main`)                                                                                         |
+| `auto-release-pr.yaml`   | push to `develop` or `staging`                                    | Auto-create Release PRs (`staging → develop`, and `develop → main` only)                                                          |
 | `a38-guard.yml`          | `pull_request_target`; PR comments; schedule; `workflow_dispatch` | `dfx pr guard` verifies the A38 report, releases held fork runs of `ci.yml`, and sets ready; never checks out the PR code         |
 
 Images target `linux/arm64`.
