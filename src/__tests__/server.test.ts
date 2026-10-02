@@ -7,7 +7,7 @@ import { GiftsApi } from '../gifts-api';
 import { LndhubClient, parseLndhubUri } from '../lndhub';
 import { appendRetryOwed, loadRetryOwed, retryQueuePath } from '../retry-queue';
 import { runDay as executeRunDay } from '../run';
-import { createServer, parseBindAddr } from '../server';
+import { NEW_MEMBER_DAILY_USD, createServer, parseBindAddr } from '../server';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'spend-server-'));
 const seedPath = join(stateDir, 'seed.json');
@@ -4647,6 +4647,7 @@ describe('payment switches', () => {
     expect(await res.json()).toEqual({
       comment: '',
       paymentsEnabled: true,
+      defaultAmountUsd: NEW_MEMBER_DAILY_USD,
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
     });
   });
@@ -4669,6 +4670,7 @@ describe('payment switches', () => {
     expect(await res.json()).toEqual({
       comment: 'foo bar',
       paymentsEnabled: true,
+      defaultAmountUsd: NEW_MEMBER_DAILY_USD,
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
     });
   });
@@ -4835,7 +4837,7 @@ describe('payment switches', () => {
     expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
   });
 
-  it('GET /daily-roster returns only comment, paymentsEnabled, and recipients', async () => {
+  it('GET /daily-roster returns the comment, the switch, the default amount, and recipients', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
@@ -4849,6 +4851,7 @@ describe('payment switches', () => {
     expect(await res.json()).toEqual({
       comment: '21gifts daily',
       paymentsEnabled: true,
+      defaultAmountUsd: NEW_MEMBER_DAILY_USD,
       recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
     });
   });
