@@ -66,6 +66,7 @@ Open every feature PR against **`develop`**, not `main`.
 - Push to `develop` also opens `Release: develop -> main` when `main` is behind
 - Merge that release PR to `main` → Deploy PRD (`21gifts/spend:latest`)
 - If the release PR has no file changes (identical trees even though develop is commit-ahead), close it instead of squash-merging. The next push to `develop` opens a new one; merge that only when it has a real diff.
+- Push to `staging` builds `21gifts/spend:staging` for the staging test stand. That branch is not a step on the way to `main`.
 
 ## Setup
 
@@ -98,13 +99,14 @@ docker run -p 3000:3000 -v spend-state:/data \
 
 ## CI / CD
 
-| Workflow               | Trigger                                                           | Action                                                                                                                            |
-| ---------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`               | PR (including drafts; not `ready_for_review`); push `main`/`develop` | Typecheck (`bun run typecheck`) + test (100% coverage) + e2e                                                                      |
-| `deploy-dev.yaml`      | push to `develop`                                                 | Docker build → push `21gifts/spend:beta` → notify → wait for deploy                                                               |
-| `deploy-prd.yaml`      | push to `main`                                                    | Docker build → push `21gifts/spend:latest` → notify → wait for deploy                                                             |
-| `auto-release-pr.yaml` | push to `develop`                                                 | Auto-create Release PR (`develop → main`)                                                                                         |
-| `a38-guard.yml`        | `pull_request_target`; PR comments; schedule; `workflow_dispatch` | `dfx pr guard` verifies the A38 report, releases held fork runs of `ci.yml`, and sets ready; never checks out the PR code         |
+| Workflow                 | Trigger                                                           | Action                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`                 | PR (including drafts; not `ready_for_review`); push `main`/`develop` | Typecheck (`bun run typecheck`) + test (100% coverage) + e2e                                                                      |
+| `deploy-dev.yaml`        | push to `develop`                                                 | Docker build → push `21gifts/spend:beta` → notify → wait for deploy                                                               |
+| `deploy-staging.yaml`    | push to `staging`                                                 | Docker build → push `21gifts/spend:staging` → notify → wait for deploy                                                            |
+| `deploy-prd.yaml`        | push to `main`                                                    | Docker build → push `21gifts/spend:latest` → notify → wait for deploy                                                             |
+| `auto-release-pr.yaml`   | push to `develop`                                                 | Auto-create Release PR (`develop → main`)                                                                                         |
+| `a38-guard.yml`          | `pull_request_target`; PR comments; schedule; `workflow_dispatch` | `dfx pr guard` verifies the A38 report, releases held fork runs of `ci.yml`, and sets ready; never checks out the PR code         |
 
 Images target `linux/arm64`.
 
