@@ -282,12 +282,13 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
 }
 
 /**
- * Recipients wrapper around the combined renderer (null dashboard + editor panel).
+ * Moderator-editor HTML. Daily recipients, the file comment, and the daily
+ * switch are accepted and not rendered; those fields are the Bearer JSON API.
  *
- * @param opts.recipients - Current daily recipient list
+ * @param opts.recipients - Daily recipient list. Not rendered.
  * @param opts.moderators - Current moderator stipend list
- * @param opts.comment - File-level LUD-12 payment comment
- * @param opts.paymentsEnabled - Daily-payments switch
+ * @param opts.comment - File-level LUD-12 payment comment. Not rendered.
+ * @param opts.paymentsEnabled - Daily-payments switch. Not rendered.
  * @param opts.moderatorPaymentsEnabled - Moderator-payments switch
  * @param opts.error - Optional error message shown above the Moderators heading
  * @returns Complete HTML document.

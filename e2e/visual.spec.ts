@@ -21,7 +21,7 @@ test('login-error', async ({ page }) => {
   await expect(page).toHaveScreenshot('login-error.png', SHOT);
 });
 
-test('recipients-one', async ({ page }) => {
+test('moderators-empty', async ({ page }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
@@ -30,7 +30,7 @@ test('recipients-one', async ({ page }) => {
   await expect(page.locator('body')).not.toContainText('Payment comment');
   await expect(page.locator('body')).not.toContainText('alice@w...');
   await expect(page.locator('body')).toContainText('No moderators');
-  await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
+  await expect(page).toHaveScreenshot('moderators-empty.png', SHOT);
 });
 
 test('moderators-one', async ({ page }) => {
