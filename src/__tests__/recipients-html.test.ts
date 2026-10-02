@@ -26,8 +26,21 @@ describe('renderLoginHtml', () => {
     expect(renderLoginHtml({ disabled: true })).not.toContain('Payment comment');
     expect(renderLoginHtml({ disabled: true })).not.toContain('action="/recipients/payments"');
     expect(renderLoginHtml({ disabled: true })).not.toContain('action="/moderators/payments"');
+    expect(form).not.toContain('https://21.gifts/grants/payments/');
+    expect(renderLoginHtml({ disabled: true })).not.toContain('https://21.gifts/grants/payments/');
   });
 });
+
+function expectDailyLinks(html: string): void {
+  const textAt = html.indexOf('href="https://21.gifts/grants/payments/comment"');
+  const amountsAt = html.indexOf('href="https://21.gifts/grants/payments/amounts"');
+  const moderatorsAt = html.indexOf('<h2>Moderators</h2>');
+  expect(textAt).toBeGreaterThan(-1);
+  expect(html).toContain('>Daily payment text</a>');
+  expect(amountsAt).toBeGreaterThan(textAt);
+  expect(html).toContain('>Daily payment amounts</a>');
+  expect(moderatorsAt).toBeGreaterThan(amountsAt);
+}
 
 function expectNoDailyEditor(html: string): void {
   expect(html).not.toContain('Payment comment');
@@ -58,6 +71,7 @@ describe('renderRecipientsHtml', () => {
     expect(html).toContain('action="/moderators/delete"');
     expect(html).toContain('action="/moderators/add"');
     expect(html).toContain('<h2>Moderators</h2>');
+    expectDailyLinks(html);
     expect(html).not.toContain('No moderators');
     expect(html).toContain('<h2>Add moderator</h2>');
     expect(html).toContain('action="/logout"');

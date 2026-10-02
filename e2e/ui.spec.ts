@@ -68,6 +68,14 @@ test('login, add, update, and delete moderators', async ({ page }) => {
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
   await expect(page).toHaveURL('/');
+  await expect(page.getByRole('link', { name: 'Daily payment text', exact: true })).toHaveAttribute(
+    'href',
+    'https://21.gifts/grants/payments/comment',
+  );
+  await expect(page.getByRole('link', { name: 'Daily payment amounts', exact: true })).toHaveAttribute(
+    'href',
+    'https://21.gifts/grants/payments/amounts',
+  );
   await expect(page.locator('h2', { hasText: 'Moderators' })).toBeVisible();
   await expect(page.locator('body')).toContainText('No moderators');
 

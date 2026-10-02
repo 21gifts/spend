@@ -58,9 +58,10 @@ input[type=text],input[type=password],textarea{
 input[type=text],input[type=password]{height:2.75rem}
 textarea{min-height:4.5rem;resize:vertical}
 input[type=text]:focus,input[type=password]:focus,textarea:focus{outline:none;border-color:#f7931a;box-shadow:0 0 0 1px #f7931a}
-button.primary{
+button.primary,a.primary{
   background:#f7931a;color:#0a090c;border:0;border-radius:999px;
-  font:inherit;font-weight:600;padding:0.55rem 1.1rem;cursor:pointer
+  font:inherit;font-weight:600;padding:0.55rem 1.1rem;cursor:pointer;
+  text-decoration:none
 }
 button.ghost{
   background:transparent;color:rgba(255,255,255,0.7);
@@ -127,6 +128,8 @@ button.icon svg{display:block}
 .comment-form button.primary{box-sizing:border-box;height:2.75rem;align-self:flex-start;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
 .payments-switch{display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap}
 .payments-switch .switch-label{flex:1 1 auto}
+.daily-links{display:flex;flex-direction:column;gap:0.75rem}
+.daily-links a.primary{display:block;text-align:center;box-sizing:border-box}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}`;
 
 /**

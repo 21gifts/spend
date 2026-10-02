@@ -133,6 +133,8 @@ describe('renderDashboardHtml', () => {
       },
     );
     expect(html).toContain('Log out');
+    expect(html).toContain('href="https://21.gifts/grants/payments/comment"');
+    expect(html).toContain('href="https://21.gifts/grants/payments/amounts"');
     expect(html).toContain('alice@w...');
     expect(html).toContain('3803 sats');
     expect(html).not.toContain('Payment comment');
