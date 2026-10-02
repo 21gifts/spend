@@ -13,7 +13,7 @@ const FIXTURE_PR =
 const API_DIR = process.env['GIFTS_API_DIR'];
 
 describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () => {
-  it('dry-runs an invoice through createApp after a UI add', async () => {
+  it('dry-runs an invoice through createApp after a daily-roster JSON add', async () => {
     const dir = API_DIR as string;
     const mod = (await import(pathToFileURL(join(dir, 'src/server.ts')).href)) as {
       createApp: (deps?: {
