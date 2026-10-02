@@ -4921,7 +4921,7 @@ describe('payment switches', () => {
     expect(res.headers.get('location')).toBe('/');
   });
 
-  it('rejects a cross-origin payments switch', async () => {
+  it('daily-roster JSON payments POST ignores Origin, and the moderator cookie switch still rejects it', async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
