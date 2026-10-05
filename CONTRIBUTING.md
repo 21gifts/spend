@@ -1,5 +1,7 @@
 # Contributing
 
+[REVIEW.md](REVIEW.md) is binding. A new endpoint, function, user-interface control, error text, clock, or permission check is allowed only when nothing in this repository already does that job. The review reads this file and `REVIEW.md` and does not change files.
+
 ## A38
 
 This repository requires A38 according to the canonical A38 standard in
