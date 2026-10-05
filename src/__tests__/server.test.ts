@@ -386,6 +386,7 @@ describe('createServer', () => {
         {
           address: 'alice@walletofsatoshi.com',
           bucket: 'daily',
+          timeZone: 'Asia/Manila',
           messageId: PING_MESSAGE_ID,
         },
       ]);
@@ -451,6 +452,7 @@ describe('createServer', () => {
         {
           address: 'bob@walletofsatoshi.com',
           bucket: 'daily',
+          timeZone: 'Asia/Manila',
           messageId: PING_MESSAGE_ID,
           amountUsd: 1,
         },

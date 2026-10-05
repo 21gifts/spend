@@ -724,12 +724,16 @@ export function createServer(opts: {
         return json(200, { status: 'skipped', reason: 'payments_disabled' });
       }
       logPing('accepted');
-      const queued =
-        extraRecipients === undefined
-          ? payout(day, 'ping', [storedAddress], messageId)
-          : payout(day, 'ping', [storedAddress], messageId, {
-              recipients: extraRecipients,
-            });
+      const timeZone = req.headers.get('Time-Zone')?.trim() || 'Asia/Manila';
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone }).format(clock());
+      } catch {
+        return json(400, { error: 'Invalid Time-Zone' });
+      }
+      const queued = payout(day, 'ping', [storedAddress], messageId, {
+        ...(extraRecipients === undefined ? {} : { recipients: extraRecipients }),
+        timeZone,
+      });
       void queued.catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
         console.warn(
@@ -935,6 +939,7 @@ export function createServer(opts: {
       recipients?: Recipient[];
       comment?: string;
       groupMessageId?: string;
+      timeZone?: string;
     },
   ): Promise<{ exitCode: number }> =>
     gate.run(async () => {
@@ -1019,6 +1024,7 @@ export function createServer(opts: {
                 ),
                 ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
+      if (extras?.timeZone !== undefined) runOptions.timeZone = extras.timeZone;
       if (source === 'ping' || source === 'catchup') runOptions.checkFundingEligible = false;
       const result = await (opts.runDay ?? runDay)(
         {
@@ -1047,6 +1053,7 @@ export function createServer(opts: {
               : 'daily';
         for (const address of onlyAddresses) {
           const row: RetryOwed = { address, bucket };
+          if (extras?.timeZone !== undefined) row.timeZone = extras.timeZone;
           if (
             (bucket === 'daily' || bucket === 'welcome') &&
             messageId !== undefined &&
@@ -1236,12 +1243,15 @@ export function createServer(opts: {
             (recipient) => recipient.address.toLowerCase() === row.address.toLowerCase(),
           );
           if (listed !== undefined) {
-            await payout(day, 'catchup', [listed.address], row.messageId);
+            await payout(day, 'catchup', [listed.address], row.messageId, {
+              timeZone: row.timeZone ?? 'Asia/Manila',
+            });
             continue;
           }
           if (row.amountUsd !== undefined) {
             await payout(day, 'catchup', [row.address], row.messageId, {
               recipients: [{ address: row.address, amountUsd: row.amountUsd }],
+              timeZone: row.timeZone ?? 'Asia/Manila',
             });
           }
           continue;

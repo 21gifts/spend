@@ -21,6 +21,8 @@ export interface RetryOwed {
   groupMessageId?: string;
   /** USD amount for an unlisted daily ping or a welcome gift. Moderator rows omit it. */
   amountUsd?: number;
+  /** Original recipient zone, retained across retries and restarts. */
+  timeZone?: string;
 }
 
 /**
@@ -105,6 +107,7 @@ export function appendRetryOwed(stateDir: string, day: string, row: RetryOwed): 
   ) {
     persisted.amountUsd = row.amountUsd;
   }
+  if (row.timeZone !== undefined) persisted.timeZone = row.timeZone;
   const path = retryQueuePath(stateDir, day);
   const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY);
   try {
@@ -162,6 +165,15 @@ function parseRetryOwed(line: string): RetryOwed | null {
       return null;
     }
     row.amountUsd = amountUsd;
+  }
+  if ('timeZone' in rec) {
+    if (typeof rec['timeZone'] !== 'string' || rec['timeZone'].trim() === '') return null;
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: rec['timeZone'] });
+    } catch {
+      return null;
+    }
+    row.timeZone = rec['timeZone'];
   }
   return row;
 }

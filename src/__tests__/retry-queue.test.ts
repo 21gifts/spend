@@ -20,12 +20,13 @@ describe('retryQueuePath', () => {
 });
 
 describe('appendRetryOwed / loadRetryOwed', () => {
-  it('roundtrips a daily row with messageId and amountUsd and a moderator row without amountUsd', () => {
+  it('roundtrips a daily row with its original zone and a moderator row without amountUsd', () => {
     const dir = tmp();
     try {
       appendRetryOwed(dir, DAY, {
         address: ' alice@walletofsatoshi.com ',
         bucket: 'daily',
+        timeZone: 'Pacific/Honolulu',
         messageId: MESSAGE_ID,
         amountUsd: 1,
       });
@@ -39,6 +40,7 @@ describe('appendRetryOwed / loadRetryOwed', () => {
         {
           address: 'alice@walletofsatoshi.com',
           bucket: 'daily',
+        timeZone: 'Pacific/Honolulu',
           messageId: MESSAGE_ID,
           amountUsd: 1,
         },
