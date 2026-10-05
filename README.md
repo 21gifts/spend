@@ -154,6 +154,7 @@ reservation rechecks the current payment time after invoice creation, so a slow
 request crossing a date boundary cannot bypass the Monday allowance.
 
 Deployment: deploy spend before the matching API change, which forwards the zone,
-and the app change, which extends the local write pause to Monday 08:00. On Monday the guard also reads the current and preceding UTC-day logs, so a
+and the app change, which extends the local write pause to Monday 08:00.
+On Monday the guard also reads the current and preceding UTC-day logs, so a
 payment made before this deployment still consumes its local Monday allowance.
 Existing per-UTC-day records remain authoritative for their day.
