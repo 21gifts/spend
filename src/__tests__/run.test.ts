@@ -156,7 +156,7 @@ const runDay = (
   deps: NonNullable<Parameters<typeof runDayActual>[2]> = {},
 ): ReturnType<typeof runDayActual> => runDayActual(config, options, {
   ...deps,
-  calendar: deps.calendar ?? new DailyCalendar('/tmp', memoryState(), openLock),
+  calendar: deps.calendar ?? new DailyCalendar('/tmp', memoryState(), openLock, () => []),
 });
 
 describe('runDay', () => {
@@ -2889,6 +2889,37 @@ describe('runDay', () => {
 });
 
 describe('Friday daily amounts and local Monday allowance', () => {
+  it('pays once across UTC midnight with fresh workers and persisted local Monday state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-local-monday-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const lndhub = new LndhubClient(target);
+    vi.spyOn(lndhub, 'auth').mockResolvedValue('token');
+    vi.spyOn(lndhub, 'balance').mockResolvedValue(1_000_000);
+    const pay = vi.spyOn(lndhub, 'payInvoice').mockResolvedValue({ preimage: PREIMAGE });
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', giftsFetch(async (url) =>
+      url.endsWith('/proof')
+        ? Response.json({ status: 'paid' })
+        : Response.json({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+    ));
+    const oneRecipient = { ...config, stateDir: dir, recipients: [config.recipients[0]!] };
+    try {
+      const first = await runDayActual(oneRecipient, {
+        live: true, day: '2026-10-05', timeZone: 'Pacific/Honolulu',
+      }, { gifts, lndhub, now: () => new Date('2026-10-05T23:59:59Z'), btcUsd: async () => 100_000 });
+      expect(first.exitCode).toBe(0);
+      expect(first.summary.paid).toHaveLength(1);
+      const second = await runDayActual(oneRecipient, {
+        live: true, day: '2026-10-06', timeZone: 'Pacific/Honolulu',
+      }, { gifts, lndhub, now: () => new Date('2026-10-06T00:00:01Z'), btcUsd: async () => 100_000 });
+      expect(second.exitCode).toBe(0);
+      expect(second.summary.skipped[0]?.reason).toBe('local_monday_claimed');
+      expect(pay).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['2026-10-01', undefined, 1],
     ['2026-10-02', undefined, 2],

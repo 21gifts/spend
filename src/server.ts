@@ -723,13 +723,13 @@ export function createServer(opts: {
         logPing('skipped', 'payments_disabled');
         return json(200, { status: 'skipped', reason: 'payments_disabled' });
       }
-      logPing('accepted');
       const timeZone = req.headers.get('Time-Zone')?.trim() || 'Asia/Manila';
       try {
         new Intl.DateTimeFormat('en-US', { timeZone }).format(clock());
       } catch {
         return json(400, { error: 'Invalid Time-Zone' });
       }
+      logPing('accepted');
       const queued = payout(day, 'ping', [storedAddress], messageId, {
         ...(extraRecipients === undefined ? {} : { recipients: extraRecipients }),
         timeZone,

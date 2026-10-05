@@ -336,7 +336,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping enqueues one daily retry row on insufficient_balance and does not write the day JSONL', async () => {
+  it.each([undefined, 'Pacific/Honolulu'])('POST /ping preserves zone %s in daily retries on insufficient_balance', async (timeZone) => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-enqueue-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -375,7 +375,7 @@ describe('createServer', () => {
       });
       const res = await app.fetch(
         pingReq({
-          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json', ...(timeZone === undefined ? {} : { 'Time-Zone': timeZone }) },
           body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
@@ -386,10 +386,11 @@ describe('createServer', () => {
         {
           address: 'alice@walletofsatoshi.com',
           bucket: 'daily',
-          timeZone: 'Asia/Manila',
+          timeZone: timeZone ?? 'Asia/Manila',
           messageId: PING_MESSAGE_ID,
         },
       ]);
+      expect(runDay).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeZone: timeZone ?? 'Asia/Manila' }));
       expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
     } finally {
       warn.mockRestore();
@@ -541,7 +542,21 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup pays a listed owed daily roster row without a synthetic recipient', async () => {
+
+  it('rejects an invalid daily Time-Zone before queuing a payment', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({ env, runDay });
+    const res = await app.fetch(pingReq({
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json', 'Time-Zone': 'Invalid/Zone' },
+      body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+    }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid Time-Zone' });
+    await app.drainPayouts();
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'Pacific/Honolulu'])('startRetryCatchup restores zone %s for a listed daily recipient', async (timeZone) => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-catchup-listed-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -554,6 +569,7 @@ describe('createServer', () => {
     appendRetryOwed(dir, '2026-08-25', {
       address: 'alice@walletofsatoshi.com',
       bucket: 'daily',
+      ...(timeZone === undefined ? {} : { timeZone }),
       messageId: PING_MESSAGE_ID,
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
@@ -576,6 +592,7 @@ describe('createServer', () => {
           expect.anything(),
           expect.objectContaining({
             onlyAddresses: ['alice@walletofsatoshi.com'],
+            timeZone: timeZone ?? 'Asia/Manila',
             messageIdByAddress: {
               'alice@walletofsatoshi.com': PING_MESSAGE_ID,
             },
