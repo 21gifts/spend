@@ -6,7 +6,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { SpendConfig } from '../config';
 import { GiftsApi } from '../gifts-api';
 import { LndhubClient, parseLndhubUri } from '../lndhub';
-import { runDay } from '../run';
+import { runDay as runDayActual } from '../run';
+import { DailyCalendar } from '../daily-calendar';
 import { DayState } from '../state';
 
 const PREIMAGE = '11'.repeat(32);
@@ -147,6 +148,16 @@ const heldLock = {
   tryAcquire: () => false,
   release: () => undefined,
 };
+
+// Existing scenarios isolate durable calendar state just like their UTC-day state.
+const runDay = (
+  config: Parameters<typeof runDayActual>[0],
+  options: Parameters<typeof runDayActual>[1],
+  deps: NonNullable<Parameters<typeof runDayActual>[2]> = {},
+): ReturnType<typeof runDayActual> => runDayActual(config, options, {
+  ...deps,
+  calendar: deps.calendar ?? new DailyCalendar('/tmp', memoryState(), openLock, () => []),
+});
 
 describe('runDay', () => {
   it('dry-run invoice errors do not persist uncertain for a later live run', async () => {
@@ -2874,5 +2885,101 @@ describe('runDay', () => {
       warn.mockRestore();
       welcome.remove();
     }
+  });
+});
+
+describe('Friday daily amounts and local Monday allowance', () => {
+  it('pays once across UTC midnight with fresh workers and persisted local Monday state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-local-monday-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const lndhub = new LndhubClient(target);
+    vi.spyOn(lndhub, 'auth').mockResolvedValue('token');
+    vi.spyOn(lndhub, 'balance').mockResolvedValue(1_000_000);
+    const pay = vi.spyOn(lndhub, 'payInvoice').mockResolvedValue({ preimage: PREIMAGE });
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', giftsFetch(async (url) =>
+      url.endsWith('/proof')
+        ? Response.json({ status: 'paid' })
+        : Response.json({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+    ));
+    const oneRecipient = { ...config, stateDir: dir, recipients: [config.recipients[0]!] };
+    try {
+      const first = await runDayActual(oneRecipient, {
+        live: true, day: '2026-10-05', timeZone: 'Pacific/Honolulu',
+      }, { gifts, lndhub, now: () => new Date('2026-10-05T23:59:59Z'), btcUsd: async () => 100_000 });
+      expect(first.exitCode).toBe(0);
+      expect(first.summary.paid).toHaveLength(1);
+      const second = await runDayActual(oneRecipient, {
+        live: true, day: '2026-10-06', timeZone: 'Pacific/Honolulu',
+      }, { gifts, lndhub, now: () => new Date('2026-10-06T00:00:01Z'), btcUsd: async () => 100_000 });
+      expect(second.exitCode).toBe(0);
+      expect(second.summary.skipped[0]?.reason).toBe('local_monday_claimed');
+      expect(pay).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['2026-10-01', undefined, 1],
+    ['2026-10-02', undefined, 2],
+    ['2026-10-02', 'daily', 2],
+    ['2026-10-03', 'daily', 1],
+    ['2026-10-02', 'moderator', 1],
+    ['2026-10-02', 'welcome', 1],
+  ] as const)('%s %s uses multiplier %s without changing the roster', async (day, bucket, multiplier) => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/passkey')) return Response.json({ hasPasskey: true });
+      if (href.includes('/eligible')) return Response.json({ eligible: true });
+      if (href.includes('/posted')) return Response.json({ hasPosted: true, hasMedia: true, postedAt: `${day}T12:00:00Z` });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      return Response.json({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: body.amountMsat });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await runDay(config, { live: false, day, ...(bucket === undefined ? {} : { bucket }) }, {
+        gifts, lndhub: new LndhubClient(target), state: memoryState(), lock: openLock,
+        // Retry clock is Saturday locally; the original Friday day key still wins.
+        now: () => new Date('2026-10-02T23:00:00Z'), btcUsd: async () => 100_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(bodies.map((body) => [body.amountUsd, body.amountMsat])).toEqual([
+        [(1 * multiplier).toFixed(2), 1_000_000 * multiplier],
+        [(0.5 * multiplier).toFixed(2), 500_000 * multiplier],
+      ]);
+      expect(result.summary.dryRun.map((line) => line.amountUsd)).toEqual([multiplier, 0.5 * multiplier]);
+      expect(config.recipients.map((row) => row.amountUsd)).toEqual([1, 0.5]);
+    } finally { warn.mockRestore(); }
+  });
+
+  it('excludes an already claimed local Monday before creating invoices', async () => {
+    const calendar = new DailyCalendar('/tmp', memoryState(), openLock);
+    calendar.reserve({ ts: '2026-10-05T23:00:00Z', address: 'a@b.com', invoiceId: 'old', paymentHash: HASH, status: 'uncertain' }, 'Pacific/Honolulu');
+    const fetch = vi.fn(async () => Response.json({}));
+    const result = await runDay({ ...config, recipients: [config.recipients[0]!] }, {
+      live: false, day: '2026-10-06', timeZone: 'Pacific/Honolulu',
+    }, { calendar, gifts: new GiftsApi('https://api.21.gifts', 'tok', fetch), state: memoryState(), lock: openLock, now: () => new Date('2026-10-06T01:00:00Z'), btcUsd: async () => 100_000 });
+    expect(result.summary.skipped).toEqual([expect.objectContaining({ reason: 'local_monday_claimed' })]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['local_monday_claimed', 'locked', 'throw'] as const)('does not pay when the final calendar reservation returns %s', async (outcome) => {
+    const calendar = new DailyCalendar('/tmp', memoryState(), openLock);
+    vi.spyOn(calendar, 'reserve').mockImplementation(() => { if (outcome === 'throw') throw new Error('disk'); return outcome; });
+    const pay = vi.fn(async () => ({ preimage: PREIMAGE }));
+    const lndhub = new LndhubClient(target);
+    vi.spyOn(lndhub, 'auth').mockResolvedValue('token');
+    vi.spyOn(lndhub, 'balance').mockResolvedValue(1_000_000);
+    vi.spyOn(lndhub, 'payInvoice').mockImplementation(pay);
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', giftsFetch(async () => Response.json({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 })));
+    const result = await runDay({ ...config, recipients: [config.recipients[0]!] }, { live: true, day: '2026-10-05' }, {
+      calendar, gifts, lndhub, state: memoryState(), lock: openLock, now: () => new Date('2026-10-05T01:00:00Z'), btcUsd: async () => 100_000,
+    });
+    expect(pay).not.toHaveBeenCalled();
+    if (outcome === 'throw') expect(result.summary.reason).toBe('calendar_unreadable');
+    else expect(result.summary.skipped[0]?.reason).toBe(outcome);
   });
 });

@@ -5,12 +5,15 @@ import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
 import { CorruptStateError, DayState, dayBlock, latestStatus, paidOnUtcDay, type StateRow } from './state';
+import { DailyCalendar } from './daily-calendar';
 import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
 
 /** CLI / ping options for one run. */
 export interface RunOptions {
+  /** Recipient IANA zone for the local Monday limit; legacy callers use Asia/Manila. */
+  timeZone?: string;
   live: boolean;
   day: string;
   /** When set, only these addresses are attempted (case-insensitive). Daily: they must be on the live roster. Moderator: the pinged address as listed on the moderator roster (the server gates the ping; the daily roster does not apply). Welcome: the pinged address as a synthetic one-address list (the daily roster does not apply). */
@@ -86,6 +89,8 @@ function selectTargets(
 
 /**
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
+ * Friday daily gifts use twice the configured USD amount, before sats conversion.
+ * The day key fixes the multiplier for retries; moderator and welcome amounts stay unchanged.
  *
  * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster. Welcome `markFinished` writes `welcome.finished` (never the daily `${day}.finished`).
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
@@ -120,6 +125,7 @@ export async function runDay(
     now?: () => Date;
     lock?: DayLock;
     btcUsd?: () => Promise<number | null>;
+    calendar?: DailyCalendar;
   },
 ): Promise<RunResult> {
   const gifts = deps?.gifts ?? new GiftsApi(config.giftsApiUrl, config.giftsApiToken);
@@ -146,7 +152,7 @@ export async function runDay(
   }
 
   try {
-    return await runDayLocked(config, options, gifts, lndhub, state, now, deps?.btcUsd);
+    return await runDayLocked(config, options, gifts, lndhub, state, now, deps?.btcUsd, deps?.calendar ?? new DailyCalendar(config.stateDir));
   } finally {
     lock.release();
   }
@@ -160,6 +166,7 @@ async function runDayLocked(
   state: DayState,
   now: () => Date,
   btcUsdSpot: (() => Promise<number | null>) | undefined,
+  calendar: DailyCalendar,
 ): Promise<RunResult> {
   const paid: PayoutLine[] = [];
   const skipped: PayoutLine[] = [];
@@ -235,7 +242,11 @@ async function runDayLocked(
   }
   btcUsd = rate;
 
-  const targets = selectTargets(config.recipients, options.onlyAddresses);
+  const fridayDaily = !isolatedBucket && new Date(`${options.day}T00:00:00.000Z`).getUTCDay() === 5;
+  const targets = selectTargets(config.recipients, options.onlyAddresses).map((recipient) => ({
+    ...recipient,
+    amountUsd: recipient.amountUsd * (fridayDaily ? 2 : 1),
+  }));
 
   const satsByAddress = new Map<string, number>();
   const amountUsdByAddress = new Map<string, string>();
@@ -272,6 +283,18 @@ async function runDayLocked(
     amountUsdByAddress.set(recipient.address, formattedUsd);
   }
 
+  const localMondayBlocked = new Set<string>();
+  if (!isolatedBucket) {
+    try {
+      for (const recipient of targets) {
+        if (calendar.blocked(recipient.address, now(), options.timeZone)) {
+          localMondayBlocked.add(recipient.address);
+        }
+      }
+    } catch {
+      return finish(4, { reason: 'calendar_unreadable' });
+    }
+  }
   const noPasskey = new Set<string>();
   const noPost = new Set<string>();
   const noMedia = new Set<string>();
@@ -287,6 +310,7 @@ async function runDayLocked(
     if (welcomePaidToday(recipient.address)) {
       continue;
     }
+    if (localMondayBlocked.has(recipient.address)) continue;
     try {
       const eligiblePasskey = await gifts.hasPasskey(recipient.address);
       if (!eligiblePasskey) {
@@ -361,6 +385,7 @@ async function runDayLocked(
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
         !welcomePaidToday(r.address) &&
+        !localMondayBlocked.has(r.address) &&
         !noPasskey.has(r.address) &&
         !noPost.has(r.address) &&
         !noMedia.has(r.address) &&
@@ -449,6 +474,10 @@ async function runDayLocked(
     if (welcomePaidToday(recipient.address)) {
       log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
       skipped.push({ ...lineBase, reason: 'welcome_paid' });
+      continue;
+    }
+    if (localMondayBlocked.has(recipient.address)) {
+      skipped.push({ ...lineBase, reason: 'local_monday_claimed' });
       continue;
     }
     if (noPasskey.has(recipient.address)) {
@@ -670,6 +699,17 @@ async function runDayLocked(
       paymentHash: invoice.paymentHash,
       status: 'uncertain',
     };
+    if (!isolatedBucket) {
+      try {
+        const reservation = calendar.reserve(attempting, options.timeZone);
+        if (reservation !== 'reserved') {
+          skipped.push({ ...lineBase, reason: reservation });
+          continue;
+        }
+      } catch {
+        return finish(4, { reason: 'calendar_unreadable' });
+      }
+    }
     state.append(attempting);
     rows.push(attempting);
 

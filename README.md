@@ -6,7 +6,7 @@ Ping-triggered Lightning gift payouts plus a tiny HTTP dashboard. This process *
 2. LNDHub `payinvoice` on lightning.space
 3. `POST {GIFTS_API_URL}/invoices/proof` with the **preimage** (`sha256` = payment hash)
 
-Recipient amounts are **USD**. Each daily payout (`POST /ping` with `kind` omitted or `"daily"`, or CLI) reads the live roster `STATE_DIR/recipients.json`, fetches Coinbase BTC-USD spot, and pays `round(usd / btcUsd * 1e8)` sats. The invoice POST sends the roster USD amount as `amountUsd` with two decimals, and sats are still `round(usd / spot * 1e8)`. `kind: "moderator"` pays the amount listed for that address on the moderator roster (see Moderator below). `kind: "welcome"` pays **1 USD** once per Lightning Address (see Welcome below). Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in a seed JSON is a snapshot only — the process does not read it.
+Recipient amounts are **USD**. On the Friday UTC payout day (Friday 08:00 through Saturday 08:00 in Manila), daily gifts use **twice** the configured USD amount before conversion to sats. This also applies to the 1 USD admitted/trial daily gift (2 USD on Friday). Moderator stipends and lifetime welcome gifts keep their original amounts. Retries use the original UTC day key and base amount; they never multiply an already doubled amount. The invoice USD, balance preflight, Bitcoin payment, and payout summary all use the same effective amount. Roster entries remain the base amounts. Each daily payout (`POST /ping` with `kind` omitted or `"daily"`, or CLI) reads the live roster `STATE_DIR/recipients.json`, fetches Coinbase BTC-USD spot, and pays `round(usd / btcUsd * 1e8)` sats. The invoice POST sends the effective USD amount as `amountUsd` with two decimals, and sats are still `round(usd / spot * 1e8)`. `kind: "moderator"` pays the amount listed for that address on the moderator roster (see Moderator below). `kind: "welcome"` pays **1 USD** once per Lightning Address (see Welcome below). Missing or unusable spot, or a conversion under 1 sat, is fail-closed (exit `3`). The optional `amountSats` field in a seed JSON is a snapshot only — the process does not read it.
 
 The long-running server (`bun src/server.ts`) serves the dashboard, `POST /ping`, and `/healthz`. UTC midnight still does not pay the roster. Boot still does not walk the roster. CLI behaviour is unchanged. There is still no in-process midnight scheduler. A UTC day still starts at 00:00 UTC (existing JSONL day files). A daily payout (`kind` omitted or `"daily"`) happens when the 21.gifts API `POST`s `/ping` for a Lightning Address that is on the live roster — or unlisted with `GET /invoices/eligible` grant `status` `admitted` or `trial` (1 USD, new-member handbook cap) — has no `paid` or persisted `failed` row for today, and today's JSONL has no `uncertain` row for that address, any other live recipient, or `*halt*`. `kind: "moderator"` follows the Moderator section. `kind: "welcome"` follows the Welcome section. Replies never reach this process; the API pings only for top-level posts. `SPEND_LIVE=true` pays; otherwise the queued run is dry-run. A live ping (daily, moderator, or welcome) that returns `insufficient_balance` is written to `STATE_DIR/YYYY-MM-DD.retry.jsonl` and retried the same UTC day only. The default interval is 15 minutes (`RETRY_CATCHUP_MS`, milliseconds; unset means 900000; `0` disables), with one pass when the process starts the timer. The retry pays only those owed addresses, through the same one-at-a-time gate, and does not send Telegram again for the same preflight reason. A later paid run still notifies. When a payment switch is off, the retry does not pay that bucket and does not forget the address. No day-file `failed` or `uncertain` row is written for this reason, so a new ping the same day is still allowed.
 
@@ -131,3 +131,30 @@ Deploy workflows require GitHub Actions secrets `DOCKER_USERNAME`, `DOCKER_PASSW
 Exit codes: `0` ok, `1` drain timeout after SIGTERM/SIGINT (55s cap), `2` config, `3` preflight/balance/lock/spot/invoice-create unreachable, `4` failed, uncertain, or halted.
 
 Secrets stay in `.env` / the LNDHub URI. They are never logged.
+
+## Local Monday allowance
+
+Daily pings forward the posting device's IANA zone in `Time-Zone`. Spend preserves
+that zone in the same-day insufficient-balance retry queue. Missing or blank
+headers and older retry rows use `Asia/Manila`; an invalid supplied zone is 400
+`Invalid Time-Zone`. The CLI also uses Manila because it has no posting device.
+
+In addition to the existing UTC-day limit, a daily recipient can receive at most
+one regular payment during a local Monday. `daily-calendar.jsonl` records every
+live daily attempt with the existing `StateRow` format, before external payment.
+The recipient's zone converts the timestamps when deciding whether an earlier
+attempt was on that Monday. Paid or uncertain attempts consume the allowance;
+dry-runs and insufficient-balance checks do not reserve it. Moderator and welcome
+buckets neither read nor write this calendar. The calendar is intentionally
+separate from the UTC day files and must be retained with them across restarts.
+`daily-calendar.lock` protects the check-and-append across processes and UTC days.
+A locked reservation does not pay; unreadable calendar data fails closed with
+`calendar_unreadable`. A duplicate is skipped as `local_monday_claimed`. The final
+reservation rechecks the current payment time after invoice creation, so a slow
+request crossing a date boundary cannot bypass the Monday allowance.
+
+Deployment: deploy spend before the matching API change, which forwards the zone,
+and the app change, which extends the local write pause to Monday 08:00.
+On Monday the guard also reads the current and preceding UTC-day logs, so a
+payment made before this deployment still consumes its local Monday allowance.
+Existing per-UTC-day records remain authoritative for their day.

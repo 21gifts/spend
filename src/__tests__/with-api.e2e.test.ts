@@ -13,7 +13,7 @@ const FIXTURE_PR =
 const API_DIR = process.env['GIFTS_API_DIR'];
 
 describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () => {
-  it('dry-runs an invoice through createApp after a UI add', async () => {
+  it('dry-runs doubled Friday invoices through createApp after a UI add', async () => {
     const dir = API_DIR as string;
     const mod = (await import(pathToFileURL(join(dir, 'src/server.ts')).href)) as {
       createApp: (deps?: {
@@ -232,7 +232,9 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           return res;
         };
         return runDay(config, options, {
-          btcUsd: async () => 400,
+          // Friday doubles the $1 gift to $2; at $800/BTC the signed
+          // fixture invoice remains exactly 250,000 sats.
+          btcUsd: async () => 800,
           gifts: new GiftsApi(config.giftsApiUrl, config.giftsApiToken, apiFetch),
         });
       },
