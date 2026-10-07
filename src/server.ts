@@ -154,6 +154,36 @@ function parseComment(raw: string | null): { ok: true; comment: string } | { ok:
   return { ok: true, comment };
 }
 
+/**
+ * Explicit ping amount. A present `amountUsd` key requires a finite number
+ * greater than 0 and a comment string of length at most 500, paid as-is.
+ *
+ * @param body - Parsed JSON object.
+ * @returns Absent when the key is missing, invalid when the pair is unusable.
+ */
+function parsePingInstruction(
+  body: object,
+):
+  | { status: 'absent' }
+  | { status: 'invalid' }
+  | { status: 'ok'; amountUsd: number; comment: string } {
+  if (!('amountUsd' in body)) {
+    return { status: 'absent' };
+  }
+  const amountUsd = (body as { amountUsd: unknown }).amountUsd;
+  const comment = (body as { comment?: unknown }).comment;
+  if (
+    typeof comment !== 'string' ||
+    comment.length > 500 ||
+    typeof amountUsd !== 'number' ||
+    !Number.isFinite(amountUsd) ||
+    amountUsd <= 0
+  ) {
+    return { status: 'invalid' };
+  }
+  return { status: 'ok', amountUsd, comment };
+}
+
 type RosterAction = 'add' | 'update' | 'delete';
 
 /**
@@ -236,12 +266,14 @@ type DailyRosterJson = {
   /** {@link NEW_MEMBER_DAILY_USD}. Not stored in the live file. */
   defaultAmountUsd: number;
   recipients: Array<{ address: string; amountUsd: number }>;
+  moderators: Array<{ address: string; amountUsd: number }>;
+  moderatorPaymentsEnabled: boolean;
 };
 
 /**
  * GET `/daily-roster` payload: file comment, daily switch, the unlisted
- * grant default, and daily rows. No per-row comment, moderators, or
- * `moderatorPaymentsEnabled`.
+ * grant default, daily rows, moderator rows, and the moderator switch.
+ * No per-row comment.
  *
  * @param live - Full live file.
  * @returns JSON body for GET and successful daily-roster POSTs.
@@ -255,6 +287,11 @@ function toDailyRosterJson(live: LiveRecipients): DailyRosterJson {
       address: row.address,
       amountUsd: row.amountUsd,
     })),
+    moderators: live.moderators.map((row) => ({
+      address: row.address,
+      amountUsd: row.amountUsd,
+    })),
+    moderatorPaymentsEnabled: live.moderatorPaymentsEnabled,
   };
 }
 
@@ -563,6 +600,19 @@ export function createServer(opts: {
           error: 'Not a valid Lightning Address (expected name@domain)',
         });
       }
+      if (kind === 'welcome') {
+        if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
+          return json(400, {
+            error: 'Expected a JSON body with address and messageId',
+          });
+        }
+      }
+      const instruction = parsePingInstruction(body as object);
+      if (instruction.status === 'invalid') {
+        return json(400, {
+          error: 'Expected a JSON body with address, amountUsd, and comment',
+        });
+      }
       const logPing = (status: string, reason?: string): void => {
         console.warn(
           JSON.stringify({
@@ -577,6 +627,73 @@ export function createServer(opts: {
       };
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
+      if (instruction.status === 'ok') {
+        let storedAddress = parsed;
+        let rows;
+        try {
+          rows =
+            kind === 'welcome' || kind === 'moderator'
+              ? new DayState(config.stateDir, day, undefined, kind).load()
+              : new DayState(config.stateDir, day).load();
+        } catch (err) {
+          if (!(err instanceof CorruptStateError)) {
+            throw err;
+          }
+          rows = undefined;
+        }
+        if (rows !== undefined) {
+          if (kind === 'welcome' || kind === 'moderator') {
+            const persisted = rows.find(
+              (row) => row.address.toLowerCase() === parsed.toLowerCase(),
+            );
+            if (persisted !== undefined) {
+              storedAddress = persisted.address;
+            }
+          }
+          const block = dayBlock(rows, storedAddress);
+          if (block === 'paid') {
+            logPing('skipped', 'paid');
+            return json(200, { status: 'skipped', reason: 'paid' });
+          }
+          if (
+            block === 'uncertain' ||
+            (kind === 'daily' && dayBlock(rows, '*halt*') === 'uncertain')
+          ) {
+            logPing('skipped', 'uncertain');
+            return json(200, { status: 'skipped', reason: 'uncertain' });
+          }
+          if (latestStatus(rows, storedAddress) === 'failed') {
+            logPing('skipped', 'failed');
+            return json(200, { status: 'skipped', reason: 'failed' });
+          }
+        }
+        logPing('accepted');
+        const instructedRow: Recipient = {
+          address: storedAddress,
+          amountUsd: instruction.amountUsd,
+          comment: instruction.comment,
+        };
+        const messageId = kind === 'moderator' ? undefined : (pingBody.messageId as string);
+        void payout(day, 'ping', [storedAddress], messageId, {
+          recipients: [instructedRow],
+          comment: instruction.comment,
+          ...(kind === 'welcome' || kind === 'moderator' ? { bucket: kind } : {}),
+          ...(groupMessageId === undefined ? {} : { groupMessageId }),
+        }).catch((err: unknown) => {
+          const error = err instanceof Error ? err.message : 'ping';
+          console.warn(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'spend.ping',
+              address: storedAddress,
+              status: 'error',
+              error,
+              ...(kind === 'daily' ? {} : { kind }),
+            }),
+          );
+        });
+        return json(202, { status: 'accepted' });
+      }
       if (kind === 'welcome') {
         if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
           return json(400, {
@@ -1083,7 +1200,8 @@ export function createServer(opts: {
       const welcome = extras?.bucket === 'welcome';
       const groupMessageId = extras?.groupMessageId;
       let liveList: { comment: string; recipients: Recipient[] };
-      if (moderator || welcome) {
+      // Instructed amount sets comment and must not append onto the live roster.
+      if (moderator || welcome || extras?.comment !== undefined) {
         liveList = {
           comment: extras?.comment ?? (welcome ? 'Welcome' : '21gifts moderator'),
           recipients: extras?.recipients ?? [],
