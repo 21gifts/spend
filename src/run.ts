@@ -32,10 +32,10 @@ export interface RunOptions {
   /** Default true. False on HTTP ping: API already gated eligibleToday. Welcome treats this as false even when omitted or true. */
   checkFundingEligible?: boolean;
   /**
-   * When true, skip passkey, forum-post, media, funding, and welcome_paid
-   * gates. Convert USD, check balance, skip paid/uncertain/failed, honor
-   * daily halt, invoice with the instructed comment, and pay. CLI and other
-   * callers that omit this keep the policy gates.
+   * When true, skip passkey, forum-post, media, and funding gates. Convert
+   * USD, check balance, honor the daily halt, invoice with the instructed
+   * comment, and pay. Does not skip `welcome_paid`, paid, uncertain, or
+   * failed. CLI and other callers that omit this keep the policy gates.
    */
   executeOnly?: boolean;
 }
@@ -212,7 +212,7 @@ async function runDayLocked(
   const dailyBucket = options.bucket === undefined || options.bucket === 'daily';
   const executeOnly = options.executeOnly === true;
   let welcomeRows: StateRow[] = [];
-  if (dailyBucket && !executeOnly) {
+  if (dailyBucket) {
     try {
       welcomeRows = new DayState(config.stateDir, options.day, undefined, 'welcome').load();
     } catch (err) {
@@ -224,7 +224,7 @@ async function runDayLocked(
     }
   }
   const welcomePaidToday = (address: string): boolean =>
-    !executeOnly && dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
+    dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
   if (options.live && !isolatedBucket) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',

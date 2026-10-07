@@ -2824,8 +2824,8 @@ describe('runDay', () => {
     }
   });
 
-  it('executeOnly pays when passkey is false, media is false, funding is false, and welcome was already paid today', async () => {
-    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+  it('executeOnly pays when passkey, media, and funding are false', async () => {
+    const welcome = tempWelcome('');
     const calls = { passkey: 0, posted: 0, eligible: 0 };
     let invoiceComment: string | undefined;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
@@ -2879,6 +2879,59 @@ describe('runDay', () => {
       expect(result.summary.skipped.some((line) => line.reason === 'no_media')).toBe(false);
       expect(result.summary.skipped.some((line) => line.reason === 'not_eligible')).toBe(false);
       expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    } finally {
+      warn.mockRestore();
+      welcome.remove();
+    }
+  });
+
+  it('executeOnly skips welcome_paid when welcome.jsonl paid that address today', async () => {
+    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        return new Response(JSON.stringify({ hasPasskey: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        return new Response(JSON.stringify({ hasPosted: false, hasMedia: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/eligible')) {
+        return new Response(JSON.stringify({ eligible: false }), { status: 200 });
+      }
+      invoices += 1;
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await runDay(
+        {
+          ...config,
+          stateDir: welcome.dir,
+          recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+        },
+        {
+          live: false,
+          day: '2026-08-23',
+          executeOnly: true,
+        },
+        {
+          gifts,
+          lndhub: new LndhubClient(target),
+          state: memoryState(),
+          lock: openLock,
+          btcUsd: async () => 100_000,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.summary.skipped).toEqual([
+        expect.objectContaining({ address: 'a@b.com', reason: 'welcome_paid' }),
+      ]);
+      expect(result.summary.dryRun).toEqual([]);
+      expect(invoices).toBe(0);
     } finally {
       warn.mockRestore();
       welcome.remove();

@@ -3379,7 +3379,7 @@ describe('createServer', () => {
     });
   });
 
-  it('POST /ping daily still invoices after a welcome pay for that address when both are instructed', async () => {
+  it('POST /ping daily does not invoice when a welcome pay for that address settles first', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-welcome-day-ping-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -3513,12 +3513,12 @@ describe('createServer', () => {
       expect(await daily.json()).toEqual({ status: 'accepted' });
       releasePay();
       await app.drainPayouts();
-      expect(invoiceCreates).toBe(2);
-      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(true);
+      expect(invoiceCreates).toBe(1);
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
       const welcomeLog = readFileSync(join(dir, 'welcome.jsonl'), 'utf8');
       expect(welcomeLog).toContain('"status":"paid"');
-      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(false);
-      expect(telegramCalls).toHaveLength(2);
+      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(true);
+      expect(telegramCalls).toHaveLength(1);
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
