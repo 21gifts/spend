@@ -36,12 +36,19 @@ export function retryQueuePath(stateDir: string, day: string): string {
   return join(stateDir, `${day}.retry.jsonl`);
 }
 
+/** True when the row carries both the instructed amount and the comment. */
+function instructionComplete(row: Pick<RetryOwed, 'amountUsd' | 'comment'>): boolean {
+  return typeof row.amountUsd === 'number' && typeof row.comment === 'string';
+}
+
 /**
  * Load owed retry rows for a UTC day. Invalid lines are skipped.
  *
  * @param stateDir - `STATE_DIR`.
  * @param day - UTC calendar day `YYYY-MM-DD`.
- * @returns Valid rows (empty when the file is missing). First line per bucket+address wins.
+ * @returns Valid rows (empty when the file is missing). The first complete
+ * instruction per bucket+address wins. An earlier line missing `amountUsd`
+ * or `comment` is returned only when no later complete line exists.
  */
 export function loadRetryOwed(stateDir: string, day: string): RetryOwed[] {
   const path = retryQueuePath(stateDir, day);
@@ -49,8 +56,8 @@ export function loadRetryOwed(stateDir: string, day: string): RetryOwed[] {
     return [];
   }
   const raw = readFileSync(path, 'utf8');
-  const seen = new Set<string>();
   const rows: RetryOwed[] = [];
+  const indexByIdentity = new Map<string, number>();
   for (const line of raw.split('\n')) {
     if (line.trim() === '') {
       continue;
@@ -60,17 +67,24 @@ export function loadRetryOwed(stateDir: string, day: string): RetryOwed[] {
       continue;
     }
     const identity = retryIdentity(row.bucket, row.address);
-    if (seen.has(identity)) {
+    const priorIndex = indexByIdentity.get(identity);
+    if (priorIndex === undefined) {
+      indexByIdentity.set(identity, rows.length);
+      rows.push(row);
       continue;
     }
-    seen.add(identity);
-    rows.push(row);
+    const prior = rows[priorIndex];
+    if (prior !== undefined && !instructionComplete(prior) && instructionComplete(row)) {
+      rows[priorIndex] = row;
+    }
   }
   return rows;
 }
 
 /**
- * Append one owed row unless that bucket+address is already in the file.
+ * Append one owed row. A complete instruction is written unless that
+ * bucket+address already has one. An incomplete row is written only when
+ * that identity is not already in the file.
  *
  * @param stateDir - `STATE_DIR`.
  * @param day - UTC calendar day `YYYY-MM-DD`.
@@ -80,10 +94,6 @@ export function appendRetryOwed(stateDir: string, day: string, row: RetryOwed): 
   mkdirSync(stateDir, { recursive: true });
   const address = parseLightningAddress(row.address) ?? row.address.trim();
   const identity = retryIdentity(row.bucket, address);
-  const existing = loadRetryOwed(stateDir, day);
-  if (existing.some((item) => retryIdentity(item.bucket, item.address) === identity)) {
-    return;
-  }
   const persisted: RetryOwed = { address, bucket: row.bucket };
   if (
     (row.bucket === 'daily' || row.bucket === 'welcome') &&
@@ -104,6 +114,15 @@ export function appendRetryOwed(stateDir: string, day: string, row: RetryOwed): 
   }
   if (typeof row.comment === 'string' && row.comment.length <= 500) {
     persisted.comment = row.comment;
+  }
+  const same = loadRetryOwed(stateDir, day).filter(
+    (item) => retryIdentity(item.bucket, item.address) === identity,
+  );
+  if (same.some((item) => instructionComplete(item))) {
+    return;
+  }
+  if (!instructionComplete(persisted) && same.length > 0) {
+    return;
   }
   const path = retryQueuePath(stateDir, day);
   const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY);

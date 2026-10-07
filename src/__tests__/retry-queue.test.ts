@@ -72,6 +72,100 @@ describe('appendRetryOwed / loadRetryOwed', () => {
     }
   });
 
+  it('appends a complete instruction after an incomplete line for the same identity', () => {
+    const dir = tmp();
+    try {
+      writeFileSync(
+        retryQueuePath(dir, DAY),
+        `${JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          bucket: 'daily',
+          messageId: MESSAGE_ID,
+          amountUsd: 1,
+        })}\n`,
+      );
+      appendRetryOwed(dir, DAY, {
+        address: 'ALICE@walletofsatoshi.com',
+        bucket: 'daily',
+        messageId: OTHER_MESSAGE_ID,
+        amountUsd: 4,
+        comment: 'pay this',
+      });
+      expect(loadRetryOwed(dir, DAY)).toEqual([
+        {
+          address: 'ALICE@walletofsatoshi.com',
+          bucket: 'daily',
+          messageId: OTHER_MESSAGE_ID,
+          amountUsd: 4,
+          comment: 'pay this',
+        },
+      ]);
+      appendRetryOwed(dir, DAY, {
+        address: 'alice@walletofsatoshi.com',
+        bucket: 'daily',
+        messageId: MESSAGE_ID,
+        amountUsd: 8,
+        comment: 'later',
+      });
+      const lines = readFileSync(retryQueuePath(dir, DAY), 'utf8').trim().split('\n');
+      expect(lines).toHaveLength(2);
+      expect(loadRetryOwed(dir, DAY)[0]).toMatchObject({ amountUsd: 4, comment: 'pay this' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the first complete instruction and the first incomplete-only instruction', () => {
+    const dir = tmp();
+    try {
+      writeFileSync(
+        retryQueuePath(dir, DAY),
+        [
+          JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: MESSAGE_ID,
+            amountUsd: 3,
+            comment: 'first',
+          }),
+          JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: OTHER_MESSAGE_ID,
+            amountUsd: 9,
+            comment: 'second',
+          }),
+          JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            bucket: 'daily',
+            amountUsd: 1,
+          }),
+          JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            bucket: 'daily',
+            amountUsd: 2,
+          }),
+        ].join('\n') + '\n',
+      );
+      expect(loadRetryOwed(dir, DAY)).toEqual([
+        {
+          address: 'alice@walletofsatoshi.com',
+          bucket: 'daily',
+          messageId: MESSAGE_ID,
+          amountUsd: 3,
+          comment: 'first',
+        },
+        {
+          address: 'bob@walletofsatoshi.com',
+          bucket: 'daily',
+          amountUsd: 1,
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not replace the first messageId or write a second line for the same identity', () => {
     const dir = tmp();
     try {
