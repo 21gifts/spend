@@ -2824,6 +2824,67 @@ describe('runDay', () => {
     }
   });
 
+  it('executeOnly pays when passkey is false, media is false, funding is false, and welcome was already paid today', async () => {
+    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+    const calls = { passkey: 0, posted: 0, eligible: 0 };
+    let invoiceComment: string | undefined;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        calls.passkey += 1;
+        return new Response(JSON.stringify({ hasPasskey: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        calls.posted += 1;
+        return new Response(JSON.stringify({ hasPosted: false, hasMedia: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/eligible')) {
+        calls.eligible += 1;
+        return new Response(JSON.stringify({ eligible: false }), { status: 200 });
+      }
+      invoiceComment = (JSON.parse(String(init?.body ?? '{}')) as { comment?: string }).comment;
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await runDay(
+        {
+          ...config,
+          stateDir: welcome.dir,
+          comment: 'file comment',
+          recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'instructed memo' }],
+        },
+        {
+          live: false,
+          day: '2026-08-23',
+          executeOnly: true,
+          checkFundingEligible: true,
+        },
+        {
+          gifts,
+          lndhub: new LndhubClient(target),
+          state: memoryState(),
+          lock: openLock,
+          btcUsd: async () => 100_000,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(calls).toEqual({ passkey: 0, posted: 0, eligible: 0 });
+      expect(invoiceComment).toBe('instructed memo');
+      expect(result.summary.skipped.some((line) => line.reason === 'welcome_paid')).toBe(false);
+      expect(result.summary.skipped.some((line) => line.reason === 'no_passkey')).toBe(false);
+      expect(result.summary.skipped.some((line) => line.reason === 'no_media')).toBe(false);
+      expect(result.summary.skipped.some((line) => line.reason === 'not_eligible')).toBe(false);
+      expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    } finally {
+      warn.mockRestore();
+      welcome.remove();
+    }
+  });
+
   it('keeps daily paid and failed reasons when welcome was also paid today', async () => {
     const welcome = tempWelcome(
       welcomeRow('2026-08-23T01:00:00.000Z', 'paid', 'a@b.com') +

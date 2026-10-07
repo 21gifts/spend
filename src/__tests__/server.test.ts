@@ -62,6 +62,10 @@ function dailyRosterReq(path: string, init?: RequestInit): Request {
 
 const PING_MESSAGE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const GROUP_MESSAGE_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const PING_COMMENT = 'instructed memo';
+const INSTRUCTION_ERROR = {
+  error: 'Expected a JSON body with address, amountUsd, and comment',
+};
 
 afterAll(() => {
   rmSync(stateDir, { recursive: true, force: true });
@@ -385,7 +389,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
+          }),
         }),
       );
       expect(res.status).toBe(202);
@@ -396,6 +405,8 @@ describe('createServer', () => {
           address: 'alice@walletofsatoshi.com',
           bucket: 'daily',
           messageId: PING_MESSAGE_ID,
+          amountUsd: 3,
+          comment: PING_COMMENT,
         },
       ]);
       expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
@@ -405,7 +416,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping enqueues an unlisted admitted retry row at 1 USD on insufficient_balance', async () => {
+  it('POST /ping is 400 for an unlisted ping without amountUsd and comment', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-unlisted-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -415,23 +426,7 @@ describe('createServer', () => {
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
       })}\n`,
     );
-    const runDay = vi.fn(async () => ({
-      exitCode: 3,
-      summary: {
-        day: '2026-08-25',
-        live: true,
-        ok: false,
-        exitCode: 3,
-        reason: 'insufficient_balance',
-        needed: 1500,
-        available: 10,
-        paid: [],
-        skipped: [],
-        failed: [],
-        uncertain: [],
-        dryRun: [],
-      },
-    }));
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const app = createServer({
@@ -453,17 +448,10 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
-      expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ status: 'accepted' });
-      await app.drainPayouts();
-      expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
-        {
-          address: 'bob@walletofsatoshi.com',
-          bucket: 'daily',
-          messageId: PING_MESSAGE_ID,
-          amountUsd: 1,
-        },
-      ]);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(INSTRUCTION_ERROR);
+      expect(runDay).not.toHaveBeenCalled();
+      expect(existsSync(retryQueuePath(dir, '2026-08-25'))).toBe(false);
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -485,6 +473,7 @@ describe('createServer', () => {
       bucket: 'daily',
       messageId: PING_MESSAGE_ID,
       amountUsd: 1,
+      comment: PING_COMMENT,
     });
     const runDay = vi.fn(async () => ({
       exitCode: 3,
@@ -520,13 +509,23 @@ describe('createServer', () => {
         await app.drainPayouts();
         expect(runDay).toHaveBeenCalledTimes(1);
         expect(runDay).toHaveBeenCalledWith(
-          expect.anything(),
+          expect.objectContaining({
+            comment: PING_COMMENT,
+            recipients: [
+              {
+                address: 'bob@walletofsatoshi.com',
+                amountUsd: 1,
+                comment: PING_COMMENT,
+              },
+            ],
+          }),
           expect.objectContaining({
             onlyAddresses: ['bob@walletofsatoshi.com'],
             messageIdByAddress: {
               'bob@walletofsatoshi.com': PING_MESSAGE_ID,
             },
             checkFundingEligible: false,
+            executeOnly: true,
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -537,6 +536,7 @@ describe('createServer', () => {
             bucket: 'daily',
             messageId: PING_MESSAGE_ID,
             amountUsd: 1,
+            comment: PING_COMMENT,
           },
         ]);
       } finally {
@@ -548,7 +548,7 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup pays a listed owed daily roster row without a synthetic recipient', async () => {
+  it('startRetryCatchup pays a listed owed daily instruction not the live roster', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-catchup-listed-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -562,6 +562,8 @@ describe('createServer', () => {
       address: 'alice@walletofsatoshi.com',
       bucket: 'daily',
       messageId: PING_MESSAGE_ID,
+      amountUsd: 3,
+      comment: PING_COMMENT,
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -580,19 +582,95 @@ describe('createServer', () => {
         await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
         await app.drainPayouts();
         expect(runDay).toHaveBeenCalledWith(
-          expect.anything(),
+          expect.objectContaining({
+            comment: PING_COMMENT,
+            recipients: [
+              {
+                address: 'alice@walletofsatoshi.com',
+                amountUsd: 3,
+                comment: PING_COMMENT,
+              },
+            ],
+          }),
           expect.objectContaining({
             onlyAddresses: ['alice@walletofsatoshi.com'],
             messageIdByAddress: {
               'alice@walletofsatoshi.com': PING_MESSAGE_ID,
             },
             checkFundingEligible: false,
+            executeOnly: true,
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
         expect(catchupArgs?.[1]).not.toHaveProperty('bucket');
-        expect((catchupArgs?.[0] as { recipients: unknown } | undefined)?.recipients).toEqual([
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('startRetryCatchup pays a stored daily instruction when paymentsEnabled is false', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-pay-off-'));
+    const seed = join(dir, 'seed.json');
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: '21gifts daily',
+        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
+        paymentsEnabled: false,
+      })}\n`,
+    );
+    appendRetryOwed(dir, '2026-08-25', {
+      address: 'alice@walletofsatoshi.com',
+      bucket: 'daily',
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 3,
+      comment: PING_COMMENT,
+    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: 'true' },
+        now: () => new Date('2026-08-25T12:00:00.000Z'),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: async () => {
+          throw new Error('no network');
+        },
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.objectContaining({
+            comment: PING_COMMENT,
+            recipients: [
+              {
+                address: 'alice@walletofsatoshi.com',
+                amountUsd: 3,
+                comment: PING_COMMENT,
+              },
+            ],
+          }),
+          expect.objectContaining({
+            onlyAddresses: ['alice@walletofsatoshi.com'],
+            checkFundingEligible: false,
+            executeOnly: true,
+          }),
+        );
+        expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
+          {
+            address: 'alice@walletofsatoshi.com',
+            bucket: 'daily',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
+          },
         ]);
       } finally {
         stop();
@@ -603,15 +681,14 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup does not invoke runDay when paymentsEnabled is false and keeps the daily retry line', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-pay-off-'));
+  it('startRetryCatchup leaves a daily row unpaid when comment or amountUsd is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-retry-incomplete-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
       seed,
       `${JSON.stringify({
         comment: '21gifts daily',
         recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        paymentsEnabled: false,
       })}\n`,
     );
     appendRetryOwed(dir, '2026-08-25', {
@@ -650,7 +727,7 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup pays an owed moderator at the roster amountUsd', async () => {
+  it('startRetryCatchup pays an owed moderator at the stored amountUsd and comment', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-mod-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -665,6 +742,8 @@ describe('createServer', () => {
       address: 'bob@walletofsatoshi.com',
       bucket: 'moderator',
       groupMessageId: GROUP_MESSAGE_ID,
+      amountUsd: 9,
+      comment: 'mod memo',
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -687,11 +766,11 @@ describe('createServer', () => {
             recipients: [
               {
                 address: 'bob@walletofsatoshi.com',
-                amountUsd: 7.5,
-                comment: '21gifts moderator',
+                amountUsd: 9,
+                comment: 'mod memo',
               },
             ],
-            comment: '21gifts moderator',
+            comment: 'mod memo',
           }),
           expect.objectContaining({
             onlyAddresses: ['bob@walletofsatoshi.com'],
@@ -700,6 +779,7 @@ describe('createServer', () => {
               'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
             },
             checkFundingEligible: false,
+            executeOnly: true,
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -713,7 +793,7 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup does not invoke runDay when moderatorPaymentsEnabled is false and keeps the moderator retry line', async () => {
+  it('startRetryCatchup pays a stored moderator instruction when moderatorPaymentsEnabled is false', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-mod-off-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -726,9 +806,11 @@ describe('createServer', () => {
       })}\n`,
     );
     appendRetryOwed(dir, '2026-08-25', {
-      address: 'bob@walletofsatoshi.com',
+      address: 'carol@walletofsatoshi.com',
       bucket: 'moderator',
       groupMessageId: GROUP_MESSAGE_ID,
+      amountUsd: 9,
+      comment: 'mod memo',
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -744,12 +826,33 @@ describe('createServer', () => {
       });
       const { stop } = app.startRetryCatchup();
       try {
-        expect(runDay).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), { timeout: 2000 });
+        await app.drainPayouts();
+        expect(runDay).toHaveBeenCalledWith(
+          expect.objectContaining({
+            comment: 'mod memo',
+            recipients: [
+              {
+                address: 'carol@walletofsatoshi.com',
+                amountUsd: 9,
+                comment: 'mod memo',
+              },
+            ],
+          }),
+          expect.objectContaining({
+            onlyAddresses: ['carol@walletofsatoshi.com'],
+            bucket: 'moderator',
+            checkFundingEligible: false,
+            executeOnly: true,
+          }),
+        );
         expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
           {
-            address: 'bob@walletofsatoshi.com',
+            address: 'carol@walletofsatoshi.com',
             bucket: 'moderator',
             groupMessageId: GROUP_MESSAGE_ID,
+            amountUsd: 9,
+            comment: 'mod memo',
           },
         ]);
       } finally {
@@ -785,6 +888,8 @@ describe('createServer', () => {
       address: 'alice@walletofsatoshi.com',
       bucket: 'daily',
       messageId: PING_MESSAGE_ID,
+      amountUsd: 3,
+      comment: PING_COMMENT,
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -889,7 +994,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'alice@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
+          }),
         }),
       );
       expect(res.status).toBe(202);
@@ -1098,10 +1208,12 @@ describe('createServer', () => {
     });
   });
 
-  it('POST /ping is 200 skipped not_listed when the address is off the roster', async () => {
+  it('POST /ping is 400 when the address is off the roster and the body has no amountUsd', async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
       env,
+      runDay,
       fetchImpl: async (url) => {
         if (String(url).includes('/invoices/eligible')) {
           return new Response(JSON.stringify({ eligible: false, status: 'none' }), { status: 200 });
@@ -1116,11 +1228,12 @@ describe('createServer', () => {
       }),
     );
     warn.mockRestore();
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(INSTRUCTION_ERROR);
+    expect(runDay).not.toHaveBeenCalled();
   });
 
-  it('POST /ping is 202 accepted for an unlisted admitted grant at 1 USD', async () => {
+  it('POST /ping is 400 for an unlisted admitted grant without amountUsd and comment', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
@@ -1142,34 +1255,13 @@ describe('createServer', () => {
         body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
-    await vi.waitFor(() => {
-      expect(runDay).toHaveBeenCalled();
-    });
-    expect(runDay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
-        ],
-        comment: '21gifts daily',
-      }),
-      expect.objectContaining({
-        onlyAddresses: ['bob@walletofsatoshi.com'],
-        messageIdByAddress: {
-          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
-        },
-        checkFundingEligible: false,
-      }),
-    );
-    const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
-    expect(pingArgs?.[1]).not.toHaveProperty('bucket');
-    await app.drainPayouts();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(INSTRUCTION_ERROR);
+    expect(runDay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('POST /ping is 202 accepted for an unlisted trial grant at 1 USD', async () => {
+  it('POST /ping is 400 for an unlisted trial grant without amountUsd and comment', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
@@ -1189,31 +1281,13 @@ describe('createServer', () => {
         body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
       }),
     );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
-    await vi.waitFor(() => {
-      expect(runDay).toHaveBeenCalled();
-    });
-    expect(runDay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipients: [
-          { address: 'alice@walletofsatoshi.com', amountUsd: 1 },
-          { address: 'bob@walletofsatoshi.com', amountUsd: 1 },
-        ],
-      }),
-      expect.objectContaining({
-        onlyAddresses: ['bob@walletofsatoshi.com'],
-        messageIdByAddress: {
-          'bob@walletofsatoshi.com': PING_MESSAGE_ID,
-        },
-        checkFundingEligible: false,
-      }),
-    );
-    await app.drainPayouts();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(INSTRUCTION_ERROR);
+    expect(runDay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('POST /ping is 200 skipped not_listed for unlisted pending, none, or rejected grant', async () => {
+  it('POST /ping is 400 for unlisted pending, none, or rejected grant without amountUsd', async () => {
     for (const status of ['pending', 'none', 'rejected'] as const) {
       const runDay = vi.fn(async () => ({ exitCode: 0 }));
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1233,14 +1307,14 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
       warn.mockRestore();
     }
   });
 
-  it('POST /ping is 200 skipped eligible_unreachable when the unlisted grant lookup fails', async () => {
+  it('POST /ping is 400 when the unlisted grant lookup would have been needed', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-eligible-unreach-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -1273,8 +1347,8 @@ describe('createServer', () => {
           }),
         }),
       );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'eligible_unreachable' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
       expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
       expect(existsSync(join(dir, '2026-08-25.finished'))).toBe(false);
@@ -1323,7 +1397,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 4.5,
+            comment: PING_COMMENT,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1374,7 +1453,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 4.5,
+            comment: PING_COMMENT,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1425,7 +1509,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 4.5,
+            comment: PING_COMMENT,
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -1437,7 +1526,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 200 skipped payments_disabled for an unlisted admitted grant', async () => {
+  it('POST /ping is 400 for an unlisted admitted grant without amountUsd while payments are off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-unlisted-pay-off-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -1470,8 +1559,8 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
         }),
       );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -1516,6 +1605,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -1528,7 +1619,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping is 200 skipped uncertain when another live recipient is uncertain', async () => {
+  it('POST /ping is 202 when another live recipient is uncertain', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-uncertain-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -1569,12 +1660,34 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
-      expect(runDay).not.toHaveBeenCalled();
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comment: PING_COMMENT,
+          recipients: [
+            {
+              address: 'alice@walletofsatoshi.com',
+              amountUsd: 1,
+              comment: PING_COMMENT,
+            },
+          ],
+        }),
+        expect.objectContaining({
+          onlyAddresses: ['alice@walletofsatoshi.com'],
+          checkFundingEligible: false,
+          executeOnly: true,
+        }),
+      );
+      await app.drainPayouts();
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -1593,7 +1706,12 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        body: JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
       }),
     );
     expect(res.status).toBe(202);
@@ -1602,7 +1720,16 @@ describe('createServer', () => {
       expect(runDay).toHaveBeenCalled();
     });
     expect(runDay).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        comment: PING_COMMENT,
+        recipients: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          },
+        ],
+      }),
       expect.objectContaining({
         live: true,
         day: '2026-08-25',
@@ -1611,13 +1738,14 @@ describe('createServer', () => {
           'alice@walletofsatoshi.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         },
         checkFundingEligible: false,
+        executeOnly: true,
       }),
     );
     await app.drainPayouts();
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator is 202 and queues the listed amountUsd without messageIdByAddress', async () => {
+  it('POST /ping kind moderator is 202 and queues the instructed amountUsd without messageIdByAddress', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
@@ -1629,7 +1757,12 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+        body: JSON.stringify({
+          address: 'bob@walletofsatoshi.com',
+          kind: 'moderator',
+          amountUsd: 9,
+          comment: 'mod memo',
+        }),
       }),
     );
     expect(res.status).toBe(202);
@@ -1642,11 +1775,11 @@ describe('createServer', () => {
         recipients: [
           {
             address: 'bob@walletofsatoshi.com',
-            amountUsd: 7.5,
-            comment: '21gifts moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
           },
         ],
-        comment: '21gifts moderator',
+        comment: 'mod memo',
       }),
       expect.objectContaining({
         live: true,
@@ -1654,6 +1787,7 @@ describe('createServer', () => {
         onlyAddresses: ['bob@walletofsatoshi.com'],
         bucket: 'moderator',
         checkFundingEligible: false,
+        executeOnly: true,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -1687,6 +1821,8 @@ describe('createServer', () => {
           address: 'bob@walletofsatoshi.com',
           kind: 'moderator',
           groupMessageId: GROUP_MESSAGE_ID,
+          amountUsd: 9,
+          comment: 'mod memo',
         }),
       }),
     );
@@ -1700,11 +1836,11 @@ describe('createServer', () => {
         recipients: [
           {
             address: 'bob@walletofsatoshi.com',
-            amountUsd: 7.5,
-            comment: '21gifts moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
           },
         ],
-        comment: '21gifts moderator',
+        comment: 'mod memo',
       }),
       expect.objectContaining({
         live: true,
@@ -1714,6 +1850,7 @@ describe('createServer', () => {
         groupMessageIdByAddress: {
           'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
         },
+        executeOnly: true,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -1722,7 +1859,7 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator enqueues one retry row on insufficient_balance without amountUsd and does not write the moderator JSONL', async () => {
+  it('POST /ping kind moderator enqueues one retry row on insufficient_balance with amountUsd and comment and does not write the moderator JSONL', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-ping-mod-enqueue-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -1767,6 +1904,8 @@ describe('createServer', () => {
             address: 'bob@walletofsatoshi.com',
             kind: 'moderator',
             groupMessageId: GROUP_MESSAGE_ID,
+            amountUsd: 9,
+            comment: 'mod memo',
           }),
         }),
       );
@@ -1778,6 +1917,8 @@ describe('createServer', () => {
           address: 'bob@walletofsatoshi.com',
           bucket: 'moderator',
           groupMessageId: GROUP_MESSAGE_ID,
+          amountUsd: 9,
+          comment: 'mod memo',
         },
       ]);
       expect(existsSync(join(dir, '2026-08-25.moderator.jsonl'))).toBe(false);
@@ -1831,6 +1972,8 @@ describe('createServer', () => {
             address: 'carol@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
             kind: 'welcome',
+            amountUsd: 2.25,
+            comment: 'hello there',
           }),
         }),
       );
@@ -1842,7 +1985,8 @@ describe('createServer', () => {
           address: 'carol@walletofsatoshi.com',
           bucket: 'welcome',
           messageId: PING_MESSAGE_ID,
-          amountUsd: 1,
+          amountUsd: 2.25,
+          comment: 'hello there',
         },
       ]);
       expect(existsSync(join(dir, 'welcome.jsonl'))).toBe(false);
@@ -1866,6 +2010,8 @@ describe('createServer', () => {
       address: 'alice@walletofsatoshi.com',
       bucket: 'daily',
       messageId: PING_MESSAGE_ID,
+      amountUsd: 3,
+      comment: PING_COMMENT,
     });
     let calls = 0;
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
@@ -1892,6 +2038,8 @@ describe('createServer', () => {
             address: 'alice@walletofsatoshi.com',
             bucket: 'daily',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
           },
         ]);
       } finally {
@@ -1903,7 +2051,7 @@ describe('createServer', () => {
     }
   });
 
-  it('startRetryCatchup pays an owed welcome gift at 1 USD with comment Welcome', async () => {
+  it('startRetryCatchup pays an owed welcome gift at the stored amount and comment', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-retry-welcome-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -1917,7 +2065,8 @@ describe('createServer', () => {
       address: 'carol@walletofsatoshi.com',
       bucket: 'welcome',
       messageId: PING_MESSAGE_ID,
-      amountUsd: 1,
+      amountUsd: 2.25,
+      comment: 'hello there',
     });
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1940,11 +2089,11 @@ describe('createServer', () => {
             recipients: [
               {
                 address: 'carol@walletofsatoshi.com',
-                amountUsd: 1,
-                comment: 'Welcome',
+                amountUsd: 2.25,
+                comment: 'hello there',
               },
             ],
-            comment: 'Welcome',
+            comment: 'hello there',
           }),
           expect.objectContaining({
             onlyAddresses: ['carol@walletofsatoshi.com'],
@@ -1953,6 +2102,7 @@ describe('createServer', () => {
               'carol@walletofsatoshi.com': PING_MESSAGE_ID,
             },
             checkFundingEligible: false,
+            executeOnly: true,
           }),
         );
       } finally {
@@ -2006,7 +2156,12 @@ describe('createServer', () => {
         app.fetch(
           pingReq({
             headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-            body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+            body: JSON.stringify({
+              address: 'bob@walletofsatoshi.com',
+              kind: 'moderator',
+              amountUsd: 9,
+              comment: 'mod memo',
+            }),
           }),
         );
       const first = await moderatorPing();
@@ -2026,6 +2181,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -2044,6 +2201,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -2098,7 +2257,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(202);
@@ -2146,7 +2310,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -2191,7 +2360,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -2203,7 +2377,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 200 skipped not_listed when the address is only on the daily roster', async () => {
+  it('POST /ping kind moderator is 400 when the address is only on the daily roster and amountUsd is missing', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const app = createServer({
@@ -2218,13 +2392,13 @@ describe('createServer', () => {
         body: JSON.stringify({ address: 'alice@walletofsatoshi.com', kind: 'moderator' }),
       }),
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(INSTRUCTION_ERROR);
     expect(runDay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('POST /ping kind moderator matches the roster case-insensitively and pays the listed amount', async () => {
+  it('POST /ping kind moderator pays the instructed amount without reading the roster', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-roster-case-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2247,7 +2421,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(202);
@@ -2257,17 +2436,19 @@ describe('createServer', () => {
       });
       expect(runDay).toHaveBeenCalledWith(
         expect.objectContaining({
+          comment: 'mod memo',
           recipients: [
             {
-              address: 'Bob@walletofsatoshi.com',
-              amountUsd: 7.5,
-              comment: '21gifts moderator',
+              address: 'bob@walletofsatoshi.com',
+              amountUsd: 9,
+              comment: 'mod memo',
             },
           ],
         }),
         expect.objectContaining({
-          onlyAddresses: ['Bob@walletofsatoshi.com'],
+          onlyAddresses: ['bob@walletofsatoshi.com'],
           bucket: 'moderator',
+          executeOnly: true,
         }),
       );
       await app.drainPayouts();
@@ -2310,7 +2491,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'BOB@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'BOB@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(202);
@@ -2320,17 +2506,19 @@ describe('createServer', () => {
       });
       expect(runDay).toHaveBeenCalledWith(
         expect.objectContaining({
+          comment: 'mod memo',
           recipients: [
             {
               address: 'Bob@walletofsatoshi.com',
-              amountUsd: 7.5,
-              comment: '21gifts moderator',
+              amountUsd: 9,
+              comment: 'mod memo',
             },
           ],
         }),
         expect.objectContaining({
           onlyAddresses: ['Bob@walletofsatoshi.com'],
           bucket: 'moderator',
+          executeOnly: true,
         }),
       );
       await app.drainPayouts();
@@ -2340,7 +2528,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping kind moderator is 500 when the live file is unreadable', async () => {
+  it('POST /ping kind moderator is 400 when amountUsd is missing even if the live file is unreadable', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-corrupt-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2367,8 +2555,8 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
         }),
       );
-      expect(res.status).toBe(500);
-      expect(await res.json()).toEqual({ error: 'Recipient list is unreadable' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -2452,6 +2640,8 @@ describe('createServer', () => {
           address: 'alice@walletofsatoshi.com',
           messageId: PING_MESSAGE_ID,
           groupMessageId: GROUP_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
         }),
       }),
     );
@@ -2465,6 +2655,8 @@ describe('createServer', () => {
           kind: 'daily',
           messageId: PING_MESSAGE_ID,
           groupMessageId: 'nope',
+          amountUsd: 1,
+          comment: PING_COMMENT,
         }),
       }),
     );
@@ -2475,7 +2667,16 @@ describe('createServer', () => {
     });
     expect(runDay).toHaveBeenNthCalledWith(
       1,
-      expect.anything(),
+      expect.objectContaining({
+        comment: PING_COMMENT,
+        recipients: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          },
+        ],
+      }),
       expect.objectContaining({
         live: true,
         day: '2026-08-25',
@@ -2483,11 +2684,21 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': PING_MESSAGE_ID,
         },
+        executeOnly: true,
       }),
     );
     expect(runDay).toHaveBeenNthCalledWith(
       2,
-      expect.anything(),
+      expect.objectContaining({
+        comment: PING_COMMENT,
+        recipients: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          },
+        ],
+      }),
       expect.objectContaining({
         live: true,
         day: '2026-08-25',
@@ -2495,6 +2706,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': PING_MESSAGE_ID,
         },
+        executeOnly: true,
       }),
     );
     const firstArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -2505,7 +2717,7 @@ describe('createServer', () => {
     warn.mockRestore();
   });
 
-  it('POST /ping welcome is 202 and pays 1 USD with comment Welcome', async () => {
+  it('POST /ping welcome is 400 without amountUsd and comment', async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const app = createServer({
       env,
@@ -2524,29 +2736,9 @@ describe('createServer', () => {
         }),
       }),
     );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: 'accepted' });
-    await vi.waitFor(() => {
-      expect(runDay).toHaveBeenCalled();
-    });
-    expect(runDay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        comment: 'Welcome',
-        recipients: [
-          expect.objectContaining({
-            address: 'nobody@walletofsatoshi.com',
-            amountUsd: 1,
-            comment: 'Welcome',
-          }),
-        ],
-      }),
-      expect.objectContaining({
-        bucket: 'welcome',
-        onlyAddresses: ['nobody@walletofsatoshi.com'],
-        messageIdByAddress: { 'nobody@walletofsatoshi.com': PING_MESSAGE_ID },
-        checkFundingEligible: false,
-      }),
-    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(INSTRUCTION_ERROR);
+    expect(runDay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -2586,6 +2778,8 @@ describe('createServer', () => {
             address: 'nobody@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
             kind: 'welcome',
+            amountUsd: 2.25,
+            comment: 'hello there',
           }),
         }),
       );
@@ -2636,7 +2830,7 @@ describe('createServer', () => {
     });
   });
 
-  it('POST /ping is 200 skipped payments_disabled and does not invoke runDay', async () => {
+  it('POST /ping is 400 when paymentsEnabled is false and amountUsd is missing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-pay-off-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2666,8 +2860,8 @@ describe('createServer', () => {
           }),
         }),
       );
-      expect(daily.status).toBe(200);
-      expect(await daily.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(daily.status).toBe(400);
+      expect(await daily.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
       const moderator = await app.fetch(
         pingReq({
@@ -2675,19 +2869,16 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
         }),
       );
-      expect(moderator.status).toBe(202);
-      expect(await moderator.json()).toEqual({ status: 'accepted' });
-      await vi.waitFor(() => {
-        expect(runDay).toHaveBeenCalled();
-      });
-      await app.drainPayouts();
+      expect(moderator.status).toBe(400);
+      expect(await moderator.json()).toEqual(INSTRUCTION_ERROR);
+      expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('POST /ping kind moderator is 200 skipped payments_disabled and does not invoke runDay', async () => {
+  it('POST /ping kind moderator is 400 when moderatorPaymentsEnabled is false and amountUsd is missing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-mod-off-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2714,8 +2905,8 @@ describe('createServer', () => {
           body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
         }),
       );
-      expect(moderator.status).toBe(200);
-      expect(await moderator.json()).toEqual({ status: 'skipped', reason: 'payments_disabled' });
+      expect(moderator.status).toBe(400);
+      expect(await moderator.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
       const daily = await app.fetch(
         pingReq({
@@ -2726,19 +2917,16 @@ describe('createServer', () => {
           }),
         }),
       );
-      expect(daily.status).toBe(202);
-      expect(await daily.json()).toEqual({ status: 'accepted' });
-      await vi.waitFor(() => {
-        expect(runDay).toHaveBeenCalled();
-      });
-      await app.drainPayouts();
+      expect(daily.status).toBe(400);
+      expect(await daily.json()).toEqual(INSTRUCTION_ERROR);
+      expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('POST /ping stays not_listed while payments are off', async () => {
+  it('POST /ping is 400 without amountUsd while payments are off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-listed-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2775,16 +2963,16 @@ describe('createServer', () => {
           }),
         }),
       );
-      expect(daily.status).toBe(200);
-      expect(await daily.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(daily.status).toBe(400);
+      expect(await daily.json()).toEqual(INSTRUCTION_ERROR);
       const moderator = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
           body: JSON.stringify({ address: 'nobody@walletofsatoshi.com', kind: 'moderator' }),
         }),
       );
-      expect(moderator.status).toBe(200);
-      expect(await moderator.json()).toEqual({ status: 'skipped', reason: 'not_listed' });
+      expect(moderator.status).toBe(400);
+      expect(await moderator.json()).toEqual(INSTRUCTION_ERROR);
       expect(runDay).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -2830,6 +3018,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -2842,7 +3032,7 @@ describe('createServer', () => {
     }
   });
 
-  it('POST /ping stays uncertain while daily payments are off', async () => {
+  it('POST /ping is 202 when another recipient is uncertain and payments are off', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-ping-off-uncertain-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -2883,12 +3073,33 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: 'skipped', reason: 'uncertain' });
-      expect(runDay).not.toHaveBeenCalled();
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comment: PING_COMMENT,
+          recipients: [
+            {
+              address: 'alice@walletofsatoshi.com',
+              amountUsd: 1,
+              comment: PING_COMMENT,
+            },
+          ],
+        }),
+        expect.objectContaining({
+          executeOnly: true,
+          checkFundingEligible: false,
+        }),
+      );
+      await app.drainPayouts();
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -2933,6 +3144,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -2981,7 +3194,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -3029,7 +3247,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -3077,7 +3300,12 @@ describe('createServer', () => {
       const res = await app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'bob@walletofsatoshi.com', kind: 'moderator' }),
+          body: JSON.stringify({
+            address: 'bob@walletofsatoshi.com',
+            kind: 'moderator',
+            amountUsd: 9,
+            comment: 'mod memo',
+          }),
         }),
       );
       expect(res.status).toBe(200);
@@ -3108,7 +3336,12 @@ describe('createServer', () => {
     const res = await app.fetch(
       pingReq({
         headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-        body: JSON.stringify({ address: 'alice@walletofsatoshi.com', messageId: PING_MESSAGE_ID }),
+        body: JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
       }),
     );
     expect(res.status).toBe(202);
@@ -3146,7 +3379,7 @@ describe('createServer', () => {
     });
   });
 
-  it('POST /ping daily does not invoice when a welcome pay for that address settles first', async () => {
+  it('POST /ping daily still invoices after a welcome pay for that address when both are instructed', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-welcome-day-ping-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -3257,6 +3490,8 @@ describe('createServer', () => {
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
             kind: 'welcome',
+            amountUsd: 1,
+            comment: 'hello there',
           }),
         }),
       );
@@ -3269,6 +3504,8 @@ describe('createServer', () => {
           body: JSON.stringify({
             address: 'alice@walletofsatoshi.com',
             messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
           }),
         }),
       );
@@ -3276,12 +3513,12 @@ describe('createServer', () => {
       expect(await daily.json()).toEqual({ status: 'accepted' });
       releasePay();
       await app.drainPayouts();
-      expect(invoiceCreates).toBe(1);
-      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
+      expect(invoiceCreates).toBe(2);
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(true);
       const welcomeLog = readFileSync(join(dir, 'welcome.jsonl'), 'utf8');
       expect(welcomeLog).toContain('"status":"paid"');
-      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(true);
-      expect(telegramCalls).toHaveLength(1);
+      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(false);
+      expect(telegramCalls).toHaveLength(2);
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -3340,6 +3577,7 @@ describe('createServer', () => {
           'nobody@walletofsatoshi.com': PING_MESSAGE_ID,
         },
         checkFundingEligible: false,
+        executeOnly: true,
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -3403,6 +3641,7 @@ describe('createServer', () => {
             'alice@walletofsatoshi.com': PING_MESSAGE_ID,
           },
           checkFundingEligible: false,
+          executeOnly: true,
         }),
       );
       await app.drainPayouts();
@@ -3441,6 +3680,10 @@ describe('createServer', () => {
       error: 'Expected a JSON body with address and messageId',
     });
     const bodies: unknown[] = [
+      {
+        address: 'alice@walletofsatoshi.com',
+        messageId: PING_MESSAGE_ID,
+      },
       {
         address: 'alice@walletofsatoshi.com',
         messageId: PING_MESSAGE_ID,
@@ -3565,6 +3808,7 @@ describe('createServer', () => {
           onlyAddresses: ['nobody@walletofsatoshi.com'],
           messageIdByAddress: { 'nobody@walletofsatoshi.com': PING_MESSAGE_ID },
           checkFundingEligible: false,
+          executeOnly: true,
         }),
       );
       await app.drainPayouts();
@@ -3632,6 +3876,7 @@ describe('createServer', () => {
             'carol@walletofsatoshi.com': GROUP_MESSAGE_ID,
           },
           checkFundingEligible: false,
+          executeOnly: true,
         }),
       );
       const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -4224,7 +4469,12 @@ describe('recipient editor', () => {
       app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'a@b.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          }),
         }),
       );
     expect((await ping()).status).toBe(202);
@@ -4350,7 +4600,12 @@ describe('recipient editor', () => {
       app.fetch(
         pingReq({
           headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
-          body: JSON.stringify({ address: 'a@b.com', messageId: PING_MESSAGE_ID }),
+          body: JSON.stringify({
+            address: 'a@b.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          }),
         }),
       );
     expect((await ping()).status).toBe(202);

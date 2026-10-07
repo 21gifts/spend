@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { loadConfig, type Recipient, type SpendConfig } from './config';
 import { loadDashboard } from './dashboard';
 import { bearerMatchesDebugToken, bearerMatchesToken } from './debug-token';
-import { GiftsApi, type FundingGrantStatus } from './gifts-api';
 import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { createPayoutGate } from './payout-gate';
@@ -37,10 +36,8 @@ import {
 
 const SERVICE_NAME = 'spend';
 const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** New-member handbook cap (USD) for an unlisted daily ping with grant admitted or trial. */
+/** New-member handbook cap (USD) for GET `/daily-roster` `defaultAmountUsd`. */
 export const NEW_MEMBER_DAILY_USD = 1;
-/** Once-per-Lightning-Address lifetime welcome gift (USD). */
-const WELCOME_USD = 1;
 
 /**
  * Parse `BIND_ADDR` (`host:port`).
@@ -157,6 +154,7 @@ function parseComment(raw: string | null): { ok: true; comment: string } | { ok:
 /**
  * Explicit ping amount. A present `amountUsd` key requires a finite number
  * greater than 0 and a comment string of length at most 500, paid as-is.
+ * Absent or invalid both 400 at the ping handler.
  *
  * @param body - Parsed JSON object.
  * @returns Absent when the key is missing, invalid when the pair is unusable.
@@ -271,8 +269,8 @@ type DailyRosterJson = {
 };
 
 /**
- * GET `/daily-roster` payload: file comment, daily switch, the unlisted
- * grant default, daily rows, moderator rows, and the moderator switch.
+ * GET `/daily-roster` payload: file comment, daily switch, handbook
+ * `defaultAmountUsd`, daily rows, moderator rows, and the moderator switch.
  * No per-row comment.
  *
  * @param live - Full live file.
@@ -608,7 +606,7 @@ export function createServer(opts: {
         }
       }
       const instruction = parsePingInstruction(body as object);
-      if (instruction.status === 'invalid') {
+      if (instruction.status !== 'ok') {
         return json(400, {
           error: 'Expected a JSON body with address, amountUsd, and comment',
         });
@@ -627,267 +625,13 @@ export function createServer(opts: {
       };
       const clock = opts.now ?? (() => new Date());
       const day = clock().toISOString().slice(0, 10);
-      if (instruction.status === 'ok') {
-        let storedAddress = parsed;
-        let rows;
-        try {
-          rows =
-            kind === 'welcome' || kind === 'moderator'
-              ? new DayState(config.stateDir, day, undefined, kind).load()
-              : new DayState(config.stateDir, day).load();
-        } catch (err) {
-          if (!(err instanceof CorruptStateError)) {
-            throw err;
-          }
-          rows = undefined;
-        }
-        if (rows !== undefined) {
-          if (kind === 'welcome' || kind === 'moderator') {
-            const persisted = rows.find(
-              (row) => row.address.toLowerCase() === parsed.toLowerCase(),
-            );
-            if (persisted !== undefined) {
-              storedAddress = persisted.address;
-            }
-          }
-          const block = dayBlock(rows, storedAddress);
-          if (block === 'paid') {
-            logPing('skipped', 'paid');
-            return json(200, { status: 'skipped', reason: 'paid' });
-          }
-          if (
-            block === 'uncertain' ||
-            (kind === 'daily' && dayBlock(rows, '*halt*') === 'uncertain')
-          ) {
-            logPing('skipped', 'uncertain');
-            return json(200, { status: 'skipped', reason: 'uncertain' });
-          }
-          if (latestStatus(rows, storedAddress) === 'failed') {
-            logPing('skipped', 'failed');
-            return json(200, { status: 'skipped', reason: 'failed' });
-          }
-        }
-        logPing('accepted');
-        const instructedRow: Recipient = {
-          address: storedAddress,
-          amountUsd: instruction.amountUsd,
-          comment: instruction.comment,
-        };
-        const messageId = kind === 'moderator' ? undefined : (pingBody.messageId as string);
-        void payout(day, 'ping', [storedAddress], messageId, {
-          recipients: [instructedRow],
-          comment: instruction.comment,
-          ...(kind === 'welcome' || kind === 'moderator' ? { bucket: kind } : {}),
-          ...(groupMessageId === undefined ? {} : { groupMessageId }),
-        }).catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : 'ping';
-          console.warn(
-            JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'spend.ping',
-              address: storedAddress,
-              status: 'error',
-              error,
-              ...(kind === 'daily' ? {} : { kind }),
-            }),
-          );
-        });
-        return json(202, { status: 'accepted' });
-      }
-      if (kind === 'welcome') {
-        if (typeof pingBody.messageId !== 'string' || !MESSAGE_ID_RE.test(pingBody.messageId)) {
-          return json(400, {
-            error: 'Expected a JSON body with address and messageId',
-          });
-        }
-        const messageId = pingBody.messageId;
-        let liveList: LiveRecipients;
-        try {
-          liveList = loadLiveRecipients(config.stateDir);
-        } catch (err) {
-          if (err instanceof CorruptRecipientsError) {
-            return json(500, { error: 'Recipient list is unreadable' });
-          }
-          throw err;
-        }
-        let storedAddress = parsed;
-        let rows;
-        try {
-          rows = new DayState(config.stateDir, day, undefined, 'welcome').load();
-        } catch (err) {
-          if (!(err instanceof CorruptStateError)) {
-            throw err;
-          }
-          rows = undefined;
-        }
-        if (rows !== undefined) {
-          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
-          if (persisted !== undefined) {
-            storedAddress = persisted.address;
-          }
-          const block = dayBlock(rows, storedAddress);
-          if (block === 'paid') {
-            logPing('skipped', 'paid');
-            return json(200, { status: 'skipped', reason: 'paid' });
-          }
-          if (block === 'uncertain') {
-            logPing('skipped', 'uncertain');
-            return json(200, { status: 'skipped', reason: 'uncertain' });
-          }
-          if (latestStatus(rows, storedAddress) === 'failed') {
-            logPing('skipped', 'failed');
-            return json(200, { status: 'skipped', reason: 'failed' });
-          }
-        }
-        if (liveList.paymentsEnabled === false) {
-          logPing('skipped', 'payments_disabled');
-          return json(200, { status: 'skipped', reason: 'payments_disabled' });
-        }
-        logPing('accepted');
-        void payout(day, 'ping', [storedAddress], messageId, {
-          bucket: 'welcome',
-          recipients: [
-            {
-              address: storedAddress,
-              amountUsd: WELCOME_USD,
-              comment: 'Welcome',
-            },
-          ],
-          comment: 'Welcome',
-        }).catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : 'ping';
-          console.warn(
-            JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'spend.ping',
-              address: storedAddress,
-              status: 'error',
-              error,
-              kind: 'welcome',
-            }),
-          );
-        });
-        return json(202, { status: 'accepted' });
-      }
-      if (kind === 'moderator') {
-        let liveList: LiveRecipients;
-        try {
-          liveList = loadLiveRecipients(config.stateDir);
-        } catch (err) {
-          if (err instanceof CorruptRecipientsError) {
-            return json(500, { error: 'Recipient list is unreadable' });
-          }
-          throw err;
-        }
-        const listed = liveList.moderators.find(
-          (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
-        );
-        if (listed === undefined) {
-          logPing('skipped', 'not_listed');
-          return json(200, { status: 'skipped', reason: 'not_listed' });
-        }
-        let storedAddress = listed.address;
-        let rows;
-        try {
-          rows = new DayState(config.stateDir, day, undefined, 'moderator').load();
-        } catch (err) {
-          if (!(err instanceof CorruptStateError)) {
-            throw err;
-          }
-          rows = undefined;
-        }
-        if (rows !== undefined) {
-          const persisted = rows.find((row) => row.address.toLowerCase() === parsed.toLowerCase());
-          if (persisted !== undefined) {
-            storedAddress = persisted.address;
-          }
-          const block = dayBlock(rows, storedAddress);
-          if (block === 'paid') {
-            logPing('skipped', 'paid');
-            return json(200, { status: 'skipped', reason: 'paid' });
-          }
-          if (block === 'uncertain') {
-            logPing('skipped', 'uncertain');
-            return json(200, { status: 'skipped', reason: 'uncertain' });
-          }
-          if (latestStatus(rows, storedAddress) === 'failed') {
-            logPing('skipped', 'failed');
-            return json(200, { status: 'skipped', reason: 'failed' });
-          }
-        }
-        if (liveList.moderatorPaymentsEnabled === false) {
-          logPing('skipped', 'payments_disabled');
-          return json(200, { status: 'skipped', reason: 'payments_disabled' });
-        }
-        logPing('accepted');
-        void payout(day, 'ping', [storedAddress], undefined, {
-          bucket: 'moderator',
-          recipients: [
-            {
-              address: storedAddress,
-              amountUsd: listed.amountUsd,
-              comment: '21gifts moderator',
-            },
-          ],
-          comment: '21gifts moderator',
-          ...(groupMessageId === undefined ? {} : { groupMessageId }),
-        }).catch((err: unknown) => {
-          const error = err instanceof Error ? err.message : 'ping';
-          console.warn(
-            JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'spend.ping',
-              address: storedAddress,
-              status: 'error',
-              error,
-              kind: 'moderator',
-            }),
-          );
-        });
-        return json(202, { status: 'accepted' });
-      }
-      const messageId = pingBody.messageId as string;
-      let liveList: LiveRecipients;
-      try {
-        liveList = loadLiveRecipients(config.stateDir);
-      } catch (err) {
-        if (err instanceof CorruptRecipientsError) {
-          return json(500, { error: 'Recipient list is unreadable' });
-        }
-        throw err;
-      }
-      const listed = liveList.recipients.find(
-        (recipient) => recipient.address.toLowerCase() === parsed.toLowerCase(),
-      );
-      let storedAddress: string;
-      let extraRecipients: Recipient[] | undefined;
-      if (listed === undefined) {
-        let grant: FundingGrantStatus;
-        try {
-          grant = await new GiftsApi(
-            config.giftsApiUrl,
-            config.giftsApiToken,
-            fetchImpl,
-          ).fundingGrantStatus(parsed);
-        } catch {
-          logPing('skipped', 'eligible_unreachable');
-          return json(200, {
-            status: 'skipped',
-            reason: 'eligible_unreachable',
-          });
-        }
-        if (grant !== 'admitted' && grant !== 'trial') {
-          logPing('skipped', 'not_listed');
-          return json(200, { status: 'skipped', reason: 'not_listed' });
-        }
-        storedAddress = parsed;
-        extraRecipients = [{ address: storedAddress, amountUsd: NEW_MEMBER_DAILY_USD }];
-      } else {
-        storedAddress = listed.address;
-      }
+      let storedAddress = parsed;
       let rows;
       try {
-        rows = new DayState(config.stateDir, day).load();
+        rows =
+          kind === 'welcome' || kind === 'moderator'
+            ? new DayState(config.stateDir, day, undefined, kind).load()
+            : new DayState(config.stateDir, day).load();
       } catch (err) {
         if (!(err instanceof CorruptStateError)) {
           throw err;
@@ -895,6 +639,14 @@ export function createServer(opts: {
         rows = undefined;
       }
       if (rows !== undefined) {
+        if (kind === 'welcome' || kind === 'moderator') {
+          const persisted = rows.find(
+            (row) => row.address.toLowerCase() === parsed.toLowerCase(),
+          );
+          if (persisted !== undefined) {
+            storedAddress = persisted.address;
+          }
+        }
         const block = dayBlock(rows, storedAddress);
         if (block === 'paid') {
           logPing('skipped', 'paid');
@@ -902,8 +654,7 @@ export function createServer(opts: {
         }
         if (
           block === 'uncertain' ||
-          dayBlock(rows, '*halt*') === 'uncertain' ||
-          liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain')
+          (kind === 'daily' && dayBlock(rows, '*halt*') === 'uncertain')
         ) {
           logPing('skipped', 'uncertain');
           return json(200, { status: 'skipped', reason: 'uncertain' });
@@ -913,18 +664,19 @@ export function createServer(opts: {
           return json(200, { status: 'skipped', reason: 'failed' });
         }
       }
-      if (liveList.paymentsEnabled === false) {
-        logPing('skipped', 'payments_disabled');
-        return json(200, { status: 'skipped', reason: 'payments_disabled' });
-      }
       logPing('accepted');
-      const queued =
-        extraRecipients === undefined
-          ? payout(day, 'ping', [storedAddress], messageId)
-          : payout(day, 'ping', [storedAddress], messageId, {
-              recipients: extraRecipients,
-            });
-      void queued.catch((err: unknown) => {
+      const instructedRow: Recipient = {
+        address: storedAddress,
+        amountUsd: instruction.amountUsd,
+        comment: instruction.comment,
+      };
+      const messageId = kind === 'moderator' ? undefined : (pingBody.messageId as string);
+      void payout(day, 'ping', [storedAddress], messageId, {
+        recipients: [instructedRow],
+        comment: instruction.comment,
+        ...(kind === 'welcome' || kind === 'moderator' ? { bucket: kind } : {}),
+        ...(groupMessageId === undefined ? {} : { groupMessageId }),
+      }).catch((err: unknown) => {
         const error = err instanceof Error ? err.message : 'ping';
         console.warn(
           JSON.stringify({
@@ -933,6 +685,7 @@ export function createServer(opts: {
             address: storedAddress,
             status: 'error',
             error,
+            ...(kind === 'daily' ? {} : { kind }),
           }),
         );
       });
@@ -1273,6 +1026,7 @@ export function createServer(opts: {
                 ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
       if (source === 'ping' || source === 'catchup') runOptions.checkFundingEligible = false;
+      if (typeof extras?.comment === 'string') runOptions.executeOnly = true;
       const result = await (opts.runDay ?? runDay)(
         {
           ...config,
@@ -1314,12 +1068,15 @@ export function createServer(opts: {
           ) {
             row.groupMessageId = extras.groupMessageId;
           }
-          if ((bucket === 'daily' || bucket === 'welcome') && extras?.recipients !== undefined) {
+          if (extras?.recipients !== undefined) {
             const extra = extras.recipients.find(
               (recipient) => recipient.address.toLowerCase() === address.toLowerCase(),
             );
             if (extra !== undefined) {
               row.amountUsd = extra.amountUsd;
+              if (typeof extra.comment === 'string') {
+                row.comment = extra.comment;
+              }
             }
           }
           try {
@@ -1422,143 +1179,74 @@ export function createServer(opts: {
     const clock = opts.now ?? (() => new Date());
     const day = clock().toISOString().slice(0, 10);
     const owed = loadRetryOwed(config.stateDir, day);
-    let liveList: LiveRecipients;
-    try {
-      liveList = loadLiveRecipients(config.stateDir);
-    } catch (err) {
-      if (err instanceof CorruptRecipientsError) {
-        console.warn(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            event: 'spend.retry',
-            error: err.message,
-          }),
-        );
-        return;
+    const rowsByBucket = new Map<RetryOwed['bucket'], StateRow[] | 'corrupt'>();
+    const rowsFor = (bucket: RetryOwed['bucket']): StateRow[] | undefined => {
+      const cached = rowsByBucket.get(bucket);
+      if (cached === 'corrupt') {
+        return undefined;
       }
-      throw err;
-    }
-    let dailyRows: StateRow[] | undefined;
-    try {
-      dailyRows = new DayState(config.stateDir, day).load();
-    } catch (err) {
-      if (!(err instanceof CorruptStateError)) {
-        throw err;
+      if (cached !== undefined) {
+        return cached;
       }
-    }
-    let moderatorRows: StateRow[] | undefined;
-    try {
-      moderatorRows = new DayState(config.stateDir, day, undefined, 'moderator').load();
-    } catch (err) {
-      if (!(err instanceof CorruptStateError)) {
-        throw err;
+      try {
+        const loaded =
+          bucket === 'welcome' || bucket === 'moderator'
+            ? new DayState(config.stateDir, day, undefined, bucket).load()
+            : new DayState(config.stateDir, day).load();
+        rowsByBucket.set(bucket, loaded);
+        return loaded;
+      } catch (err) {
+        if (!(err instanceof CorruptStateError)) {
+          throw err;
+        }
+        rowsByBucket.set(bucket, 'corrupt');
+        return undefined;
       }
-    }
-    let welcomeRows: StateRow[] | undefined;
-    try {
-      welcomeRows = new DayState(config.stateDir, day, undefined, 'welcome').load();
-    } catch (err) {
-      if (!(err instanceof CorruptStateError)) {
-        throw err;
-      }
-    }
-    let dailyBlocked = false;
-    if (dailyRows !== undefined) {
-      const rows = dailyRows;
-      dailyBlocked =
-        dayBlock(rows, '*halt*') === 'uncertain' ||
-        liveList.recipients.some((recipient) => dayBlock(rows, recipient.address) === 'uncertain');
-    }
+    };
     for (const row of owed) {
       try {
-        if (row.bucket === 'daily') {
-          if (dailyRows === undefined) {
-            continue;
-          }
-          if (liveList.paymentsEnabled === false) {
-            continue;
-          }
-          if (dailyBlocked) {
-            continue;
-          }
-          const block = dayBlock(dailyRows, row.address);
-          if (block === 'paid' || block === 'uncertain' || latestStatus(dailyRows, row.address) === 'failed') {
-            continue;
-          }
-          const listed = liveList.recipients.find(
-            (recipient) => recipient.address.toLowerCase() === row.address.toLowerCase(),
-          );
-          if (listed !== undefined) {
-            await payout(day, 'catchup', [listed.address], row.messageId);
-            continue;
-          }
-          if (row.amountUsd !== undefined) {
-            await payout(day, 'catchup', [row.address], row.messageId, {
-              recipients: [{ address: row.address, amountUsd: row.amountUsd }],
-            });
-          }
-          continue;
-        }
-        if (row.bucket === 'welcome') {
-          if (welcomeRows === undefined) {
-            continue;
-          }
-          if (liveList.paymentsEnabled === false) {
-            continue;
-          }
-          const block = dayBlock(welcomeRows, row.address);
-          if (
-            block === 'paid' ||
-            block === 'uncertain' ||
-            latestStatus(welcomeRows, row.address) === 'failed'
-          ) {
-            continue;
-          }
-          await payout(day, 'catchup', [row.address], row.messageId, {
-            bucket: 'welcome',
-            recipients: [
-              {
-                address: row.address,
-                amountUsd: row.amountUsd ?? WELCOME_USD,
-                comment: 'Welcome',
-              },
-            ],
-            comment: 'Welcome',
-          });
-          continue;
-        }
-        if (moderatorRows === undefined) {
-          continue;
-        }
-        if (liveList.moderatorPaymentsEnabled === false) {
-          continue;
-        }
-        const block = dayBlock(moderatorRows, row.address);
         if (
-          block === 'paid' ||
-          block === 'uncertain' ||
-          latestStatus(moderatorRows, row.address) === 'failed'
+          typeof row.amountUsd !== 'number' ||
+          !Number.isFinite(row.amountUsd) ||
+          row.amountUsd <= 0 ||
+          typeof row.comment !== 'string'
         ) {
           continue;
         }
-        const listed = liveList.moderators.find(
-          (recipient) => recipient.address.toLowerCase() === row.address.toLowerCase(),
-        );
-        if (listed === undefined) {
+        const rows = rowsFor(row.bucket);
+        if (rows === undefined) {
           continue;
         }
-        await payout(day, 'catchup', [listed.address], undefined, {
-          bucket: 'moderator',
-          recipients: [
-            {
-              address: listed.address,
-              amountUsd: listed.amountUsd,
-              comment: '21gifts moderator',
-            },
-          ],
-          comment: '21gifts moderator',
-          ...(row.groupMessageId === undefined ? {} : { groupMessageId: row.groupMessageId }),
-        });
+        const block = dayBlock(rows, row.address);
+        if (
+          block === 'paid' ||
+          block === 'uncertain' ||
+          latestStatus(rows, row.address) === 'failed'
+        ) {
+          continue;
+        }
+        if (row.bucket === 'daily' && dayBlock(rows, '*halt*') === 'uncertain') {
+          continue;
+        }
+        const instructed: Recipient = {
+          address: row.address,
+          amountUsd: row.amountUsd,
+          comment: row.comment,
+        };
+        await payout(
+          day,
+          'catchup',
+          [row.address],
+          row.bucket === 'moderator' ? undefined : row.messageId,
+          {
+            recipients: [instructed],
+            comment: row.comment,
+            ...(row.bucket === 'welcome' || row.bucket === 'moderator'
+              ? { bucket: row.bucket }
+              : {}),
+            ...(row.groupMessageId === undefined ? {} : { groupMessageId: row.groupMessageId }),
+          },
+        );
       } catch (err: unknown) {
         const error = err instanceof Error ? err.message : 'retry';
         console.warn(
