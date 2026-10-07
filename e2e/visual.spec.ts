@@ -21,28 +21,18 @@ test('login-error', async ({ page }) => {
   await expect(page).toHaveScreenshot('login-error.png', SHOT);
 });
 
-test('recipients-one', async ({ page }) => {
+test('moderators-empty', async ({ page }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
   await expect(page).toHaveURL('/');
-  await expect(page.locator('body')).toContainText('alice@w...');
   await expect(page.locator('body')).toContainText('500000 sats');
-  await expect(page.locator('li.row.total .usd-total')).toHaveText('1');
-  await expect(page.locator('body')).toContainText('Payment comment');
+  await expect(page.locator('body')).not.toContainText('Payment comment');
+  await expect(page.locator('body')).not.toContainText('alice@w...');
   await expect(page.locator('body')).toContainText('No moderators');
-  await expect(page).toHaveScreenshot('recipients-one.png', SHOT);
-});
-
-test('recipients-empty', async ({ page }) => {
-  await page.goto('/');
-  await page.fill('input[name=password]', 'test-password');
-  await page.click('button[type=submit]');
-  await expect(page).toHaveURL('/');
-  await page.locator('li.row:has(input[name="address"][value="alice@walletofsatoshi.com"]) form[action="/recipients/delete"] button').click();
-  await expect(page.locator('body')).toContainText('No recipients');
-  await expect(page.locator('body')).toContainText('Payment comment');
-  await expect(page).toHaveScreenshot('recipients-empty.png', SHOT);
+  await expect(page.getByRole('link', { name: 'Daily payment text', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Daily payment amounts', exact: true })).toBeVisible();
+  await expect(page).toHaveScreenshot('moderators-empty.png', SHOT);
 });
 
 test('moderators-one', async ({ page }) => {
@@ -58,5 +48,7 @@ test('moderators-one', async ({ page }) => {
   await expect(
     page.locator('li.row:has(form[action="/moderators/update"]) .addr'),
   ).toHaveText('mod@example.com');
+  await expect(page.getByRole('link', { name: 'Daily payment text', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Daily payment amounts', exact: true })).toBeVisible();
   await expect(page).toHaveScreenshot('moderators-one.png', SHOT);
 });
