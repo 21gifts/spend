@@ -31,6 +31,13 @@ export interface RunOptions {
   bucket?: 'daily' | 'moderator' | 'welcome';
   /** Default true. False on HTTP ping: API already gated eligibleToday. Welcome treats this as false even when omitted or true. */
   checkFundingEligible?: boolean;
+  /**
+   * When true, skip passkey, forum-post, media, funding, and welcome_paid
+   * gates. Convert USD, check balance, skip paid/uncertain/failed, honor
+   * daily halt, invoice with the instructed comment, and pay. CLI and other
+   * callers that omit this keep the policy gates.
+   */
+  executeOnly?: boolean;
 }
 
 /** Outcome of {@link runDay}. */
@@ -203,8 +210,9 @@ async function runDayLocked(
     throw err;
   }
   const dailyBucket = options.bucket === undefined || options.bucket === 'daily';
+  const executeOnly = options.executeOnly === true;
   let welcomeRows: StateRow[] = [];
-  if (dailyBucket) {
+  if (dailyBucket && !executeOnly) {
     try {
       welcomeRows = new DayState(config.stateDir, options.day, undefined, 'welcome').load();
     } catch (err) {
@@ -216,7 +224,7 @@ async function runDayLocked(
     }
   }
   const welcomePaidToday = (address: string): boolean =>
-    dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
+    !executeOnly && dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
   if (options.live && !isolatedBucket) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
@@ -277,72 +285,71 @@ async function runDayLocked(
   const noMedia = new Set<string>();
   const noEligible = new Set<string>();
   const postedMessageId = new Map<string, string | null>();
-  for (const recipient of targets) {
-    if (dayBlock(rows, recipient.address) !== undefined) {
-      continue;
-    }
-    if (latestStatus(rows, recipient.address) === 'failed') {
-      continue;
-    }
-    if (welcomePaidToday(recipient.address)) {
-      continue;
-    }
-    try {
-      const eligiblePasskey = await gifts.hasPasskey(recipient.address);
-      if (!eligiblePasskey) {
-        noPasskey.add(recipient.address);
+  if (!executeOnly) {
+    for (const recipient of targets) {
+      if (dayBlock(rows, recipient.address) !== undefined) {
         continue;
       }
-    } catch {
-      log('spend.done', { ok: false, reason: 'passkey_unreachable' });
-      return finish(3, { reason: 'passkey_unreachable' });
-    }
-    try {
-      const posted = await gifts.hasPosted(recipient.address);
-      if (options.bucket === 'moderator') {
-        const postedDay =
-          posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
-        if (!posted.hasPosted || postedDay !== options.day) {
-          noPost.add(recipient.address);
-          continue;
-        }
-      } else if (options.bucket === 'welcome') {
-        const welcomeMedia =
-          posted.welcomeHasMedia === null
-            ? posted.hasPosted && posted.hasMedia
-            : posted.welcomeHasMedia;
-        if (!welcomeMedia) {
-          noMedia.add(recipient.address);
-          continue;
-        }
-        postedMessageId.set(
-          recipient.address,
-          posted.welcomeMessageId ?? posted.messageId,
-        );
-      } else {
-        if (!posted.hasPosted) {
-          noPost.add(recipient.address);
-          continue;
-        }
-        if (!posted.hasMedia) {
-          noMedia.add(recipient.address);
-          continue;
-        }
-        postedMessageId.set(recipient.address, posted.messageId);
+      if (latestStatus(rows, recipient.address) === 'failed') {
+        continue;
       }
-    } catch {
-      log('spend.done', { ok: false, reason: 'posted_unreachable' });
-      return finish(3, { reason: 'posted_unreachable' });
-    }
-    if (checkFundingEligible) {
+      if (welcomePaidToday(recipient.address)) {
+        continue;
+      }
       try {
-        const eligible = await gifts.isFundingEligible(recipient.address);
-        if (!eligible) {
-          noEligible.add(recipient.address);
+        const eligiblePasskey = await gifts.hasPasskey(recipient.address);
+        if (!eligiblePasskey) {
+          noPasskey.add(recipient.address);
+          continue;
         }
       } catch {
-        log('spend.done', { ok: false, reason: 'eligible_unreachable' });
-        return finish(3, { reason: 'eligible_unreachable' });
+        log('spend.done', { ok: false, reason: 'passkey_unreachable' });
+        return finish(3, { reason: 'passkey_unreachable' });
+      }
+      try {
+        const posted = await gifts.hasPosted(recipient.address);
+        if (options.bucket === 'moderator') {
+          const postedDay =
+            posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
+          if (!posted.hasPosted || postedDay !== options.day) {
+            noPost.add(recipient.address);
+            continue;
+          }
+        } else if (options.bucket === 'welcome') {
+          const welcomeMedia =
+            posted.welcomeHasMedia === null
+              ? posted.hasPosted && posted.hasMedia
+              : posted.welcomeHasMedia;
+          if (!welcomeMedia) {
+            noMedia.add(recipient.address);
+            continue;
+          }
+          postedMessageId.set(recipient.address, posted.welcomeMessageId ?? posted.messageId);
+        } else {
+          if (!posted.hasPosted) {
+            noPost.add(recipient.address);
+            continue;
+          }
+          if (!posted.hasMedia) {
+            noMedia.add(recipient.address);
+            continue;
+          }
+          postedMessageId.set(recipient.address, posted.messageId);
+        }
+      } catch {
+        log('spend.done', { ok: false, reason: 'posted_unreachable' });
+        return finish(3, { reason: 'posted_unreachable' });
+      }
+      if (checkFundingEligible) {
+        try {
+          const eligible = await gifts.isFundingEligible(recipient.address);
+          if (!eligible) {
+            noEligible.add(recipient.address);
+          }
+        } catch {
+          log('spend.done', { ok: false, reason: 'eligible_unreachable' });
+          return finish(3, { reason: 'eligible_unreachable' });
+        }
       }
     }
   }

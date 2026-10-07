@@ -19,8 +19,10 @@ export interface RetryOwed {
   bucket: 'daily' | 'moderator' | 'welcome';
   messageId?: string;
   groupMessageId?: string;
-  /** USD amount for an unlisted daily ping or a welcome gift. Moderator rows omit it. */
+  /** Instructed USD amount. Missing on old lines; those stay unpaid. */
   amountUsd?: number;
+  /** Instructed invoice comment. Missing on old lines; those stay unpaid. */
+  comment?: string;
 }
 
 /**
@@ -97,13 +99,11 @@ export function appendRetryOwed(stateDir: string, day: string, row: RetryOwed): 
   ) {
     persisted.groupMessageId = row.groupMessageId;
   }
-  if (
-    (row.bucket === 'daily' || row.bucket === 'welcome') &&
-    typeof row.amountUsd === 'number' &&
-    Number.isFinite(row.amountUsd) &&
-    row.amountUsd > 0
-  ) {
+  if (typeof row.amountUsd === 'number' && Number.isFinite(row.amountUsd) && row.amountUsd > 0) {
     persisted.amountUsd = row.amountUsd;
+  }
+  if (typeof row.comment === 'string' && row.comment.length <= 500) {
+    persisted.comment = row.comment;
   }
   const path = retryQueuePath(stateDir, day);
   const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY);
@@ -162,6 +162,13 @@ function parseRetryOwed(line: string): RetryOwed | null {
       return null;
     }
     row.amountUsd = amountUsd;
+  }
+  if ('comment' in rec) {
+    const comment = rec['comment'];
+    if (typeof comment !== 'string' || comment.length > 500) {
+      return null;
+    }
+    row.comment = comment;
   }
   return row;
 }
