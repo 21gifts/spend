@@ -125,15 +125,23 @@ describe('renderDashboardHtml', () => {
       },
       {
         kind: 'editor',
-        recipients: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        moderators: [],
+        recipients: [],
+        moderators: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
         comment: '21gifts daily',
         paymentsEnabled: true,
         moderatorPaymentsEnabled: true,
       },
     );
     expect(html).toContain('Log out');
+    expect(html).toContain('href="https://21.gifts/grants/payments/comment"');
+    expect(html).toContain('href="https://21.gifts/grants/payments/amounts"');
     expect(html).toContain('alice@w...');
     expect(html).toContain('3803 sats');
+    expect(html).not.toContain('Payment comment');
+    expect(html).not.toContain('action="/recipients/comment"');
+    expect(html).not.toContain('action="/recipients/payments"');
+    expect(html).not.toContain('action="/recipients/add"');
+    expect(html).not.toContain('action="/recipients/update"');
+    expect(html).not.toContain('action="/recipients/delete"');
   });
 });
