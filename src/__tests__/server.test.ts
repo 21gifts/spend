@@ -3379,7 +3379,7 @@ describe('createServer', () => {
     });
   });
 
-  it('POST /ping daily still invoices after a welcome pay for that address when both are instructed', async () => {
+  it('POST /ping daily records welcome_paid when the API refuses the invoice after a welcome pay', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-welcome-day-ping-'));
     const seed = join(dir, 'seed.json');
     writeFileSync(
@@ -3404,7 +3404,9 @@ describe('createServer', () => {
     const payStarted = new Promise<void>((resolve) => {
       markPayStarted = resolve;
     });
-    let invoiceCreates = 0;
+    let invoice200 = 0;
+    let invoice403 = 0;
+    let payinvoiceCalls = 0;
     const telegramCalls: string[] = [];
     const logs: string[] = [];
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -3434,16 +3436,20 @@ describe('createServer', () => {
         return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
       }
       if (method === 'POST' && href.endsWith('/invoices')) {
-        invoiceCreates += 1;
-        return new Response(
-          JSON.stringify({
-            id: `inv${invoiceCreates}`,
-            pr: 'lnbc1',
-            paymentHash,
-            amountMsat: 1_000_000,
-          }),
-          { status: 200 },
-        );
+        if (invoice200 === 0) {
+          invoice200 += 1;
+          return new Response(
+            JSON.stringify({
+              id: `inv${invoice200}`,
+              pr: 'lnbc1',
+              paymentHash,
+              amountMsat: 1_000_000,
+            }),
+            { status: 200 },
+          );
+        }
+        invoice403 += 1;
+        return new Response(JSON.stringify({ error: 'Welcome gift already paid' }), { status: 403 });
       }
       if (href.endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
@@ -3454,6 +3460,7 @@ describe('createServer', () => {
         });
       }
       if (href.endsWith('/payinvoice')) {
+        payinvoiceCalls += 1;
         markPayStarted();
         await payHeld;
         return new Response(JSON.stringify({ payment_preimage: preimage }), { status: 200 });
@@ -3513,12 +3520,14 @@ describe('createServer', () => {
       expect(await daily.json()).toEqual({ status: 'accepted' });
       releasePay();
       await app.drainPayouts();
-      expect(invoiceCreates).toBe(2);
-      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(true);
+      expect(invoice200).toBe(1);
+      expect(invoice403).toBe(1);
+      expect(payinvoiceCalls).toBe(1);
+      expect(existsSync(join(dir, '2026-08-25.jsonl'))).toBe(false);
       const welcomeLog = readFileSync(join(dir, 'welcome.jsonl'), 'utf8');
       expect(welcomeLog).toContain('"status":"paid"');
-      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(false);
-      expect(telegramCalls).toHaveLength(2);
+      expect(logs.some((line) => line.includes('"reason":"welcome_paid"'))).toBe(true);
+      expect(telegramCalls).toHaveLength(1);
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
