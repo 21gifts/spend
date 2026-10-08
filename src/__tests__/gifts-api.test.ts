@@ -58,82 +58,6 @@ describe('GiftsApi', () => {
     await expect(api.createInvoice('a@b.com', 1000, '1.00')).rejects.toMatchObject({ status: 0 });
   });
 
-  it('hasPasskey returns true', async () => {
-    let seenUrl = '';
-    let auth = '';
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
-      seenUrl = String(url);
-      auth = new Headers(init?.headers).get('authorization') ?? '';
-      return new Response(JSON.stringify({ hasPasskey: true }), { status: 200 });
-    });
-    await expect(api.hasPasskey('a@b.com')).resolves.toBe(true);
-    expect(seenUrl).toBe('https://api.21.gifts/invoices/passkey?address=a%40b.com');
-    expect(auth).toBe('Bearer tok');
-  });
-
-  it('hasPasskey returns false', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ hasPasskey: false }), { status: 200 }),
-    );
-    await expect(api.hasPasskey('a@b.com')).resolves.toBe(false);
-  });
-
-  it('hasPasskey throws on 503', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
-    );
-    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 503 });
-  });
-
-  it('hasPasskey maps network failure to status 0', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
-      throw new Error('offline');
-    });
-    await expect(api.hasPasskey('a@b.com')).rejects.toMatchObject({ status: 0 });
-  });
-
-  it('isFundingEligible returns true', async () => {
-    let seenUrl = '';
-    let auth = '';
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
-      seenUrl = String(url);
-      auth = new Headers(init?.headers).get('authorization') ?? '';
-      return new Response(JSON.stringify({ eligible: true }), { status: 200 });
-    });
-    await expect(api.isFundingEligible('a@b.com')).resolves.toBe(true);
-    expect(seenUrl).toBe('https://api.21.gifts/invoices/eligible?address=a%40b.com');
-    expect(auth).toBe('Bearer tok');
-  });
-
-  it('isFundingEligible returns false', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ eligible: false }), { status: 200 }),
-    );
-    await expect(api.isFundingEligible('a@b.com')).resolves.toBe(false);
-  });
-
-  it('isFundingEligible throws on 503', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
-    );
-    await expect(api.isFundingEligible('a@b.com')).rejects.toMatchObject({ status: 503 });
-  });
-
-  it('isFundingEligible maps network failure to status 0', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
-      throw new Error('offline');
-    });
-    await expect(api.isFundingEligible('a@b.com')).rejects.toMatchObject({ status: 0 });
-  });
-
-  it('isFundingEligible rejects a malformed 200 body', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => new Response('{}', { status: 200 }));
-    await expect(api.isFundingEligible('a@b.com')).rejects.toMatchObject({
-      status: 0,
-      message: 'malformed eligible response',
-    });
-  });
-
   it('fundingGrantStatus returns admitted', async () => {
     let seenUrl = '';
     let auth = '';
@@ -165,206 +89,6 @@ describe('GiftsApi', () => {
         message: 'malformed eligible status',
       });
     }
-  });
-
-  it('hasPosted returns true', async () => {
-    let seenUrl = '';
-    let auth = '';
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
-      seenUrl = String(url);
-      auth = new Headers(init?.headers).get('authorization') ?? '';
-      return new Response(JSON.stringify({ hasPosted: true }), { status: 200 });
-    });
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-    expect(seenUrl).toBe('https://api.21.gifts/invoices/posted?address=a%40b.com');
-    expect(auth).toBe('Bearer tok');
-  });
-
-  it('hasPosted returns false', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ hasPosted: false }), { status: 200 }),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: false,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-  });
-
-  it('hasPosted returns hasMedia true', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ hasPosted: true, hasMedia: true }), { status: 200 }),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: true,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-  });
-
-  it('hasPosted returns hasMedia false', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ hasPosted: true, hasMedia: false }), { status: 200 }),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-  });
-
-  it('hasPosted returns hasMedia false for missing / non-boolean JSON', async () => {
-    const payloads: unknown[] = [
-      { hasPosted: true },
-      { hasPosted: true, hasMedia: null },
-      { hasPosted: true, hasMedia: 1 },
-      { hasPosted: true, hasMedia: 'yes' },
-      { hasPosted: true, hasMedia: {} },
-    ];
-    for (const payload of payloads) {
-      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-        new Response(JSON.stringify(payload), { status: 200 }),
-      );
-      await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-        hasPosted: true,
-        hasMedia: false,
-        messageId: null,
-        postedAt: null,
-        welcomeHasMedia: null,
-        welcomeMessageId: null,
-      });
-    }
-  });
-
-  it('hasPosted returns messageId when the JSON includes a valid UUID', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(
-        JSON.stringify({ hasPosted: true, messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }),
-        { status: 200 },
-      ),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-  });
-
-  it('hasPosted returns messageId: null for missing / non-string / invalid uuid', async () => {
-    const payloads: unknown[] = [
-      { hasPosted: true },
-      { hasPosted: true, messageId: 1 },
-      { hasPosted: true, messageId: null },
-      { hasPosted: true, messageId: '' },
-      { hasPosted: true, messageId: 'nope' },
-      { hasPosted: true, messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa' },
-    ];
-    for (const payload of payloads) {
-      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-        new Response(JSON.stringify(payload), { status: 200 }),
-      );
-      await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-        hasPosted: true,
-        hasMedia: false,
-        messageId: null,
-        postedAt: null,
-        welcomeHasMedia: null,
-        welcomeMessageId: null,
-      });
-    }
-  });
-
-  it('hasPosted returns postedAt when the JSON includes a parseable instant', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(
-        JSON.stringify({
-          hasPosted: true,
-          messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-          postedAt: '2026-08-23T12:00:00.000Z',
-        }),
-        { status: 200 },
-      ),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-      postedAt: '2026-08-23T12:00:00.000Z',
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
-  });
-
-  it('hasPosted returns welcome media when the api sends it', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(
-        JSON.stringify({
-          hasPosted: false,
-          hasMedia: false,
-          welcomeHasMedia: true,
-          welcomeMessageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        }),
-        { status: 200 },
-      ),
-    );
-    await expect(api.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: false,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: true,
-      welcomeMessageId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-    });
-    const absent = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(
-        JSON.stringify({
-          hasPosted: true,
-          welcomeHasMedia: false,
-          welcomeMessageId: 'nope',
-        }),
-        { status: 200 },
-      ),
-    );
-    await expect(absent.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: false,
-      welcomeMessageId: null,
-    });
-    const weird = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ hasPosted: true, welcomeHasMedia: 1, welcomeMessageId: 2 }), {
-        status: 200,
-      }),
-    );
-    await expect(weird.hasPosted('a@b.com')).resolves.toEqual({
-      hasPosted: true,
-      hasMedia: false,
-      messageId: null,
-      postedAt: null,
-      welcomeHasMedia: null,
-      welcomeMessageId: null,
-    });
   });
 
   it('createInvoice JSON includes messageId when the 5th argument is passed', async () => {
@@ -433,25 +157,160 @@ describe('GiftsApi', () => {
     expect(sent).not.toHaveProperty('messageId');
   });
 
-  it('hasPosted throws on 503', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
-      new Response(JSON.stringify({ error: 'down' }), { status: 503 }),
-    );
-    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({ status: 503 });
+  it('dailyInstruction accepts every skip reason', async () => {
+    const reasons = [
+      'no_passkey',
+      'no_post',
+      'no_media',
+      'not_eligible',
+      'payments_disabled',
+      'not_listed',
+      'undecided',
+      'welcome_paid',
+    ] as const;
+    for (const reason of reasons) {
+      let seenUrl = '';
+      let auth = '';
+      let sent: unknown;
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async (url, init) => {
+        seenUrl = String(url);
+        auth = new Headers(init?.headers).get('authorization') ?? '';
+        sent = JSON.parse(String(init?.body ?? '{}'));
+        return new Response(JSON.stringify({ action: 'skip', reason }), { status: 200 });
+      });
+      await expect(api.dailyInstruction('a@b.com')).resolves.toEqual({ action: 'skip', reason });
+      expect(seenUrl).toBe('https://api.21.gifts/spend/daily-instruction');
+      expect(auth).toBe('Bearer tok');
+      expect(sent).toEqual({ address: 'a@b.com' });
+    }
   });
 
-  it('hasPosted maps network failure to status 0', async () => {
+  it('dailyInstruction rejects an unknown skip reason', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ action: 'skip', reason: 'nope' }), { status: 200 }),
+    );
+    await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({
+      status: 0,
+      message: 'malformed daily instruction',
+    });
+  });
+
+  it('dailyInstruction returns pay with a non-empty messageId', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({
+          action: 'pay',
+          amountUsd: 1.5,
+          comment: 'daily',
+          messageId: 'not-a-uuid-but-kept',
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(api.dailyInstruction('a@b.com')).resolves.toEqual({
+      action: 'pay',
+      amountUsd: 1.5,
+      comment: 'daily',
+      messageId: 'not-a-uuid-but-kept',
+    });
+  });
+
+  it('dailyInstruction returns pay without messageId', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ action: 'pay', amountUsd: 1, comment: 'daily' }), {
+        status: 200,
+      }),
+    );
+    const result = await api.dailyInstruction('a@b.com');
+    expect(result).toEqual({ action: 'pay', amountUsd: 1, comment: 'daily' });
+    expect(result).not.toHaveProperty('messageId');
+  });
+
+  it('dailyInstruction omits messageId when it is empty', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(
+        JSON.stringify({ action: 'pay', amountUsd: 1, comment: 'daily', messageId: '' }),
+        { status: 200 },
+      ),
+    );
+    const result = await api.dailyInstruction('a@b.com');
+    expect(result).toEqual({ action: 'pay', amountUsd: 1, comment: 'daily' });
+    expect(result).not.toHaveProperty('messageId');
+  });
+
+  it('dailyInstruction rejects a malformed action', async () => {
+    const payloads: unknown[] = [
+      {},
+      { action: 'hold' },
+      { action: 'Skip', reason: 'no_passkey' },
+      { action: 1 },
+    ];
+    for (const payload of payloads) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify(payload), { status: 200 }),
+      );
+      await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({
+        status: 0,
+        message: 'malformed daily instruction',
+      });
+    }
+  });
+
+  it('dailyInstruction rejects a non-finite or non-positive amountUsd', async () => {
+    const amounts: unknown[] = [0, -1, NaN, Infinity, '1', null];
+    for (const amountUsd of amounts) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify({ action: 'pay', amountUsd, comment: 'daily' }), {
+          status: 200,
+        }),
+      );
+      await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({
+        status: 0,
+        message: 'malformed daily instruction',
+      });
+    }
+  });
+
+  it('dailyInstruction rejects a non-string comment', async () => {
+    const comments: unknown[] = [1, null, undefined, true, {}];
+    for (const comment of comments) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(JSON.stringify({ action: 'pay', amountUsd: 1, comment }), { status: 200 }),
+      );
+      await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({
+        status: 0,
+        message: 'malformed daily instruction',
+      });
+    }
+  });
+
+  it('dailyInstruction rejects a non-string messageId', async () => {
+    const ids: unknown[] = [1, null, true, {}];
+    for (const messageId of ids) {
+      const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+        new Response(
+          JSON.stringify({ action: 'pay', amountUsd: 1, comment: 'daily', messageId }),
+          { status: 200 },
+        ),
+      );
+      await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({
+        status: 0,
+        message: 'malformed daily instruction',
+      });
+    }
+  });
+
+  it('dailyInstruction throws on 503', async () => {
+    const api = new GiftsApi('https://api.21.gifts', 'tok', async () =>
+      new Response(JSON.stringify({ error: 'Daily roster is not configured' }), { status: 503 }),
+    );
+    await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('dailyInstruction maps network failure to status 0', async () => {
     const api = new GiftsApi('https://api.21.gifts', 'tok', async () => {
       throw new Error('offline');
     });
-    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({ status: 0 });
-  });
-
-  it('hasPosted rejects a malformed 200 body', async () => {
-    const api = new GiftsApi('https://api.21.gifts', 'tok', async () => new Response('{}', { status: 200 }));
-    await expect(api.hasPosted('a@b.com')).rejects.toMatchObject({
-      status: 0,
-      message: 'malformed posted response',
-    });
+    await expect(api.dailyInstruction('a@b.com')).rejects.toMatchObject({ status: 0 });
   });
 });

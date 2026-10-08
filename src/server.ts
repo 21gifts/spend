@@ -951,52 +951,15 @@ export function createServer(opts: {
       }
       const moderator = extras?.bucket === 'moderator';
       const welcome = extras?.bucket === 'welcome';
-      const groupMessageId = extras?.groupMessageId;
-      let liveList: { comment: string; recipients: Recipient[] };
-      // Instructed amount sets comment and must not append onto the live roster.
-      if (moderator || welcome || extras?.comment !== undefined) {
-        liveList = {
-          comment: extras?.comment ?? (welcome ? 'Welcome' : '21gifts moderator'),
-          recipients: extras?.recipients ?? [],
-        };
-      } else {
-        try {
-          liveList = loadLiveRecipients(config.stateDir);
-        } catch (err) {
-          if (err instanceof CorruptRecipientsError) {
-            console.warn(
-              JSON.stringify({
-                ts: new Date().toISOString(),
-                event: 'spend.done',
-                ok: false,
-                reason: 'corrupt_recipients',
-              }),
-            );
-            const summary = {
-              ...minimalRunSummary(day, live, 4),
-              reason: 'corrupt_recipients',
-            };
-            if (telegramTarget !== null && notifyLog.allow(source, summary)) {
-              const sent = await notifyPayout({
-                target: telegramTarget,
-                summary,
-                source,
-                fetchImpl,
-              });
-              if (sent.ok) notifyLog.remember(source, summary);
-            }
-            return { exitCode: 4 };
-          }
-          throw err;
-        }
-        // Append only — replacing the live roster would let markFinished close the UTC day.
-        if (extras?.recipients !== undefined) {
-          liveList = {
-            comment: liveList.comment,
-            recipients: [...liveList.recipients, ...extras.recipients],
-          };
-        }
+      const instructed = moderator || welcome || typeof extras?.comment === 'string';
+      if (!instructed) {
+        return { exitCode: 0 };
       }
+      const groupMessageId = extras?.groupMessageId;
+      const liveList: { comment: string; recipients: Recipient[] } = {
+        comment: extras?.comment ?? (welcome ? 'Welcome' : '21gifts moderator'),
+        recipients: extras?.recipients ?? [],
+      };
       const runOptions: RunOptions =
         onlyAddresses === undefined
           ? { live, day }
@@ -1025,8 +988,6 @@ export function createServer(opts: {
                 ),
                 ...(welcome ? { bucket: 'welcome' as const } : {}),
               };
-      if (source === 'ping' || source === 'catchup') runOptions.checkFundingEligible = false;
-      if (typeof extras?.comment === 'string') runOptions.executeOnly = true;
       const result = await (opts.runDay ?? runDay)(
         {
           ...config,

@@ -524,8 +524,7 @@ describe('createServer', () => {
             messageIdByAddress: {
               'bob@walletofsatoshi.com': PING_MESSAGE_ID,
             },
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -597,8 +596,7 @@ describe('createServer', () => {
             messageIdByAddress: {
               'alice@walletofsatoshi.com': PING_MESSAGE_ID,
             },
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -659,8 +657,7 @@ describe('createServer', () => {
           }),
           expect.objectContaining({
             onlyAddresses: ['alice@walletofsatoshi.com'],
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
         expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
@@ -778,8 +775,7 @@ describe('createServer', () => {
             groupMessageIdByAddress: {
               'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
             },
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
         const catchupArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -842,8 +838,7 @@ describe('createServer', () => {
           expect.objectContaining({
             onlyAddresses: ['carol@walletofsatoshi.com'],
             bucket: 'moderator',
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
         expect(loadRetryOwed(dir, '2026-08-25')).toEqual([
@@ -1683,8 +1678,7 @@ describe('createServer', () => {
         }),
         expect.objectContaining({
           onlyAddresses: ['alice@walletofsatoshi.com'],
-          checkFundingEligible: false,
-          executeOnly: true,
+
         }),
       );
       await app.drainPayouts();
@@ -1737,8 +1731,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         },
-        checkFundingEligible: false,
-        executeOnly: true,
+
       }),
     );
     await app.drainPayouts();
@@ -1786,8 +1779,7 @@ describe('createServer', () => {
         day: '2026-08-25',
         onlyAddresses: ['bob@walletofsatoshi.com'],
         bucket: 'moderator',
-        checkFundingEligible: false,
-        executeOnly: true,
+
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -1850,7 +1842,7 @@ describe('createServer', () => {
         groupMessageIdByAddress: {
           'bob@walletofsatoshi.com': GROUP_MESSAGE_ID,
         },
-        executeOnly: true,
+
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -2101,8 +2093,7 @@ describe('createServer', () => {
             messageIdByAddress: {
               'carol@walletofsatoshi.com': PING_MESSAGE_ID,
             },
-            checkFundingEligible: false,
-            executeOnly: true,
+
           }),
         );
       } finally {
@@ -2448,7 +2439,7 @@ describe('createServer', () => {
         expect.objectContaining({
           onlyAddresses: ['bob@walletofsatoshi.com'],
           bucket: 'moderator',
-          executeOnly: true,
+  
         }),
       );
       await app.drainPayouts();
@@ -2518,7 +2509,7 @@ describe('createServer', () => {
         expect.objectContaining({
           onlyAddresses: ['Bob@walletofsatoshi.com'],
           bucket: 'moderator',
-          executeOnly: true,
+  
         }),
       );
       await app.drainPayouts();
@@ -2684,7 +2675,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': PING_MESSAGE_ID,
         },
-        executeOnly: true,
+
       }),
     );
     expect(runDay).toHaveBeenNthCalledWith(
@@ -2706,7 +2697,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'alice@walletofsatoshi.com': PING_MESSAGE_ID,
         },
-        executeOnly: true,
+
       }),
     );
     const firstArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -3095,8 +3086,10 @@ describe('createServer', () => {
           ],
         }),
         expect.objectContaining({
-          executeOnly: true,
-          checkFundingEligible: false,
+          onlyAddresses: ['alice@walletofsatoshi.com'],
+          messageIdByAddress: {
+            'alice@walletofsatoshi.com': PING_MESSAGE_ID,
+          },
         }),
       );
       await app.drainPayouts();
@@ -3371,12 +3364,49 @@ describe('createServer', () => {
       },
     });
     await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
-    expect(telegramBodies).toHaveLength(1);
-    expect(telegramBodies[0]).toMatchObject({
-      chat_id: '-1001234567890',
-      text: expect.stringContaining('source=scheduler'),
-      disable_web_page_preview: true,
+    expect(runDay).not.toHaveBeenCalled();
+    expect(telegramBodies).toHaveLength(0);
+  });
+
+  it('POST /ping with no summary builds the minimal fallback and does not notify', async () => {
+    const telegramBodies: unknown[] = [];
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = createServer({
+      env: {
+        ...env,
+        SPEND_LIVE: 'true',
+        TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
+        TELEGRAM_CHAT_ID: '-1001234567890',
+      },
+      now: () => new Date('2026-08-28T12:00:00.000Z'),
+      runDay,
+      fetchImpl: async (url, init) => {
+        if (String(url).includes('api.telegram.org')) {
+          telegramBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
     });
+    const res = await app.fetch(
+      pingReq({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          address: 'alice@walletofsatoshi.com',
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    await app.drainPayouts();
+    expect(telegramBodies).toHaveLength(0);
+    warn.mockRestore();
   });
 
   it('POST /ping daily records welcome_paid when the API refuses the invoice after a welcome pay', async () => {
@@ -3585,8 +3615,7 @@ describe('createServer', () => {
         messageIdByAddress: {
           'nobody@walletofsatoshi.com': PING_MESSAGE_ID,
         },
-        checkFundingEligible: false,
-        executeOnly: true,
+
       }),
     );
     const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -3649,8 +3678,7 @@ describe('createServer', () => {
           messageIdByAddress: {
             'alice@walletofsatoshi.com': PING_MESSAGE_ID,
           },
-          checkFundingEligible: false,
-          executeOnly: true,
+
         }),
       );
       await app.drainPayouts();
@@ -3816,8 +3844,7 @@ describe('createServer', () => {
           bucket: 'welcome',
           onlyAddresses: ['nobody@walletofsatoshi.com'],
           messageIdByAddress: { 'nobody@walletofsatoshi.com': PING_MESSAGE_ID },
-          checkFundingEligible: false,
-          executeOnly: true,
+
         }),
       );
       await app.drainPayouts();
@@ -3884,8 +3911,7 @@ describe('createServer', () => {
           groupMessageIdByAddress: {
             'carol@walletofsatoshi.com': GROUP_MESSAGE_ID,
           },
-          checkFundingEligible: false,
-          executeOnly: true,
+
         }),
       );
       const pingArgs = runDay.mock.calls[0] as unknown[] | undefined;
@@ -4304,13 +4330,7 @@ describe('recipient editor', () => {
 
   it('payout reloads the live list and skips a corrupt file', async () => {
     const sess = sessionEnv();
-    const runDay = vi.fn(async (cfg: { recipients: Array<{ address: string }> }) => {
-      expect(cfg.recipients.map((r) => r.address)).toEqual([
-        'alice@walletofsatoshi.com',
-        'bob@walletofsatoshi.com',
-      ]);
-      return { exitCode: 0 };
-    });
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const app = createServer({
       env: sess,
       runDay,
@@ -4324,10 +4344,12 @@ describe('recipient editor', () => {
       }),
     );
     await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
+    expect(runDay).not.toHaveBeenCalled();
     writeFileSync(join(sess.STATE_DIR, 'recipients.json'), 'not-json');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
-    expect(JSON.stringify(warn.mock.calls)).toContain('corrupt_recipients');
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
+    expect(runDay).not.toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('corrupt_recipients');
     warn.mockRestore();
   });
 
@@ -4358,18 +4380,10 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 4 });
+    await expect(app.runPayout('2026-08-28')).resolves.toEqual({ exitCode: 0 });
     expect(runDay).not.toHaveBeenCalled();
-    expect(telegramBodies).toHaveLength(1);
-    expect(telegramBodies[0]).toMatchObject({
-      chat_id: '-1001234567890',
-      text: expect.stringContaining('corrupt_recipients'),
-      disable_web_page_preview: true,
-    });
-    expect(String((telegramBodies[0] as { text: string }).text)).toContain('exit=4');
-    expect(String((telegramBodies[0] as { text: string }).text)).toContain('ok=false');
+    expect(telegramBodies).toHaveLength(0);
 
-    telegramBodies.length = 0;
     await expect(app.startCatchup()).resolves.toBeNull();
     expect(runDay).not.toHaveBeenCalled();
     expect(telegramBodies).toHaveLength(0);
@@ -4556,12 +4570,10 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
-    expect(telegramBodies).toHaveLength(1);
-    expect(telegramBodies[0]).toMatchObject({
-      text: expect.stringContaining('insufficient_balance'),
-    });
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 0 });
+    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 0 });
+    expect(runDay).not.toHaveBeenCalled();
+    expect(telegramBodies).toHaveLength(0);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -4670,6 +4682,7 @@ describe('recipient editor', () => {
         TELEGRAM_BOT_TOKEN: '123456:AA-testtoken_notreal_xxxxxx',
         TELEGRAM_CHAT_ID: '-1001234567890',
       },
+      now: () => new Date('2026-09-06T12:00:00.000Z'),
       runDay,
       fetchImpl: async (url, init) => {
         if (String(url).includes('api.telegram.org')) {
@@ -4683,15 +4696,38 @@ describe('recipient editor', () => {
         return new Response('{}', { status: 200 });
       },
     });
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
-    expect(telegramAttempts).toBe(1);
+    const ping = (): Promise<Response> =>
+      app.fetch(
+        pingReq({
+          headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            address: 'a@b.com',
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+          }),
+        }),
+      );
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(telegramAttempts).toBe(1);
+    });
     expect(telegramOkBodies).toHaveLength(0);
-    await expect(app.runPayout('2026-09-06')).resolves.toEqual({ exitCode: 3 });
-    expect(telegramAttempts).toBe(2);
+    expect((await ping()).status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(telegramAttempts).toBe(2);
+    });
     expect(telegramOkBodies).toHaveLength(1);
     expect(telegramOkBodies[0]).toMatchObject({
       text: expect.stringContaining('insufficient_balance'),
     });
+    await app.drainPayouts();
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });

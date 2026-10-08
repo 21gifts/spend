@@ -1,5 +1,5 @@
 import { loadConfig } from './config';
-import { GiftsApi } from './gifts-api';
+import { GiftsApi, GiftsApiError } from './gifts-api';
 import { parseLightningAddress } from './lightning-address';
 import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot } from './price';
@@ -75,9 +75,9 @@ export function parseArgs(
 }
 
 /**
- * CLI entry. Optionally no-ops outside UTC midnight, then loads env and runs one day.
- * When the live file has `paymentsEnabled` false, logs `spend.skip_payments` and
- * returns 0 without calling `runDay` or notifying Telegram.
+ * CLI entry. Optionally no-ops outside UTC midnight, then loads env and asks the
+ * API for a daily instruction per address. Signs only `action: pay`. Does not
+ * read `paymentsEnabled`, roster `amountUsd`, or the file comment to decide.
  *
  * @param env - Process env.
  * @param argv - Process arguments.
@@ -121,28 +121,75 @@ export async function main(
   try {
     ensureLiveRecipients(loaded.config.stateDir, loaded.config.recipientsFile);
     const liveList = loadLiveRecipients(loaded.config.stateDir);
-    if (liveList.paymentsEnabled === false) {
-      console.warn(
-        JSON.stringify({
-          ts: instant.toISOString(),
-          event: 'spend.skip_payments',
-          reason: 'payments_disabled',
-        }),
-      );
+    const addresses =
+      flags.onlyAddresses !== undefined
+        ? flags.onlyAddresses
+        : liveList.recipients.map((recipient) => recipient.address);
+    if (addresses.length === 0) {
+      return 0;
+    }
+    const gifts = new GiftsApi(loaded.config.giftsApiUrl, loaded.config.giftsApiToken, fetchImpl);
+    const skipped: Array<{ address: string; reason: string }> = [];
+    const payRecipients: Array<{ address: string; amountUsd: number; comment: string }> = [];
+    const messageIdByAddress: Record<string, string> = {};
+    for (const address of addresses) {
+      let instruction;
+      try {
+        instruction = await gifts.dailyInstruction(address);
+      } catch (err) {
+        if (err instanceof GiftsApiError && (err.status === 401 || err.status === 400)) {
+          console.error(JSON.stringify({ event: 'spend.config', error: err.message }));
+          return 2;
+        }
+        console.warn(
+          JSON.stringify({
+            ts: instant.toISOString(),
+            event: 'spend.done',
+            ok: false,
+            reason: 'instruction_unreachable',
+          }),
+        );
+        return 3;
+      }
+      if (instruction.action === 'skip') {
+        skipped.push({ address, reason: instruction.reason });
+        continue;
+      }
+      payRecipients.push({
+        address,
+        amountUsd: instruction.amountUsd,
+        comment: instruction.comment,
+      });
+      if (instruction.messageId !== undefined) {
+        messageIdByAddress[address.toLowerCase()] = instruction.messageId;
+      }
+    }
+    if (payRecipients.length === 0) {
+      for (const row of skipped) {
+        console.warn(
+          JSON.stringify({
+            ts: instant.toISOString(),
+            event: 'spend.skip',
+            address: row.address,
+            reason: row.reason,
+          }),
+        );
+      }
       return 0;
     }
     const lndhubTarget = parseLndhubUri(loaded.config.lndhubUri);
     const result = await runDay(
-      { ...loaded.config, recipients: liveList.recipients, comment: liveList.comment },
+      { ...loaded.config, recipients: payRecipients },
       {
         live: flags.live,
         day: flags.day,
-        ...(flags.onlyAddresses !== undefined ? { onlyAddresses: flags.onlyAddresses } : {}),
+        onlyAddresses: payRecipients.map((recipient) => recipient.address),
+        ...(Object.keys(messageIdByAddress).length > 0 ? { messageIdByAddress } : {}),
       },
       lndhubTarget === null
         ? undefined
         : {
-            gifts: new GiftsApi(loaded.config.giftsApiUrl, loaded.config.giftsApiToken, fetchImpl),
+            gifts,
             lndhub: new LndhubClient(lndhubTarget, fetchImpl),
             btcUsd: () => fetchBtcUsdSpot(fetchImpl),
           },

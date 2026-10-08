@@ -28,9 +28,11 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
             lightningAddress: string | null;
             lightningAddressVerified: boolean;
             forumLawsDismissed: boolean;
+            location?: string | null;
             viewKey: string;
             createdAt: number;
             rulesAgreedAt: number | null;
+            isPlatform?: boolean;
           }) => Promise<void>;
           createPasskeyCredential: (credential: {
             credentialId: string;
@@ -54,9 +56,11 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
           lightningAddress: string | null;
           lightningAddressVerified: boolean;
           forumLawsDismissed: boolean;
+          location?: string | null;
           viewKey: string;
           createdAt: number;
           rulesAgreedAt: number | null;
+          isPlatform?: boolean;
         }) => Promise<void>;
         createPasskeyCredential: (credential: {
           credentialId: string;
@@ -112,9 +116,23 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
       accountId: 'bob',
       createdAt: 1,
     });
+    await authStore.createAccount({
+      id: 'plat',
+      linkingKey: null,
+      role: 'founder',
+      name: '21.gifts',
+      lightningAddress: null,
+      lightningAddressVerified: false,
+      forumLawsDismissed: false,
+      location: null,
+      viewKey: 'c'.repeat(64),
+      createdAt: 2,
+      rulesAgreedAt: null,
+      isPlatform: true,
+    });
     const messageStore = new msgStoreMod.InMemoryMessageStore([
       {
-        id: 'post-alice',
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         accountId: 'alice',
         name: 'Alice',
         text: 'first',
@@ -124,7 +142,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
         ...messageMod.unsignedNostrDefaults(),
       },
       {
-        id: 'post-bob',
+        id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
         accountId: 'bob',
         name: 'Bob',
         text: 'first',
@@ -210,26 +228,7 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
             init?.body === undefined || init.body === null
               ? { method, headers }
               : { method, headers, body: init.body };
-          const res = await api.fetch(new Request(target, reqInit));
-          // Old api develop has no GET /invoices/eligible; production still
-          // treats that 404 as eligible_unreachable. This wrapper only.
-          if (parsed.pathname === '/invoices/eligible' && res.status === 404) {
-            return new Response(JSON.stringify({ eligible: true }), {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            });
-          }
-          if (parsed.pathname === '/invoices/posted' && res.ok) {
-            const json = (await res.json()) as Record<string, unknown>;
-            if (json['hasPosted'] === true && json['hasMedia'] !== true) {
-              json['hasMedia'] = true;
-            }
-            return new Response(JSON.stringify(json), {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            });
-          }
-          return res;
+          return api.fetch(new Request(target, reqInit));
         };
         return runDay(config, options, {
           btcUsd: async () => 400,
@@ -259,8 +258,29 @@ describe.skipIf(API_DIR === undefined || API_DIR === '')('with 21gifts/api', () 
       origWarn(msg, ...rest);
     }) as typeof console.warn;
     try {
-      const result = await spend.runPayout('2026-08-28');
-      expect(result.exitCode).toBe(0);
+      const ping = (address: string, messageId: string): Promise<Response> =>
+        spend.fetch(
+          new Request('http://127.0.0.1/ping', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer e2e-spend-token',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              address,
+              amountUsd: 1,
+              comment: 'e2e daily',
+              messageId,
+            }),
+          }),
+        );
+      expect(
+        (await ping('alice@walletofsatoshi.com', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')).status,
+      ).toBe(202);
+      expect(
+        (await ping('bob@walletofsatoshi.com', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')).status,
+      ).toBe(202);
+      await spend.drainPayouts();
       expect(invoices.length).toBe(2);
       expect(invoices.every((line) => line.includes('"amountSats":250000'))).toBe(true);
     } finally {

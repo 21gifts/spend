@@ -17,13 +17,34 @@ export class GiftsApiError extends Error {
   }
 }
 
-const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Grant `status` from `GET /invoices/eligible`. */
 export type FundingGrantStatus = 'none' | 'pending' | 'trial' | 'admitted' | 'rejected';
 
+const DAILY_SKIP_REASONS = [
+  'no_passkey',
+  'no_post',
+  'no_media',
+  'not_eligible',
+  'payments_disabled',
+  'not_listed',
+  'undecided',
+  'welcome_paid',
+] as const;
+
+/** Skip reason from a 200 `POST /spend/daily-instruction`. */
+export type DailyInstructionSkipReason = (typeof DAILY_SKIP_REASONS)[number];
+
+/** 200 body from `POST /spend/daily-instruction`. */
+export type DailyInstruction =
+  | { action: 'skip'; reason: DailyInstructionSkipReason }
+  | { action: 'pay'; amountUsd: number; comment: string; messageId?: string };
+
+function isDailySkipReason(value: unknown): value is DailyInstructionSkipReason {
+  return typeof value === 'string' && (DAILY_SKIP_REASONS as readonly string[]).includes(value);
+}
+
 /**
- * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `GET /invoices/eligible`,
+ * Client for `POST /spend/daily-instruction`, `GET /invoices/eligible` (grant status),
  * `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
@@ -34,76 +55,40 @@ export class GiftsApi {
   ) {}
 
   /**
-   * Whether 21.gifts reports a passkey for this Lightning Address.
+   * Ask 21.gifts whether to pay this Lightning Address today, and how much.
    *
    * @param address - LUD-16 address.
-   * @returns `true` when the address has a passkey.
+   * @returns A skip reason or a pay instruction.
    */
-  async hasPasskey(address: string): Promise<boolean> {
-    const path = `/invoices/passkey?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const has = json['hasPasskey'];
-    if (typeof has !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed passkey response');
+  async dailyInstruction(address: string): Promise<DailyInstruction> {
+    const json = await this.postJson('/spend/daily-instruction', { address });
+    const action = json['action'];
+    if (action === 'skip') {
+      const reason = json['reason'];
+      if (!isDailySkipReason(reason)) {
+        throw new GiftsApiError(0, 'malformed daily instruction');
+      }
+      return { action: 'skip', reason };
     }
-    return has;
-  }
-
-  /**
-   * Live forum-post flag, media flag, post UUID, and post timestamp for this Lightning Address.
-   *
-   * @param address - LUD-16 address.
-   * @returns `{ hasPosted, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId }`.
-   *   `hasMedia` is boolean (missing or non-true JSON → `false`). `messageId` is a UUID or `null`.
-   *   `postedAt` is an ISO-8601 instant or `null` when missing or unparseable.
-   *   `welcomeHasMedia` is the boolean from the api, or `null` when the field is missing or
-   *   not a boolean (older api). `welcomeMessageId` is a UUID or `null`.
-   */
-  async hasPosted(address: string): Promise<{
-    hasPosted: boolean;
-    hasMedia: boolean;
-    messageId: string | null;
-    postedAt: string | null;
-    /** `null` when the api omitted the field (older api). */
-    welcomeHasMedia: boolean | null;
-    welcomeMessageId: string | null;
-  }> {
-    const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const has = json['hasPosted'];
-    if (typeof has !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed posted response');
+    if (action === 'pay') {
+      const amountUsd = json['amountUsd'];
+      const comment = json['comment'];
+      if (typeof amountUsd !== 'number' || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+        throw new GiftsApiError(0, 'malformed daily instruction');
+      }
+      if (typeof comment !== 'string') {
+        throw new GiftsApiError(0, 'malformed daily instruction');
+      }
+      const rawId = json['messageId'];
+      if (rawId === undefined || rawId === '') {
+        return { action: 'pay', amountUsd, comment };
+      }
+      if (typeof rawId !== 'string') {
+        throw new GiftsApiError(0, 'malformed daily instruction');
+      }
+      return { action: 'pay', amountUsd, comment, messageId: rawId };
     }
-    const hasMedia = json['hasMedia'] === true;
-    const rawId = json['messageId'];
-    const messageId = typeof rawId === 'string' && MESSAGE_ID_RE.test(rawId) ? rawId : null;
-    const rawAt = json['postedAt'];
-    let postedAt: string | null = null;
-    if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
-      postedAt = new Date(rawAt).toISOString();
-    }
-    const rawWelcome = json['welcomeHasMedia'];
-    const welcomeHasMedia = typeof rawWelcome === 'boolean' ? rawWelcome : null;
-    const rawWelcomeId = json['welcomeMessageId'];
-    const welcomeMessageId =
-      typeof rawWelcomeId === 'string' && MESSAGE_ID_RE.test(rawWelcomeId) ? rawWelcomeId : null;
-    return { hasPosted: has, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId };
-  }
-
-  /**
-   * Whether 21.gifts reports this Lightning Address as funding-eligible today.
-   *
-   * @param address - LUD-16 address.
-   * @returns `true` when the address is eligible.
-   */
-  async isFundingEligible(address: string): Promise<boolean> {
-    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const eligible = json['eligible'];
-    if (typeof eligible !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed eligible response');
-    }
-    return eligible;
+    throw new GiftsApiError(0, 'malformed daily instruction');
   }
 
   /**
