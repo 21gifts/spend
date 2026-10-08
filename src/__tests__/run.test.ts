@@ -2657,6 +2657,43 @@ describe('runDay', () => {
     }
   });
 
+  it('does not skip a daily payout when welcome.jsonl has a paid row on the same UTC day', async () => {
+    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        invoices += 1;
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await runDay(
+        { ...config, stateDir: welcome.dir, recipients: [config.recipients[0]!] },
+        { live: false, day: '2026-08-23' },
+        {
+          gifts,
+          lndhub: new LndhubClient(target),
+          state: memoryState(),
+          lock: openLock,
+          btcUsd: async () => 100_000,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(invoices).toBe(1);
+      expect(result.summary.skipped.some((line) => line.reason === 'welcome_paid')).toBe(false);
+      expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    } finally {
+      warn.mockRestore();
+      welcome.remove();
+    }
+  });
+
   it('does not skip a daily payout when the welcome row is dry-run', async () => {
     const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'dry-run'));
     let invoices = 0;
@@ -2881,6 +2918,63 @@ describe('runDay', () => {
       expect(result.summary.skipped.some((line) => line.reason === 'no_passkey')).toBe(false);
       expect(result.summary.skipped.some((line) => line.reason === 'no_media')).toBe(false);
       expect(result.summary.skipped.some((line) => line.reason === 'not_eligible')).toBe(false);
+      expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    } finally {
+      warn.mockRestore();
+      welcome.remove();
+    }
+  });
+
+  it('executeOnly pays when welcome.jsonl has a paid row on the same UTC day', async () => {
+    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+    const calls = { passkey: 0, posted: 0, eligible: 0 };
+    let invoices = 0;
+    const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
+      const href = String(url);
+      if (href.includes('/invoices/passkey')) {
+        calls.passkey += 1;
+        return new Response(JSON.stringify({ hasPasskey: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/posted')) {
+        calls.posted += 1;
+        return new Response(JSON.stringify({ hasPosted: false, hasMedia: false }), { status: 200 });
+      }
+      if (href.includes('/invoices/eligible')) {
+        calls.eligible += 1;
+        return new Response(JSON.stringify({ eligible: false }), { status: 200 });
+      }
+      invoices += 1;
+      return new Response(
+        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+        { status: 200 },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await runDay(
+        {
+          ...config,
+          stateDir: welcome.dir,
+          recipients: [{ address: 'a@b.com', amountUsd: 1, comment: 'instructed memo' }],
+        },
+        {
+          live: false,
+          day: '2026-08-23',
+          executeOnly: true,
+          checkFundingEligible: true,
+        },
+        {
+          gifts,
+          lndhub: new LndhubClient(target),
+          state: memoryState(),
+          lock: openLock,
+          btcUsd: async () => 100_000,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(calls).toEqual({ passkey: 0, posted: 0, eligible: 0 });
+      expect(invoices).toBe(1);
+      expect(result.summary.skipped.some((line) => line.reason === 'welcome_paid')).toBe(false);
       expect(result.summary.dryRun).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
     } finally {
       warn.mockRestore();
