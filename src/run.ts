@@ -4,7 +4,7 @@ import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, dayBlock, latestStatus, paidOnUtcDay, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
 import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
@@ -34,8 +34,12 @@ export interface RunOptions {
   /**
    * When true, skip passkey, forum-post, media, and funding gates. Convert
    * USD, check balance, honor the daily halt, invoice with the instructed
-   * comment, and pay. Does not skip `welcome_paid`, paid, uncertain, or
-   * failed. CLI and other callers that omit this keep the policy gates.
+   * comment, and pay. Honors paid, uncertain, and failed. Spend does not
+   * decide that welcome was already paid and does not read `welcome.jsonl`.
+   * HTTP 403 with error exactly `Welcome gift already paid` is skip reason
+   * `welcome_paid` and writes no JSONL row; that skip does not set
+   * `summary.reason`. CLI and other callers that omit this keep the policy
+   * gates.
    */
   executeOnly?: boolean;
 }
@@ -98,9 +102,12 @@ function selectTargets(
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
  * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
  * Daily requires `hasPosted` and `hasMedia`; missing or non-true `hasMedia` skips as
- * `no_media` (no JSONL). A daily run (bucket omitted or `'daily'`) skips `welcome_paid`
- * and writes no JSONL row when `welcome.jsonl` has a `paid` row for that address on this
- * UTC day; that skip does not set `summary.reason`. When {@link RunOptions.bucket} is `'moderator'`, uses the
+ * `no_media` (no JSONL). Spend does not decide that welcome was already paid. It does
+ * not read `welcome.jsonl` for that decision. HTTP 403 with error exactly
+ * `Welcome gift already paid` is recorded as skip reason `welcome_paid` and writes no
+ * JSONL row; that skip does not set `summary.reason`. When {@link RunOptions.executeOnly}
+ * is true, passkey, forum, media, and funding preflight are skipped; paid, uncertain,
+ * and failed are still honored; `welcome.jsonl` is not consulted. When {@link RunOptions.bucket} is `'moderator'`, uses the
  * moderator JSONL, requires a living-room `hasPosted` whose `postedAt` UTC day matches
  * {@link RunOptions.day}, does not inspect `hasMedia`, and never sends `messageId` on
  * `createInvoice`. When {@link RunOptions.bucket} is `'welcome'`, uses dateless
@@ -209,22 +216,7 @@ async function runDayLocked(
     }
     throw err;
   }
-  const dailyBucket = options.bucket === undefined || options.bucket === 'daily';
   const executeOnly = options.executeOnly === true;
-  let welcomeRows: StateRow[] = [];
-  if (dailyBucket) {
-    try {
-      welcomeRows = new DayState(config.stateDir, options.day, undefined, 'welcome').load();
-    } catch (err) {
-      if (err instanceof CorruptStateError) {
-        log('spend.done', { ok: false, reason: 'corrupt_state' });
-        return finish(4, { reason: 'corrupt_state' });
-      }
-      throw err;
-    }
-  }
-  const welcomePaidToday = (address: string): boolean =>
-    dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
   if (options.live && !isolatedBucket) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
@@ -291,9 +283,6 @@ async function runDayLocked(
         continue;
       }
       if (latestStatus(rows, recipient.address) === 'failed') {
-        continue;
-      }
-      if (welcomePaidToday(recipient.address)) {
         continue;
       }
       try {
@@ -367,7 +356,6 @@ async function runDayLocked(
       (r) =>
         dayBlock(rows, r.address) === undefined &&
         latestStatus(rows, r.address) !== 'failed' &&
-        !welcomePaidToday(r.address) &&
         !noPasskey.has(r.address) &&
         !noPost.has(r.address) &&
         !noMedia.has(r.address) &&
@@ -451,11 +439,6 @@ async function runDayLocked(
     if (latestStatus(rows, recipient.address) === 'failed') {
       log('spend.skip', { address: recipient.address, reason: 'failed' });
       skipped.push({ ...lineBase, reason: 'failed' });
-      continue;
-    }
-    if (welcomePaidToday(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
-      skipped.push({ ...lineBase, reason: 'welcome_paid' });
       continue;
     }
     if (noPasskey.has(recipient.address)) {
@@ -545,6 +528,15 @@ async function runDayLocked(
       ) {
         log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
         skipped.push({ ...lineBase, reason: 'no_passkey' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Welcome gift already paid'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
+        skipped.push({ ...lineBase, reason: 'welcome_paid' });
         continue;
       }
       if (

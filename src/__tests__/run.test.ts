@@ -2582,49 +2582,42 @@ describe('runDay', () => {
     expect(result.summary?.failed).toEqual([]);
   });
 
-  it('skips a daily payout when welcome.jsonl paid that address today', async () => {
-    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid', 'A@b.com'));
+  it('treats POST 403 Welcome gift already paid as welcome_paid without persisting failed', async () => {
     let invoices = 0;
     const gifts = new GiftsApi(
       'https://api.21.gifts',
       'tok',
       giftsFetch(async () => {
         invoices += 1;
-        return new Response(
-          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ error: 'Welcome gift already paid' }), { status: 403 });
       }),
     );
     const lndhub = new LndhubClient(target, async (url) => {
       if (String(url).endsWith('/auth')) {
         return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
       }
-      if (String(url).endsWith('/balance')) {
-        return new Response(JSON.stringify({ BTC: { AvailableBalance: 10 } }), { status: 200 });
-      }
-      throw new Error('pay');
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
     });
     const state = memoryState();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const result = await runDay(
-        { ...config, stateDir: welcome.dir, recipients: [config.recipients[0]!] },
-        { live: true, day: '2026-08-23' },
-        { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
-      );
-      expect(result.exitCode).toBe(0);
-      expect(result.summary.reason).toBeUndefined();
-      expect(result.summary.skipped).toEqual([
-        expect.objectContaining({ address: 'a@b.com', reason: 'welcome_paid' }),
-      ]);
-      expect(result.summary.paid).toEqual([]);
-      expect(invoices).toBe(0);
-      expect(state.load()).toEqual([]);
-    } finally {
-      warn.mockRestore();
-      welcome.remove();
-    }
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(invoices).toBe(1);
+    expect(result.summary.reason).toBeUndefined();
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'welcome_paid' }),
+    ]);
+    expect(result.summary.paid).toEqual([]);
+    expect(result.summary.dryRun).toEqual([]);
+    expect(result.summary.failed).toEqual([]);
+    expect(state.load().some((row) => row.status === 'failed')).toBe(false);
   });
 
   it('does not skip a daily payout when the welcome paid row is another UTC day', async () => {
@@ -2790,7 +2783,7 @@ describe('runDay', () => {
     }
   });
 
-  it('aborts a daily run when welcome.jsonl is corrupt', async () => {
+  it('does not abort a daily run when welcome.jsonl is corrupt', async () => {
     const welcome = tempWelcome('not-json\n');
     let invoices = 0;
     const gifts = new GiftsApi(
@@ -2801,6 +2794,17 @@ describe('runDay', () => {
         return new Response('{}', { status: 500 });
       }),
     );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      throw new Error('pay');
+    });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const result = await runDay(
@@ -2808,16 +2812,15 @@ describe('runDay', () => {
         { live: true, day: '2026-08-23' },
         {
           gifts,
-          lndhub: new LndhubClient(target),
+          lndhub,
           state: memoryState(),
           lock: openLock,
           btcUsd: async () => 100_000,
         },
       );
-      expect(result.exitCode).toBe(4);
-      expect(result.summary.reason).toBe('corrupt_state');
-      expect(invoices).toBe(0);
-      expect(result.summary.paid).toEqual([]);
+      expect(result.exitCode).not.toBe(4);
+      expect(result.summary.reason).not.toBe('corrupt_state');
+      expect(invoices).toBeGreaterThanOrEqual(1);
     } finally {
       warn.mockRestore();
       welcome.remove();
@@ -2885,57 +2888,55 @@ describe('runDay', () => {
     }
   });
 
-  it('executeOnly skips welcome_paid when welcome.jsonl paid that address today', async () => {
-    const welcome = tempWelcome(welcomeRow('2026-08-23T01:00:00.000Z', 'paid'));
+  it('executeOnly treats POST 403 Welcome gift already paid as welcome_paid', async () => {
+    const calls = { passkey: 0, posted: 0, eligible: 0 };
     let invoices = 0;
     const gifts = new GiftsApi('https://api.21.gifts', 'tok', async (url) => {
       const href = String(url);
       if (href.includes('/invoices/passkey')) {
+        calls.passkey += 1;
         return new Response(JSON.stringify({ hasPasskey: false }), { status: 200 });
       }
       if (href.includes('/invoices/posted')) {
+        calls.posted += 1;
         return new Response(JSON.stringify({ hasPosted: false, hasMedia: false }), { status: 200 });
       }
       if (href.includes('/invoices/eligible')) {
+        calls.eligible += 1;
         return new Response(JSON.stringify({ eligible: false }), { status: 200 });
       }
       invoices += 1;
-      return new Response(
-        JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
-        { status: 200 },
-      );
+      return new Response(JSON.stringify({ error: 'Welcome gift already paid' }), { status: 403 });
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const result = await runDay(
-        {
-          ...config,
-          stateDir: welcome.dir,
-          recipients: [{ address: 'a@b.com', amountUsd: 1 }],
-        },
-        {
-          live: false,
-          day: '2026-08-23',
-          executeOnly: true,
-        },
-        {
-          gifts,
-          lndhub: new LndhubClient(target),
-          state: memoryState(),
-          lock: openLock,
-          btcUsd: async () => 100_000,
-        },
-      );
-      expect(result.exitCode).toBe(0);
-      expect(result.summary.skipped).toEqual([
-        expect.objectContaining({ address: 'a@b.com', reason: 'welcome_paid' }),
-      ]);
-      expect(result.summary.dryRun).toEqual([]);
-      expect(invoices).toBe(0);
-    } finally {
-      warn.mockRestore();
-      welcome.remove();
-    }
+    const result = await runDay(
+      {
+        ...config,
+        recipients: [{ address: 'a@b.com', amountUsd: 1 }],
+      },
+      {
+        live: false,
+        day: '2026-08-23',
+        executeOnly: true,
+      },
+      {
+        gifts,
+        lndhub: new LndhubClient(target),
+        state: memoryState(),
+        lock: openLock,
+        btcUsd: async () => 100_000,
+      },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.reason).toBeUndefined();
+    expect(calls).toEqual({ passkey: 0, posted: 0, eligible: 0 });
+    expect(invoices).toBe(1);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'welcome_paid' }),
+    ]);
+    expect(result.summary.paid).toEqual([]);
+    expect(result.summary.dryRun).toEqual([]);
   });
 
   it('keeps daily paid and failed reasons when welcome was also paid today', async () => {
