@@ -241,6 +241,35 @@ function rosterUnavailableHtml(): Response {
   return new Response(ROSTER_UNAVAILABLE, { status: 502 });
 }
 
+type RosterStop =
+  | { ok: false; status: 400 | 401; error: string }
+  | { ok: false; status: 502 };
+
+/** A roster-API 400 or 401 is that status. Anything else stays unavailable. */
+function rosterStop(err: unknown): RosterStop {
+  if (
+    err instanceof GiftsApiError &&
+    (err.status === 400 || err.status === 401)
+  ) {
+    return { ok: false, status: err.status, error: err.message };
+  }
+  return { ok: false, status: 502 };
+}
+
+function rosterStopJson(stop: RosterStop): Response {
+  if (stop.status === 502) {
+    return rosterUnavailableJson();
+  }
+  return jsonResponse(stop.status, { error: stop.error });
+}
+
+function rosterStopHtml(stop: RosterStop): Response {
+  if (stop.status === 502) {
+    return rosterUnavailableHtml();
+  }
+  return new Response(stop.error, { status: stop.status });
+}
+
 /**
  * Editor panel payload for the combined page.
  *
@@ -441,30 +470,23 @@ export function createServer(opts: {
 
   const importDocument = async (
     liveList: LiveRecipients,
-  ): Promise<{ ok: true; doc: RosterDocument } | { ok: false }> => {
+  ): Promise<{ ok: true; doc: RosterDocument } | RosterStop> => {
     try {
       const doc = await gifts.importRosterDocument(importRosterBody(liveList));
       return { ok: true, doc };
-    } catch {
-      return { ok: false };
+    } catch (err) {
+      return rosterStop(err);
     }
   };
 
   const callWorker = async (
     run: () => Promise<RosterDocument>,
-  ): Promise<
-    | { ok: true; doc: RosterDocument }
-    | { ok: false; status: 400; error: string }
-    | { ok: false; status: 502 }
-  > => {
+  ): Promise<{ ok: true; doc: RosterDocument } | RosterStop> => {
     try {
       const doc = await run();
       return { ok: true, doc };
     } catch (err) {
-      if (err instanceof GiftsApiError && err.status === 400) {
-        return { ok: false, status: 400, error: err.message };
-      }
-      return { ok: false, status: 502 };
+      return rosterStop(err);
     }
   };
 
@@ -518,7 +540,10 @@ export function createServer(opts: {
         const liveList = loadLiveRecipients(config.stateDir);
         const imported = await importDocument(liveList);
         if (!imported.ok) {
-          return json(502, { error: ROSTER_UNAVAILABLE });
+          if (imported.status === 502) {
+            return json(502, { error: ROSTER_UNAVAILABLE });
+          }
+          return json(imported.status, { error: imported.error });
         }
         const doc = imported.doc;
         console.warn(
@@ -744,7 +769,7 @@ export function createServer(opts: {
         }
         const imported = await importDocument(loadedLive);
         if (!imported.ok) {
-          return rosterUnavailableJson();
+          return rosterStopJson(imported);
         }
         return jsonResponse(200, toDailyRosterJson(imported.doc));
       }
@@ -765,7 +790,7 @@ export function createServer(opts: {
         }
         const imported = await importDocument(loadedLive);
         if (!imported.ok) {
-          return rosterUnavailableJson();
+          return rosterStopJson(imported);
         }
         const address = objectBody.address as string;
         const amountUsd = objectBody.amountUsd as number;
@@ -781,10 +806,7 @@ export function createServer(opts: {
                   : () => gifts.addRosterRecipient(address, amountUsd);
         const result = await callWorker(run);
         if (!result.ok) {
-          if (result.status === 400) {
-            return jsonResponse(400, { error: result.error });
-          }
-          return rosterUnavailableJson();
+          return rosterStopJson(result);
         }
         return jsonResponse(200, toDailyRosterJson(result.doc));
       });
@@ -806,7 +828,7 @@ export function createServer(opts: {
         }
         const imported = await importDocument(loadedLive);
         if (!imported.ok) {
-          return rosterUnavailableHtml();
+          return rosterStopHtml(imported);
         }
         return combinedPage(editorFrom(imported.doc));
       }
@@ -880,7 +902,7 @@ export function createServer(opts: {
         }
         const imported = await importDocument(loadedLive);
         if (!imported.ok) {
-          return rosterUnavailableHtml();
+          return rosterStopHtml(imported);
         }
         const doc = imported.doc;
 
@@ -896,7 +918,7 @@ export function createServer(opts: {
             if (result.status === 400) {
               return combinedPage(editorFrom(doc, result.error));
             }
-            return rosterUnavailableHtml();
+            return rosterStopHtml(result);
           }
           return redirect("/");
         }
@@ -924,7 +946,7 @@ export function createServer(opts: {
           if (result.status === 400) {
             return combinedPage(editorFrom(doc, result.error));
           }
-          return rosterUnavailableHtml();
+          return rosterStopHtml(result);
         }
         return redirect("/");
       });

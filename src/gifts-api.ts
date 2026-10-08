@@ -17,10 +17,6 @@ export class GiftsApiError extends Error {
   }
 }
 
-/** Grant `status` from `GET /invoices/eligible`. */
-export type FundingGrantStatus =
-  "none" | "pending" | "trial" | "admitted" | "rejected";
-
 const DAILY_SKIP_REASONS = [
   "no_passkey",
   "no_post",
@@ -142,8 +138,7 @@ function parseRosterDocument(json: Record<string, unknown>): RosterDocument {
 
 /**
  * Client for `POST /spend/daily-instruction`, the daily-roster document and
- * worker routes, `GET /invoices/eligible` (grant status), `POST /invoices`,
- * and `POST /invoices/proof`.
+ * worker routes, `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
   constructor(
@@ -337,28 +332,6 @@ export class GiftsApi {
   }
 
   /**
-   * Funding-grant status 21.gifts reports for this Lightning Address.
-   *
-   * @param address - LUD-16 address.
-   * @returns Grant `status` from `GET /invoices/eligible`.
-   */
-  async fundingGrantStatus(address: string): Promise<FundingGrantStatus> {
-    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const status = json["status"];
-    if (
-      status !== "none" &&
-      status !== "pending" &&
-      status !== "trial" &&
-      status !== "admitted" &&
-      status !== "rejected"
-    ) {
-      throw new GiftsApiError(0, "malformed eligible status");
-    }
-    return status;
-  }
-
-  /**
    * Fetch a BOLT11 from 21.gifts for one recipient.
    *
    * @param address - LUD-16 address.
@@ -426,10 +399,6 @@ export class GiftsApi {
    */
   async submitProof(id: string, preimage: string): Promise<void> {
     await this.postJson("/invoices/proof", { id, preimage });
-  }
-
-  private async getJson(path: string): Promise<Record<string, unknown>> {
-    return this.requestJson(path, { method: "GET" });
   }
 
   private async postJson(

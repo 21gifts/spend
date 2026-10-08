@@ -6691,6 +6691,79 @@ describe("daily roster API failures", () => {
     expect(await res.json()).toEqual({ error: "Daily roster is unavailable" });
   });
 
+  it("GET /daily-roster returns a roster API 400", async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: "Invalid comment" }), {
+          status: 400,
+        }),
+    });
+    const res = await app.fetch(
+      dailyRosterReq("/daily-roster", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid comment" });
+  });
+
+  it("POST /daily-roster/comment returns a worker 401", async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async (url) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({
+              comment: "21gifts daily",
+              paymentsEnabled: true,
+              moderatorPaymentsEnabled: true,
+              defaultAmountUsd: 1,
+              recipients: [
+                { address: "alice@walletofsatoshi.com", amountUsd: 1 },
+              ],
+              moderators: [],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+        });
+      },
+    });
+    const res = await app.fetch(
+      dailyRosterReq("/daily-roster/comment", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ comment: "x" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("logged-in GET / returns a roster API 400 as text", async () => {
+    const app = createServer({
+      env: sessionEnv(),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: "Invalid comment" }), {
+          status: 400,
+        }),
+    });
+    const token = await login(app);
+    const res = await app.fetch(
+      req("http://127.0.0.1/", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid comment");
+  });
+
   it("POST /daily-roster/payments is 502 when import fails", async () => {
     const app = createServer({
       env: sessionEnv(),
@@ -7030,6 +7103,23 @@ describe("GET /debug/recipients", () => {
     );
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: "Daily roster is unavailable" });
+  });
+
+  it("is 400 when the roster import is 400", async () => {
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: "Invalid comment" }), {
+          status: 400,
+        }),
+    });
+    const res = await app.fetch(
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer secret-debug" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid comment" });
   });
 
   it("is 500 when the live file is corrupt", async () => {

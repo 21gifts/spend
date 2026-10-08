@@ -95,58 +95,6 @@ describe("GiftsApi", () => {
     ).rejects.toMatchObject({ status: 0 });
   });
 
-  it("fundingGrantStatus returns admitted", async () => {
-    let seenUrl = "";
-    let auth = "";
-    const api = new GiftsApi(
-      "https://api.21.gifts",
-      "tok",
-      async (url, init) => {
-        seenUrl = String(url);
-        auth = new Headers(init?.headers).get("authorization") ?? "";
-        return new Response(
-          JSON.stringify({ eligible: true, status: "admitted" }),
-          { status: 200 },
-        );
-      },
-    );
-    await expect(api.fundingGrantStatus("a@b.com")).resolves.toBe("admitted");
-    expect(seenUrl).toBe(
-      "https://api.21.gifts/invoices/eligible?address=a%40b.com",
-    );
-    expect(auth).toBe("Bearer tok");
-  });
-
-  it("fundingGrantStatus returns none", async () => {
-    const api = new GiftsApi(
-      "https://api.21.gifts",
-      "tok",
-      async () =>
-        new Response(JSON.stringify({ status: "none" }), { status: 200 }),
-    );
-    await expect(api.fundingGrantStatus("a@b.com")).resolves.toBe("none");
-  });
-
-  it("fundingGrantStatus rejects a malformed status as status 0", async () => {
-    const payloads: unknown[] = [
-      {},
-      { eligible: true },
-      { status: "nope" },
-      { status: 1 },
-    ];
-    for (const payload of payloads) {
-      const api = new GiftsApi(
-        "https://api.21.gifts",
-        "tok",
-        async () => new Response(JSON.stringify(payload), { status: 200 }),
-      );
-      await expect(api.fundingGrantStatus("a@b.com")).rejects.toMatchObject({
-        status: 0,
-        message: "malformed eligible status",
-      });
-    }
-  });
-
   it("createInvoice JSON includes messageId when the 5th argument is passed", async () => {
     let sent: unknown;
     const api = new GiftsApi(
