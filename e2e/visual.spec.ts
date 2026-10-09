@@ -21,7 +21,7 @@ test('login-error', async ({ page }) => {
   await expect(page).toHaveScreenshot('login-error.png', SHOT);
 });
 
-test('moderators-empty', async ({ page }) => {
+test('dashboard-links', async ({ page }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
@@ -29,26 +29,9 @@ test('moderators-empty', async ({ page }) => {
   await expect(page.locator('body')).toContainText('500000 sats');
   await expect(page.locator('body')).not.toContainText('Payment comment');
   await expect(page.locator('body')).not.toContainText('alice@w...');
-  await expect(page.locator('body')).toContainText('No moderators');
+  await expect(page.locator('body')).not.toContainText('No moderators');
   await expect(page.getByRole('link', { name: 'Daily payment text', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Daily payment amounts', exact: true })).toBeVisible();
-  await expect(page).toHaveScreenshot('moderators-empty.png', SHOT);
-});
-
-test('moderators-one', async ({ page }) => {
-  await page.goto('/');
-  await page.fill('input[name=password]', 'test-password');
-  await page.click('button[type=submit]');
-  await expect(page).toHaveURL('/');
-  const addModerator = page.locator('form[action="/moderators/add"]');
-  await addModerator.locator('input[name=address]').fill('mod@example.com');
-  await addModerator.locator('input[name=amountUsd]').fill('5');
-  await addModerator.locator('button[type=submit]').click();
-  await expect(page).toHaveURL('/');
-  await expect(
-    page.locator('li.row:has(form[action="/moderators/update"]) .addr'),
-  ).toHaveText('mod@example.com');
-  await expect(page.getByRole('link', { name: 'Daily payment text', exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Daily payment amounts', exact: true })).toBeVisible();
-  await expect(page).toHaveScreenshot('moderators-one.png', SHOT);
+  await expect(page.getByRole('link', { name: 'Moderator payments', exact: true })).toBeVisible();
+  await expect(page).toHaveScreenshot('dashboard-links.png', SHOT);
 });

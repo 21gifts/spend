@@ -116,32 +116,30 @@ describe('renderDashboardHtml', () => {
     expect(html).toContain('9643e3@lightning.space');
   });
 
-  it('with editor panel includes Log out, abbreviated WoS, and dashboard sats', () => {
+  it('with editor panel includes Log out, the payment links, and dashboard sats', () => {
     const html = renderDashboardHtml(
       {
         sats: 3803,
         usd: 3.0,
         lightningAddress: '9643e3@lightning.space',
       },
-      {
-        kind: 'editor',
-        recipients: [],
-        moderators: [{ address: 'alice@walletofsatoshi.com', amountUsd: 1 }],
-        comment: '21gifts daily',
-        paymentsEnabled: true,
-        moderatorPaymentsEnabled: true,
-      },
+      { kind: 'editor' },
     );
     expect(html).toContain('Log out');
     expect(html).toContain('href="https://21.gifts/grants/payments/comment"');
     expect(html).toContain('href="https://21.gifts/grants/payments/amounts"');
-    expect(html).toContain('alice@w...');
+    expect(html).toContain('href="https://21.gifts/grants/payments/moderators"');
+    expect(html).toContain('>Moderator payments</a>');
+    expect(html).not.toContain('alice@w...');
     expect(html).toContain('3803 sats');
     expect(html).not.toContain('Payment comment');
+    expect(html).not.toContain('No moderators');
     expect(html).not.toContain('action="/recipients/comment"');
     expect(html).not.toContain('action="/recipients/payments"');
     expect(html).not.toContain('action="/recipients/add"');
     expect(html).not.toContain('action="/recipients/update"');
     expect(html).not.toContain('action="/recipients/delete"');
+    expect(html).not.toContain('action="/moderators/add"');
+    expect(html).not.toContain('action="/moderators/payments"');
   });
 });
