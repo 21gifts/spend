@@ -4,7 +4,7 @@ import { LndhubClient, parseLndhubUri } from './lndhub';
 import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
-import { CorruptStateError, DayState, dayBlock, latestStatus, paidOnUtcDay, type StateRow } from './state';
+import { CorruptStateError, DayState, dayBlock, latestStatus, type StateRow } from './state';
 import type { PayoutLine, RunSummary } from './telegram';
 
 const HALT_ADDRESS = '*halt*';
@@ -17,8 +17,8 @@ export interface RunOptions {
   onlyAddresses?: string[];
   /**
    * Optional map: lowercase lightning address → forum post UUID that triggered the gift.
-   * Ping sets this for the one pinged address. CLI / runs without a map fall back to
-   * `hasPosted().messageId` when the api returns one.
+   * Ping sets this for the one pinged address. CLI sets it from a pay instruction's
+   * `messageId`. A run with no map does not send `messageId`.
    */
   messageIdByAddress?: Record<string, string>;
   /**
@@ -27,10 +27,15 @@ export interface RunOptions {
    * included `groupMessageId`. Used only when {@link RunOptions.bucket} is `'moderator'`.
    */
   groupMessageIdByAddress?: Record<string, string>;
-  /** Default `'daily'`. Daily requires `hasPosted` and `hasMedia`. `'moderator'` uses the moderator JSONL, requires living-room `hasPosted` with `postedAt` UTC day === `options.day`, does not inspect `hasMedia`, and does not send `messageId` on `createInvoice`. `'welcome'` uses dateless `welcome.jsonl`, pays when `welcomeHasMedia` is true (About-me photo counts) or, when that field is absent, when `hasPosted` and `hasMedia` are both true. No `postedAt` UTC-day match. Never calls `isFundingEligible`. Forwards `messageId` on `createInvoice`. */
+  /**
+   * Default `'daily'`. Selects the state file: daily JSONL, moderator JSONL, or
+   * dateless `welcome.jsonl`. Moderator never sends `messageId` on `createInvoice`
+   * and sends `groupMessageId` when {@link RunOptions.groupMessageIdByAddress} has
+   * one. Welcome and daily send `messageId` only when
+   * {@link RunOptions.messageIdByAddress} has a string. There is no policy
+   * preflight. `welcome.jsonl` is not read to block a daily run.
+   */
   bucket?: 'daily' | 'moderator' | 'welcome';
-  /** Default true. False on HTTP ping: API already gated eligibleToday. Welcome treats this as false even when omitted or true. */
-  checkFundingEligible?: boolean;
 }
 
 /** Outcome of {@link runDay}. */
@@ -87,21 +92,17 @@ function selectTargets(
 /**
  * Run one UTC day's gifts (or a subset when {@link RunOptions.onlyAddresses} is set).
  *
- * Daily `markFinished` still requires every live-roster recipient to be settled; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster. Welcome `markFinished` writes `welcome.finished` (never the daily `${day}.finished`).
+ * Daily `markFinished` is against this run's recipient list; moderator `markFinished` is against the synthetic stipend recipient list for that run, not the living-room roster. Welcome `markFinished` writes `welcome.finished` (never the daily `${day}.finished`).
  * When {@link RunOptions.messageIdByAddress} is set, those post ids are sent on
- * `createInvoice`; otherwise the id from `hasPosted` is used when the api returns one.
- * Daily requires `hasPosted` and `hasMedia`; missing or non-true `hasMedia` skips as
- * `no_media` (no JSONL). A daily run (bucket omitted or `'daily'`) skips `welcome_paid`
- * and writes no JSONL row when `welcome.jsonl` has a `paid` row for that address on this
- * UTC day; that skip does not set `summary.reason`. When {@link RunOptions.bucket} is `'moderator'`, uses the
- * moderator JSONL, requires a living-room `hasPosted` whose `postedAt` UTC day matches
- * {@link RunOptions.day}, does not inspect `hasMedia`, and never sends `messageId` on
- * `createInvoice`. When {@link RunOptions.bucket} is `'welcome'`, uses dateless
- * `welcome.jsonl`. Media is `welcomeHasMedia` when the api sends a boolean
- * (an About-me photo counts); when the field is absent, both `hasPosted` and
- * `hasMedia` must be true. No `postedAt` UTC-day match. Never calls
- * `isFundingEligible`, and forwards `messageId` like daily.
- * When
+ * `createInvoice`. A run with no map does not send `messageId`. There is no policy
+ * preflight. Spend does not read `welcome.jsonl` to decide a daily skip. HTTP 403 with
+ * error exactly `Welcome gift already paid` is recorded as skip reason `welcome_paid`
+ * (any bucket) and writes no JSONL row; that skip does not set `summary.reason`.
+ * HTTP 403 `Passkey required` is `no_passkey`. HTTP 403 `Forum post required` is
+ * `no_media` for welcome and `no_post` otherwise. HTTP 403 `Funding grant required`
+ * is `not_eligible` (any bucket). When {@link RunOptions.bucket} is `'moderator'`, uses
+ * the moderator JSONL and never sends `messageId` on `createInvoice`. When
+ * {@link RunOptions.bucket} is `'welcome'`, uses dateless `welcome.jsonl`. When
  * {@link RunOptions.groupMessageIdByAddress} has an entry for the recipient, that id
  * is sent as `groupMessageId` on `createInvoice` (moderator only).
  *
@@ -168,8 +169,6 @@ async function runDayLocked(
   const dryRun: PayoutLine[] = [];
   let btcUsd: number | undefined;
   const isolatedBucket = options.bucket === 'moderator' || options.bucket === 'welcome';
-  const checkFundingEligible =
-    options.bucket === 'welcome' ? false : options.checkFundingEligible !== false;
 
   const finish = (
     exitCode: number,
@@ -202,21 +201,6 @@ async function runDayLocked(
     }
     throw err;
   }
-  const dailyBucket = options.bucket === undefined || options.bucket === 'daily';
-  let welcomeRows: StateRow[] = [];
-  if (dailyBucket) {
-    try {
-      welcomeRows = new DayState(config.stateDir, options.day, undefined, 'welcome').load();
-    } catch (err) {
-      if (err instanceof CorruptStateError) {
-        log('spend.done', { ok: false, reason: 'corrupt_state' });
-        return finish(4, { reason: 'corrupt_state' });
-      }
-      throw err;
-    }
-  }
-  const welcomePaidToday = (address: string): boolean =>
-    dailyBucket && paidOnUtcDay(welcomeRows, address, options.day);
   if (options.live && !isolatedBucket) {
     const recipientUncertain = config.recipients.some(
       (recipient) => dayBlock(rows, recipient.address) === 'uncertain',
@@ -272,81 +256,6 @@ async function runDayLocked(
     amountUsdByAddress.set(recipient.address, formattedUsd);
   }
 
-  const noPasskey = new Set<string>();
-  const noPost = new Set<string>();
-  const noMedia = new Set<string>();
-  const noEligible = new Set<string>();
-  const postedMessageId = new Map<string, string | null>();
-  for (const recipient of targets) {
-    if (dayBlock(rows, recipient.address) !== undefined) {
-      continue;
-    }
-    if (latestStatus(rows, recipient.address) === 'failed') {
-      continue;
-    }
-    if (welcomePaidToday(recipient.address)) {
-      continue;
-    }
-    try {
-      const eligiblePasskey = await gifts.hasPasskey(recipient.address);
-      if (!eligiblePasskey) {
-        noPasskey.add(recipient.address);
-        continue;
-      }
-    } catch {
-      log('spend.done', { ok: false, reason: 'passkey_unreachable' });
-      return finish(3, { reason: 'passkey_unreachable' });
-    }
-    try {
-      const posted = await gifts.hasPosted(recipient.address);
-      if (options.bucket === 'moderator') {
-        const postedDay =
-          posted.postedAt === null ? null : new Date(posted.postedAt).toISOString().slice(0, 10);
-        if (!posted.hasPosted || postedDay !== options.day) {
-          noPost.add(recipient.address);
-          continue;
-        }
-      } else if (options.bucket === 'welcome') {
-        const welcomeMedia =
-          posted.welcomeHasMedia === null
-            ? posted.hasPosted && posted.hasMedia
-            : posted.welcomeHasMedia;
-        if (!welcomeMedia) {
-          noMedia.add(recipient.address);
-          continue;
-        }
-        postedMessageId.set(
-          recipient.address,
-          posted.welcomeMessageId ?? posted.messageId,
-        );
-      } else {
-        if (!posted.hasPosted) {
-          noPost.add(recipient.address);
-          continue;
-        }
-        if (!posted.hasMedia) {
-          noMedia.add(recipient.address);
-          continue;
-        }
-        postedMessageId.set(recipient.address, posted.messageId);
-      }
-    } catch {
-      log('spend.done', { ok: false, reason: 'posted_unreachable' });
-      return finish(3, { reason: 'posted_unreachable' });
-    }
-    if (checkFundingEligible) {
-      try {
-        const eligible = await gifts.isFundingEligible(recipient.address);
-        if (!eligible) {
-          noEligible.add(recipient.address);
-        }
-      } catch {
-        log('spend.done', { ok: false, reason: 'eligible_unreachable' });
-        return finish(3, { reason: 'eligible_unreachable' });
-      }
-    }
-  }
-
   log('spend.start', {
     live: options.live,
     day: options.day,
@@ -357,14 +266,7 @@ async function runDayLocked(
   let token = '';
   if (options.live) {
     const pending = targets.filter(
-      (r) =>
-        dayBlock(rows, r.address) === undefined &&
-        latestStatus(rows, r.address) !== 'failed' &&
-        !welcomePaidToday(r.address) &&
-        !noPasskey.has(r.address) &&
-        !noPost.has(r.address) &&
-        !noMedia.has(r.address) &&
-        !noEligible.has(r.address),
+      (r) => dayBlock(rows, r.address) === undefined && latestStatus(rows, r.address) !== 'failed',
     );
     const needed = pending.reduce((sum, r) => {
       const sats = satsByAddress.get(r.address);
@@ -446,31 +348,6 @@ async function runDayLocked(
       skipped.push({ ...lineBase, reason: 'failed' });
       continue;
     }
-    if (welcomePaidToday(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
-      skipped.push({ ...lineBase, reason: 'welcome_paid' });
-      continue;
-    }
-    if (noPasskey.has(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
-      skipped.push({ ...lineBase, reason: 'no_passkey' });
-      continue;
-    }
-    if (noPost.has(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'no_post' });
-      skipped.push({ ...lineBase, reason: 'no_post' });
-      continue;
-    }
-    if (noMedia.has(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'no_media' });
-      skipped.push({ ...lineBase, reason: 'no_media' });
-      continue;
-    }
-    if (noEligible.has(recipient.address)) {
-      log('spend.skip', { address: recipient.address, reason: 'not_eligible' });
-      skipped.push({ ...lineBase, reason: 'not_eligible' });
-      continue;
-    }
     if (stopLive && options.live) {
       log('spend.skip', { address: recipient.address, reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
@@ -479,15 +356,12 @@ async function runDayLocked(
 
     const comment = recipient.comment ?? config.comment;
     const mappedId = options.messageIdByAddress?.[recipient.address.toLowerCase()];
-    const postedId = postedMessageId.get(recipient.address);
     const invoiceMessageId =
       options.bucket === 'moderator'
         ? undefined
         : typeof mappedId === 'string'
           ? mappedId
-          : typeof postedId === 'string'
-            ? postedId
-            : undefined;
+          : undefined;
     const groupMessageId =
       options.bucket === 'moderator'
         ? options.groupMessageIdByAddress?.[recipient.address.toLowerCase()]
@@ -543,11 +417,29 @@ async function runDayLocked(
       if (
         err instanceof GiftsApiError &&
         err.status === 403 &&
+        err.message === 'Welcome gift already paid'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
+        skipped.push({ ...lineBase, reason: 'welcome_paid' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
         err.message === 'Forum post required'
       ) {
         const reason = options.bucket === 'welcome' ? 'no_media' : 'no_post';
         log('spend.skip', { address: recipient.address, reason });
         skipped.push({ ...lineBase, reason });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Funding grant required'
+      ) {
+        log('spend.skip', { address: recipient.address, reason: 'not_eligible' });
+        skipped.push({ ...lineBase, reason: 'not_eligible' });
         continue;
       }
       const status = err instanceof GiftsApiError ? err.status : 0;

@@ -12,19 +12,133 @@ export class GiftsApiError extends Error {
 
   constructor(status: number, message: string) {
     super(message);
-    this.name = 'GiftsApiError';
+    this.name = "GiftsApiError";
     this.status = status;
   }
 }
 
-const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DAILY_SKIP_REASONS = [
+  "no_passkey",
+  "no_post",
+  "no_media",
+  "not_eligible",
+  "payments_disabled",
+  "not_listed",
+  "undecided",
+  "welcome_paid",
+] as const;
 
-/** Grant `status` from `GET /invoices/eligible`. */
-export type FundingGrantStatus = 'none' | 'pending' | 'trial' | 'admitted' | 'rejected';
+/** Skip reason from a 200 `POST /spend/daily-instruction`. */
+export type DailyInstructionSkipReason = (typeof DAILY_SKIP_REASONS)[number];
+
+/** 200 body from `POST /spend/daily-instruction`. */
+export type DailyInstruction =
+  | { action: "skip"; reason: DailyInstructionSkipReason }
+  | { action: "pay"; amountUsd: number; comment: string; messageId?: string };
+
+/** One row in a daily-roster document (`recipients` or `moderators`). */
+export interface RosterEntry {
+  address: string;
+  amountUsd: number;
+}
 
 /**
- * Client for `GET /invoices/passkey`, `GET /invoices/posted`, `GET /invoices/eligible`,
- * `POST /invoices`, and `POST /invoices/proof`.
+ * Full daily-roster document from 21.gifts. `defaultAmountUsd` is the API's
+ * number; Spend does not invent it.
+ */
+export interface RosterDocument {
+  comment: string;
+  paymentsEnabled: boolean;
+  moderatorPaymentsEnabled: boolean;
+  defaultAmountUsd: number;
+  recipients: RosterEntry[];
+  moderators: RosterEntry[];
+}
+
+/** POST body for `POST /funding/daily-roster/document`. No `defaultAmountUsd`. */
+export interface RosterImportBody {
+  comment: string;
+  paymentsEnabled: boolean;
+  moderatorPaymentsEnabled: boolean;
+  recipients: RosterEntry[];
+  moderators: RosterEntry[];
+}
+
+function isDailySkipReason(
+  value: unknown,
+): value is DailyInstructionSkipReason {
+  return (
+    typeof value === "string" &&
+    (DAILY_SKIP_REASONS as readonly string[]).includes(value)
+  );
+}
+
+function parseRosterEntries(raw: unknown): RosterEntry[] | null {
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+  const rows: RosterEntry[] = [];
+  for (const item of raw) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      return null;
+    }
+    const rec = item as Record<string, unknown>;
+    const address = rec["address"];
+    const amountUsd = rec["amountUsd"];
+    if (
+      typeof address !== "string" ||
+      typeof amountUsd !== "number" ||
+      !Number.isFinite(amountUsd) ||
+      amountUsd <= 0
+    ) {
+      return null;
+    }
+    rows.push({ address, amountUsd });
+  }
+  return rows;
+}
+
+function parseRosterDocument(json: Record<string, unknown>): RosterDocument {
+  if (Array.isArray(json)) {
+    throw new GiftsApiError(0, "malformed roster");
+  }
+  const comment = json["comment"];
+  const paymentsEnabled = json["paymentsEnabled"];
+  const moderatorPaymentsEnabled = json["moderatorPaymentsEnabled"];
+  const defaultAmountUsd = json["defaultAmountUsd"];
+  const recipients = parseRosterEntries(json["recipients"]);
+  const moderators = parseRosterEntries(json["moderators"]);
+  if (typeof comment !== "string") {
+    throw new GiftsApiError(0, "malformed roster");
+  }
+  if (
+    typeof paymentsEnabled !== "boolean" ||
+    typeof moderatorPaymentsEnabled !== "boolean"
+  ) {
+    throw new GiftsApiError(0, "malformed roster");
+  }
+  if (
+    typeof defaultAmountUsd !== "number" ||
+    !Number.isFinite(defaultAmountUsd)
+  ) {
+    throw new GiftsApiError(0, "malformed roster");
+  }
+  if (recipients === null || moderators === null) {
+    throw new GiftsApiError(0, "malformed roster");
+  }
+  return {
+    comment,
+    paymentsEnabled,
+    moderatorPaymentsEnabled,
+    defaultAmountUsd,
+    recipients,
+    moderators,
+  };
+}
+
+/**
+ * Client for `POST /spend/daily-instruction`, the daily-roster document and
+ * worker routes, `POST /invoices`, and `POST /invoices/proof`.
  */
 export class GiftsApi {
   constructor(
@@ -34,98 +148,187 @@ export class GiftsApi {
   ) {}
 
   /**
-   * Whether 21.gifts reports a passkey for this Lightning Address.
+   * Ask 21.gifts whether to pay this Lightning Address today, and how much.
    *
    * @param address - LUD-16 address.
-   * @returns `true` when the address has a passkey.
+   * @returns A skip reason or a pay instruction.
    */
-  async hasPasskey(address: string): Promise<boolean> {
-    const path = `/invoices/passkey?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const has = json['hasPasskey'];
-    if (typeof has !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed passkey response');
+  async dailyInstruction(address: string): Promise<DailyInstruction> {
+    const json = await this.postJson("/spend/daily-instruction", { address });
+    const action = json["action"];
+    if (action === "skip") {
+      const reason = json["reason"];
+      if (!isDailySkipReason(reason)) {
+        throw new GiftsApiError(0, "malformed daily instruction");
+      }
+      return { action: "skip", reason };
     }
-    return has;
+    if (action === "pay") {
+      const amountUsd = json["amountUsd"];
+      const comment = json["comment"];
+      if (
+        typeof amountUsd !== "number" ||
+        !Number.isFinite(amountUsd) ||
+        amountUsd <= 0
+      ) {
+        throw new GiftsApiError(0, "malformed daily instruction");
+      }
+      if (typeof comment !== "string") {
+        throw new GiftsApiError(0, "malformed daily instruction");
+      }
+      const rawId = json["messageId"];
+      if (rawId === undefined || rawId === "") {
+        return { action: "pay", amountUsd, comment };
+      }
+      if (typeof rawId !== "string") {
+        throw new GiftsApiError(0, "malformed daily instruction");
+      }
+      return { action: "pay", amountUsd, comment, messageId: rawId };
+    }
+    throw new GiftsApiError(0, "malformed daily instruction");
   }
 
   /**
-   * Live forum-post flag, media flag, post UUID, and post timestamp for this Lightning Address.
+   * Import a live-file payload as the API roster document. The API no-ops when
+   * it already has a document and returns the stored document.
    *
-   * @param address - LUD-16 address.
-   * @returns `{ hasPosted, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId }`.
-   *   `hasMedia` is boolean (missing or non-true JSON → `false`). `messageId` is a UUID or `null`.
-   *   `postedAt` is an ISO-8601 instant or `null` when missing or unparseable.
-   *   `welcomeHasMedia` is the boolean from the api, or `null` when the field is missing or
-   *   not a boolean (older api). `welcomeMessageId` is a UUID or `null`.
+   * @param body - File fields without `defaultAmountUsd`.
+   * @returns The full stored document.
    */
-  async hasPosted(address: string): Promise<{
-    hasPosted: boolean;
-    hasMedia: boolean;
-    messageId: string | null;
-    postedAt: string | null;
-    /** `null` when the api omitted the field (older api). */
-    welcomeHasMedia: boolean | null;
-    welcomeMessageId: string | null;
-  }> {
-    const path = `/invoices/posted?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const has = json['hasPosted'];
-    if (typeof has !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed posted response');
-    }
-    const hasMedia = json['hasMedia'] === true;
-    const rawId = json['messageId'];
-    const messageId = typeof rawId === 'string' && MESSAGE_ID_RE.test(rawId) ? rawId : null;
-    const rawAt = json['postedAt'];
-    let postedAt: string | null = null;
-    if (typeof rawAt === 'string' && !Number.isNaN(Date.parse(rawAt))) {
-      postedAt = new Date(rawAt).toISOString();
-    }
-    const rawWelcome = json['welcomeHasMedia'];
-    const welcomeHasMedia = typeof rawWelcome === 'boolean' ? rawWelcome : null;
-    const rawWelcomeId = json['welcomeMessageId'];
-    const welcomeMessageId =
-      typeof rawWelcomeId === 'string' && MESSAGE_ID_RE.test(rawWelcomeId) ? rawWelcomeId : null;
-    return { hasPosted: has, hasMedia, messageId, postedAt, welcomeHasMedia, welcomeMessageId };
+  async importRosterDocument(body: RosterImportBody): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/document", {
+      comment: body.comment,
+      paymentsEnabled: body.paymentsEnabled,
+      moderatorPaymentsEnabled: body.moderatorPaymentsEnabled,
+      recipients: body.recipients,
+      moderators: body.moderators,
+    });
   }
 
   /**
-   * Whether 21.gifts reports this Lightning Address as funding-eligible today.
+   * Set the file-level payment comment.
    *
-   * @param address - LUD-16 address.
-   * @returns `true` when the address is eligible.
+   * @param comment - New comment (API validates).
+   * @returns The full stored document.
    */
-  async isFundingEligible(address: string): Promise<boolean> {
-    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const eligible = json['eligible'];
-    if (typeof eligible !== 'boolean') {
-      throw new GiftsApiError(0, 'malformed eligible response');
-    }
-    return eligible;
+  async setRosterComment(comment: string): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/comment", { comment });
   }
 
   /**
-   * Funding-grant status 21.gifts reports for this Lightning Address.
+   * Set the daily-payments switch.
    *
-   * @param address - LUD-16 address.
-   * @returns Grant `status` from `GET /invoices/eligible`.
+   * @param enabled - New switch value (API validates).
+   * @returns The full stored document.
    */
-  async fundingGrantStatus(address: string): Promise<FundingGrantStatus> {
-    const path = `/invoices/eligible?address=${encodeURIComponent(address)}`;
-    const json = await this.getJson(path);
-    const status = json['status'];
-    if (
-      status !== 'none' &&
-      status !== 'pending' &&
-      status !== 'trial' &&
-      status !== 'admitted' &&
-      status !== 'rejected'
-    ) {
-      throw new GiftsApiError(0, 'malformed eligible status');
-    }
-    return status;
+  async setRosterPayments(enabled: boolean): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/payments", {
+      enabled,
+    });
+  }
+
+  /**
+   * Add a daily recipient.
+   *
+   * @param address - Lightning Address.
+   * @param amountUsd - USD amount.
+   * @returns The full stored document.
+   */
+  async addRosterRecipient(
+    address: string,
+    amountUsd: number,
+  ): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/recipients", {
+      address,
+      amountUsd,
+    });
+  }
+
+  /**
+   * Update a daily recipient amount.
+   *
+   * @param address - Lightning Address.
+   * @param amountUsd - USD amount.
+   * @returns The full stored document.
+   */
+  async updateRosterRecipient(
+    address: string,
+    amountUsd: number,
+  ): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/recipients/update", {
+      address,
+      amountUsd,
+    });
+  }
+
+  /**
+   * Delete a daily recipient.
+   *
+   * @param address - Lightning Address.
+   * @returns The full stored document.
+   */
+  async deleteRosterRecipient(address: string): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/recipients/delete", {
+      address,
+    });
+  }
+
+  /**
+   * Add a moderator.
+   *
+   * @param address - Lightning Address.
+   * @param amountUsd - USD amount.
+   * @returns The full stored document.
+   */
+  async addRosterModerator(
+    address: string,
+    amountUsd: number,
+  ): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/moderators", {
+      address,
+      amountUsd,
+    });
+  }
+
+  /**
+   * Update a moderator amount.
+   *
+   * @param address - Lightning Address.
+   * @param amountUsd - USD amount.
+   * @returns The full stored document.
+   */
+  async updateRosterModerator(
+    address: string,
+    amountUsd: number,
+  ): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/moderators/update", {
+      address,
+      amountUsd,
+    });
+  }
+
+  /**
+   * Delete a moderator.
+   *
+   * @param address - Lightning Address.
+   * @returns The full stored document.
+   */
+  async deleteRosterModerator(address: string): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/moderators/delete", {
+      address,
+    });
+  }
+
+  /**
+   * Set the moderator-payments switch.
+   *
+   * @param enabled - New switch value (API validates).
+   * @returns The full stored document.
+   */
+  async setRosterModeratorPayments(enabled: boolean): Promise<RosterDocument> {
+    return this.postRoster("/funding/daily-roster/worker/moderators/payments", {
+      enabled,
+    });
   }
 
   /**
@@ -168,17 +371,22 @@ export class GiftsApi {
     if (groupMessageId !== undefined) {
       body.groupMessageId = groupMessageId;
     }
-    const json = await this.postJson('/invoices', body);
-    const id = json['id'];
-    const pr = json['pr'];
-    const paymentHash = json['paymentHash'];
-    const amt = json['amountMsat'];
-    if (typeof id !== 'string' || typeof pr !== 'string' || typeof paymentHash !== 'string' || typeof amt !== 'number') {
-      throw new GiftsApiError(0, 'malformed invoice response');
+    const json = await this.postJson("/invoices", body);
+    const id = json["id"];
+    const pr = json["pr"];
+    const paymentHash = json["paymentHash"];
+    const amt = json["amountMsat"];
+    if (
+      typeof id !== "string" ||
+      typeof pr !== "string" ||
+      typeof paymentHash !== "string" ||
+      typeof amt !== "number"
+    ) {
+      throw new GiftsApiError(0, "malformed invoice response");
     }
     const hash = paymentHash.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(hash)) {
-      throw new GiftsApiError(0, 'malformed paymentHash');
+      throw new GiftsApiError(0, "malformed paymentHash");
     }
     return { id, pr, paymentHash: hash, amountMsat: amt };
   }
@@ -190,19 +398,25 @@ export class GiftsApi {
    * @param preimage - 32-byte preimage hex.
    */
   async submitProof(id: string, preimage: string): Promise<void> {
-    await this.postJson('/invoices/proof', { id, preimage });
+    await this.postJson("/invoices/proof", { id, preimage });
   }
 
-  private async getJson(path: string): Promise<Record<string, unknown>> {
-    return this.requestJson(path, { method: 'GET' });
-  }
-
-  private async postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
+  private async postJson(
+    path: string,
+    body: unknown,
+  ): Promise<Record<string, unknown>> {
     return this.requestJson(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+  }
+
+  private async postRoster(
+    path: string,
+    body: unknown,
+  ): Promise<RosterDocument> {
+    return parseRosterDocument(await this.postJson(path, body));
   }
 
   private async requestJson(
@@ -220,7 +434,7 @@ export class GiftsApi {
         ...(init.body !== undefined ? { body: init.body } : {}),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'network error';
+      const message = err instanceof Error ? err.message : "network error";
       throw new GiftsApiError(0, message);
     }
     let json: unknown = {};
@@ -229,9 +443,15 @@ export class GiftsApi {
     } catch {
       json = {};
     }
-    const record = json !== null && typeof json === 'object' ? (json as Record<string, unknown>) : {};
+    const record =
+      json !== null && typeof json === "object"
+        ? (json as Record<string, unknown>)
+        : {};
     if (!response.ok) {
-      const error = typeof record['error'] === 'string' ? record['error'] : `HTTP ${response.status}`;
+      const error =
+        typeof record["error"] === "string"
+          ? record["error"]
+          : `HTTP ${response.status}`;
       throw new GiftsApiError(response.status, error);
     }
     return record;
