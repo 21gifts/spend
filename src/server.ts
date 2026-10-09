@@ -136,21 +136,6 @@ async function readForm(req: Request): Promise<URLSearchParams> {
   return new URLSearchParams(text);
 }
 
-function parseAmountUsd(raw: string | null): number | null {
-  if (raw === null) {
-    return null;
-  }
-  const trimmed = raw.trim();
-  if (trimmed === "") {
-    return null;
-  }
-  const value = Number(trimmed);
-  if (!Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-  return value;
-}
-
 /**
  * Explicit ping amount. A present `amountUsd` key requires a finite number
  * greater than 0 and a comment string of length at most 500, paid as-is.
@@ -181,8 +166,6 @@ function parsePingInstruction(
   }
   return { status: "ok", amountUsd, comment };
 }
-
-type RosterAction = "add" | "update" | "delete";
 
 type DailyRosterJson = {
   comment: string;
@@ -270,52 +253,11 @@ function rosterStopHtml(stop: RosterStop): Response {
   return new Response(stop.error, { status: stop.status });
 }
 
-/**
- * Editor panel payload for the combined page.
- *
- * @param comment - File-level payment comment (daily roster is JSON API).
- * @param recipients - Daily roster (not rendered on the dashboard).
- * @param moderators - Moderator roster.
- * @param paymentsEnabled - Daily-payments switch (not rendered on the dashboard).
- * @param moderatorPaymentsEnabled - Moderator-payments switch.
- * @param error - Optional error shown above the Moderators heading.
- * @returns `SpendPanel` editor variant.
- */
-function editorPanel(
-  comment: string,
-  recipients: Recipient[],
-  moderators: Recipient[],
-  paymentsEnabled: boolean,
-  moderatorPaymentsEnabled: boolean,
-  error?: string,
-): SpendPanel {
-  return error === undefined
-    ? {
-        kind: "editor",
-        comment,
-        recipients,
-        moderators,
-        paymentsEnabled,
-        moderatorPaymentsEnabled,
-      }
-    : {
-        kind: "editor",
-        comment,
-        recipients,
-        moderators,
-        paymentsEnabled,
-        moderatorPaymentsEnabled,
-        error,
-      };
-}
-
-const ROSTER_MUTATION = /^\/moderators\/(add|update|delete)$/;
-const PAYMENTS_SWITCH = /^\/moderators\/payments$/;
 const DAILY_ROSTER_POST =
   /^\/daily-roster\/(comment|payments|recipients|recipients\/update|recipients\/delete)$/;
 
 /**
- * HTTP app for the dashboard, moderator editor, daily-roster JSON API, health probe, operator debug, and ping-triggered payouts.
+ * HTTP app for the dashboard, daily-roster JSON API, health probe, operator debug, and ping-triggered payouts.
  *
  * @param opts - Env, fetch, clock, and optional `retryCatchupMs` (overrides `RETRY_CATCHUP_MS`).
  * @returns Fetch handler, no-op midnight scheduler and boot catch-up, retry catch-up for owed `insufficient_balance` addresses when live and the interval is enabled, payout runner, and payout drain.
@@ -489,16 +431,6 @@ export function createServer(opts: {
       return rosterStop(err);
     }
   };
-
-  const editorFrom = (doc: RosterDocument, error?: string): SpendPanel =>
-    editorPanel(
-      doc.comment,
-      doc.recipients,
-      doc.moderators,
-      doc.paymentsEnabled,
-      doc.moderatorPaymentsEnabled,
-      error,
-    );
 
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -830,7 +762,7 @@ export function createServer(opts: {
         if (!imported.ok) {
           return rosterStopHtml(imported);
         }
-        return combinedPage(editorFrom(imported.doc));
+        return combinedPage({ kind: "editor" });
       }
       return combinedPage({ kind: "login" });
     }
@@ -877,79 +809,6 @@ export function createServer(opts: {
         return unconfiguredPage();
       }
       return redirect("/");
-    }
-
-    const rosterMatch = ROSTER_MUTATION.exec(url.pathname);
-    const paymentsMatch = PAYMENTS_SWITCH.exec(url.pathname);
-    if (
-      req.method === "POST" &&
-      (rosterMatch !== null || paymentsMatch !== null)
-    ) {
-      if (config.dashboardPassword === null) {
-        return unconfiguredPage();
-      }
-      if (!requireSession(req)) {
-        return redirect("/");
-      }
-      if (!requireSameOrigin(req)) {
-        return new Response("Forbidden", { status: 403 });
-      }
-      const form = await readForm(req);
-      return recipientsGate.run(async () => {
-        const loadedLive = loadOrError();
-        if (!loadedLive.ok) {
-          return loadedLive.response;
-        }
-        const imported = await importDocument(loadedLive);
-        if (!imported.ok) {
-          return rosterStopHtml(imported);
-        }
-        const doc = imported.doc;
-
-        if (paymentsMatch !== null) {
-          const enabledRaw = form.get("enabled");
-          if (enabledRaw !== "on" && enabledRaw !== "off") {
-            return combinedPage(editorFrom(doc, "Invalid payments switch"));
-          }
-          const result = await callWorker(() =>
-            gifts.setRosterModeratorPayments(enabledRaw === "on"),
-          );
-          if (!result.ok) {
-            if (result.status === 400) {
-              return combinedPage(editorFrom(doc, result.error));
-            }
-            return rosterStopHtml(result);
-          }
-          return redirect("/");
-        }
-
-        if (rosterMatch === null) {
-          return new Response("Not found", { status: 404 });
-        }
-        const actionRaw = rosterMatch[1];
-        const action: RosterAction =
-          actionRaw === "update"
-            ? "update"
-            : actionRaw === "delete"
-              ? "delete"
-              : "add";
-        const address = form.get("address") ?? "";
-        const amountUsd = parseAmountUsd(form.get("amountUsd")) ?? 0;
-        const run =
-          action === "update"
-            ? () => gifts.updateRosterModerator(address, amountUsd)
-            : action === "delete"
-              ? () => gifts.deleteRosterModerator(address)
-              : () => gifts.addRosterModerator(address, amountUsd);
-        const result = await callWorker(run);
-        if (!result.ok) {
-          if (result.status === 400) {
-            return combinedPage(editorFrom(doc, result.error));
-          }
-          return rosterStopHtml(result);
-        }
-        return redirect("/");
-      });
     }
 
     return new Response("Not found", { status: 404 });
