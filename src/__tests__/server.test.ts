@@ -2354,6 +2354,50 @@ describe("createServer", () => {
     }
   });
 
+  it("POST /ping kind welcome with day yesterday queues runDay for the clock day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            kind: "welcome",
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          day: "2026-08-25",
+          bucket: "welcome",
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("POST /ping kind moderator is 202 and queues the instructed amountUsd without messageIdByAddress", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

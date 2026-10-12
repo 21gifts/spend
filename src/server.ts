@@ -721,16 +721,15 @@ export function createServer(opts: {
         );
       };
       const clock = opts.now ?? (() => new Date());
-      const pingDay = parsePingDay(
-        body as object,
-        clock().toISOString().slice(0, 10),
-      );
+      const clockDay = clock().toISOString().slice(0, 10);
+      const pingDay = parsePingDay(body as object, clockDay);
       if (pingDay.status === "invalid") {
         return json(400, {
           error: "Expected day to be a UTC date not after today",
         });
       }
-      const day = pingDay.day;
+      // Welcome stays on welcome.jsonl. The named day must not move its lock or retry.
+      const day = kind === "welcome" ? clockDay : pingDay.day;
       let storedAddress = parsed;
       let rows;
       try {

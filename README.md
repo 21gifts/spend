@@ -72,7 +72,7 @@ Amount and comment are the instructed pair. Same in-process payout gate as daily
 
 ### Welcome
 
-Body: JSON `{ "address": string, "kind": "welcome", "messageId": string, "amountUsd": number, "comment": string }`. `messageId` is a required UUID (same 400 as daily): missing or invalid → `400` `{ "error": "Expected a JSON body with address and messageId" }`. A stray `groupMessageId` is ignored.
+Body: JSON `{ "address": string, "kind": "welcome", "messageId": string, "amountUsd": number, "comment": string }`. `messageId` is a required UUID (same 400 as daily): missing or invalid → `400` `{ "error": "Expected a JSON body with address and messageId" }`. A stray `groupMessageId` is ignored. An invalid `day` is the same 400 as daily. A real `day` does not move welcome: the ledger stays `welcome.jsonl`, and the payout lock and retry stay on the clock UTC day.
 
 Match `welcome.jsonl` case-insensitively; the first persisted address is the payout key, otherwise the parsed address. Own-address `paid` / persisted `failed` / own-address `uncertain` in `welcome.jsonl` skip with that reason; daily and moderator files do not skip a welcome ping. A `*halt*` row or another address's `uncertain` in `welcome.jsonl` does not skip this ping. `paymentsEnabled` is not read. Amount and comment are the instructed pair. Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning.
 
