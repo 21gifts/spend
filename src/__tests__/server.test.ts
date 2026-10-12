@@ -1968,6 +1968,538 @@ describe("createServer", () => {
     warn.mockRestore();
   });
 
+  it("POST /ping with day yesterday is 202 and queues runDay for that day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comment: PING_COMMENT,
+          recipients: [
+            {
+              address: "alice@walletofsatoshi.com",
+              amountUsd: 1,
+              comment: PING_COMMENT,
+            },
+          ],
+        }),
+        expect.objectContaining({
+          live: true,
+          day: "2026-08-24",
+          onlyAddresses: ["alice@walletofsatoshi.com"],
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("POST /ping with day equal to the clock UTC day is 202 and queues runDay for that day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-25",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comment: PING_COMMENT,
+          recipients: [
+            {
+              address: "alice@walletofsatoshi.com",
+              amountUsd: 1,
+              comment: PING_COMMENT,
+            },
+          ],
+        }),
+        expect.objectContaining({
+          live: true,
+          day: "2026-08-25",
+          onlyAddresses: ["alice@walletofsatoshi.com"],
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("POST /ping with day yesterday is 202 when today JSONL already has a paid row and does not change today", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-day-yesterday-paid-today-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    const todayPath = join(dir, "2026-08-25.jsonl");
+    writeFileSync(
+      todayPath,
+      `${JSON.stringify({
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
+      })}\n`,
+    );
+    const todayBefore = readFileSync(todayPath);
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: "true" },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: withRosterApi(),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ day: "2026-08-24" }),
+      );
+      await app.drainPayouts();
+      expect(readFileSync(todayPath)).toEqual(todayBefore);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping with day yesterday is 200 skipped paid when that day's JSONL already has a paid row", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-ping-day-yesterday-paid-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    writeFileSync(
+      join(dir, "2026-08-24.jsonl"),
+      `${JSON.stringify({
+        ts: "t",
+        address: "alice@walletofsatoshi.com",
+        invoiceId: "1",
+        paymentHash: "",
+        status: "paid",
+      })}\n`,
+    );
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: withRosterApi(),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
+      expect(runDay).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, "2026-08-25.jsonl"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /ping is 400 when day is after the clock UTC day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: "2026-08-26",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it("POST /ping is 400 when day is not a real calendar date", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: "2026-02-31",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it("POST /ping is 400 when day is empty", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: "",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it("POST /ping is 400 when day is null", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: null,
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it("POST /ping kind moderator with day yesterday is 202 and queues runDay for that day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "bob@walletofsatoshi.com",
+            kind: "moderator",
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          day: "2026-08-24",
+          bucket: "moderator",
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("POST /ping kind welcome with day yesterday queues runDay for the clock day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            kind: "welcome",
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "2026-08-24",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          day: "2026-08-25",
+          bucket: "welcome",
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("POST /ping with day year 0099 is 202 and queues that day", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    try {
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address: "alice@walletofsatoshi.com",
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 1,
+            comment: PING_COMMENT,
+            day: "0099-01-01",
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await vi.waitFor(() => {
+        expect(runDay).toHaveBeenCalled();
+      });
+      expect(runDay).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          day: "0099-01-01",
+        }),
+      );
+      await app.drainPayouts();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("POST /ping is 400 when day year is 0000", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: "0000-01-01",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
+  it("POST /ping is 400 when a year before 100 is not a real calendar date", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = createServer({
+      env,
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+          day: "0099-02-31",
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Expected day to be a UTC date not after today",
+    });
+    expect(runDay).not.toHaveBeenCalled();
+  });
+
   it("POST /ping kind moderator is 202 and queues the instructed amountUsd without messageIdByAddress", async () => {
     const runDay = vi.fn(async () => ({ exitCode: 0 }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
