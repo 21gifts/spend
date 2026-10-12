@@ -52,8 +52,10 @@ Ping does not choose the amount, choose the comment, read the live roster to dec
 
 Body: JSON `{ "address": string, "messageId": string, "amountUsd": number, "comment": string }` (`kind` may be omitted or `"daily"`). Missing or invalid `messageId` (must be a UUID) → `400` `{ "error": "Expected a JSON body with address and messageId" }`.
 
-- Today's JSONL already `paid` or persisted `failed` for the pinged address → `200` skipped with that reason
-- Today's JSONL already `uncertain` for the pinged address, or `*halt*` is `uncertain` → `200` `{ "status": "skipped", "reason": "uncertain" }`. Another address's `uncertain` row does not skip this ping.
+The body may include `day` (`YYYY-MM-DD`). Absent `day` is the clock UTC day. A present `day` must be a real UTC date on or before that clock day, else 400 `Expected day to be a UTC date not after today`. Skip and payout use that day's file, so a payout for an earlier day does not read or write the clock day's daily file.
+
+- The selected day's JSONL already `paid` or persisted `failed` for the pinged address → `200` skipped with that reason
+- The selected day's JSONL already `uncertain` for the pinged address, or `*halt*` is `uncertain` → `200` `{ "status": "skipped", "reason": "uncertain" }`. Another address's `uncertain` row does not skip this ping.
 - Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning; queues a single-recipient payout of that `amountUsd` and `comment`. `SPEND_LIVE` still controls live vs dry-run.
 
 Payout is still `POST /invoices` (BOLT11) plus proof. Spend forwards `messageId` on that invoice create so the api can show the gift as a reply under the post. Daily state is `STATE_DIR/YYYY-MM-DD.jsonl` and `YYYY-MM-DD.finished`.
@@ -62,7 +64,7 @@ A run skips with `welcome_paid` and writes no JSONL row when `POST /invoices` re
 
 ### Moderator
 
-Body: JSON `{ "address": string, "kind": "moderator", "amountUsd": number, "comment": string, "groupMessageId"?: string }`. Do not send `messageId` — any `messageId` with this kind → `400` `{ "error": "Expected a JSON body with address and kind" }`. `groupMessageId` (optional UUID) is the Moderators-group message that triggered the ping; spend forwards it on `POST /invoices` so the api can show the paid stipend in the group. A malformed `groupMessageId` is a `400`.
+Body: JSON `{ "address": string, "kind": "moderator", "amountUsd": number, "comment": string, "groupMessageId"?: string }`. Do not send `messageId` — any `messageId` with this kind → `400` `{ "error": "Expected a JSON body with address and kind" }`. `groupMessageId` (optional UUID) is the Moderators-group message that triggered the ping; spend forwards it on `POST /invoices` so the api can show the paid stipend in the group. A malformed `groupMessageId` is a `400`. The body may include `day`, with the same rule as daily. Skip and payout use that day's moderator file.
 
 State is a separate JSONL: `STATE_DIR/YYYY-MM-DD.moderator.jsonl` and `YYYY-MM-DD.moderator.finished`. Match the moderator JSONL case-insensitively; the first persisted address is the payout key, otherwise the parsed address. Once per UTC day per address on that file (`paid`, persisted `failed`, or own-address `uncertain` → `200` skipped with that reason). A `*halt*` row or another address's `uncertain` in the moderator JSONL does not skip this ping (the daily file still never skips a moderator ping). The moderator file does not skip a daily ping. `moderatorPaymentsEnabled` is not read.
 
@@ -70,7 +72,7 @@ Amount and comment are the instructed pair. Same in-process payout gate as daily
 
 ### Welcome
 
-Body: JSON `{ "address": string, "kind": "welcome", "messageId": string, "amountUsd": number, "comment": string }`. `messageId` is a required UUID (same 400 as daily): missing or invalid → `400` `{ "error": "Expected a JSON body with address and messageId" }`. A stray `groupMessageId` is ignored.
+Body: JSON `{ "address": string, "kind": "welcome", "messageId": string, "amountUsd": number, "comment": string }`. `messageId` is a required UUID (same 400 as daily): missing or invalid → `400` `{ "error": "Expected a JSON body with address and messageId" }`. A stray `groupMessageId` is ignored. An invalid `day` is the same 400 as daily. A real `day` does not move welcome: the ledger stays `welcome.jsonl`, and the payout lock and retry stay on the clock UTC day.
 
 Match `welcome.jsonl` case-insensitively; the first persisted address is the payout key, otherwise the parsed address. Own-address `paid` / persisted `failed` / own-address `uncertain` in `welcome.jsonl` skip with that reason; daily and moderator files do not skip a welcome ping. A `*halt*` row or another address's `uncertain` in `welcome.jsonl` does not skip this ping. `paymentsEnabled` is not read. Amount and comment are the instructed pair. Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning.
 
