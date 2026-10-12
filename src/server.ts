@@ -182,6 +182,45 @@ function parsePingInstruction(
   return { status: "ok", amountUsd, comment };
 }
 
+/**
+ * Optional ping calendar day. Absent or undefined `day` is the clock UTC
+ * day. A present value must be a real `YYYY-MM-DD` UTC date on or before
+ * that clock day.
+ *
+ * @param body - Parsed JSON object.
+ * @param clockDay - Clock UTC day as `YYYY-MM-DD`.
+ * @returns Clock day when the key is absent; invalid when the date is unusable.
+ */
+function parsePingDay(
+  body: object,
+  clockDay: string,
+): { status: "ok"; day: string } | { status: "invalid" } {
+  const value = (body as { day?: unknown }).day;
+  if (value === undefined) {
+    return { status: "ok", day: clockDay };
+  }
+  if (typeof value !== "string") {
+    return { status: "invalid" };
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) {
+    return { status: "invalid" };
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (
+    new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10) !==
+    value
+  ) {
+    return { status: "invalid" };
+  }
+  if (value > clockDay) {
+    return { status: "invalid" };
+  }
+  return { status: "ok", day: value };
+}
+
 type RosterAction = "add" | "update" | "delete";
 
 type DailyRosterJson = {
@@ -682,7 +721,16 @@ export function createServer(opts: {
         );
       };
       const clock = opts.now ?? (() => new Date());
-      const day = clock().toISOString().slice(0, 10);
+      const pingDay = parsePingDay(
+        body as object,
+        clock().toISOString().slice(0, 10),
+      );
+      if (pingDay.status === "invalid") {
+        return json(400, {
+          error: "Expected day to be a UTC date not after today",
+        });
+      }
+      const day = pingDay.day;
       let storedAddress = parsed;
       let rows;
       try {

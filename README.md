@@ -52,6 +52,8 @@ Ping does not choose the amount, choose the comment, read the live roster to dec
 
 Body: JSON `{ "address": string, "messageId": string, "amountUsd": number, "comment": string }` (`kind` may be omitted or `"daily"`). Missing or invalid `messageId` (must be a UUID) → `400` `{ "error": "Expected a JSON body with address and messageId" }`.
 
+The body may include `day` (`YYYY-MM-DD`). Absent `day` is the clock UTC day. A present `day` must be a real UTC date on or before that clock day, else 400 `Expected day to be a UTC date not after today`. Skip and payout use that day's file, so a payout for an earlier day does not read or write the clock day's daily file.
+
 - Today's JSONL already `paid` or persisted `failed` for the pinged address → `200` skipped with that reason
 - Today's JSONL already `uncertain` for the pinged address, or `*halt*` is `uncertain` → `200` `{ "status": "skipped", "reason": "uncertain" }`. Another address's `uncertain` row does not skip this ping.
 - Otherwise `202` `{ "status": "accepted" }` without waiting for Lightning; queues a single-recipient payout of that `amountUsd` and `comment`. `SPEND_LIVE` still controls live vs dry-run.
