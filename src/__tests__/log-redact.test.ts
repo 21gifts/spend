@@ -37,8 +37,24 @@ describe('redactAddresses', () => {
     expect(redactAddresses('alice@example.com and bob@x.com')).toBe('[address] and [address]');
   });
 
-  it('replaces an address inside a quoted JSON-ish string', () => {
-    expect(redactAddresses('{"error":"pay alice@example.com"}')).toBe('{"error":"pay [address]"}');
+  it('replaces the whole token containing the address in a quoted JSON-ish string', () => {
+    const result = redactAddresses('{"error":"pay alice@example.com"}');
+    expect(result).toBe('{"error":"pay [address]');
+    expect(result).not.toContain('@');
+    expect(result).not.toContain('alice');
+    expect(result).not.toContain('example.com');
+  });
+
+  it('replaces a whole token that contains an apostrophe and @', () => {
+    expect(redactAddresses("failed for o'reilly@example.com today")).toBe('failed for [address] today');
+  });
+
+  it('replaces a whole token that contains a quote and @', () => {
+    expect(redactAddresses('x foo"@bar.com y')).toBe('x [address] y');
+  });
+
+  it('replaces a whole token that contains more than one @', () => {
+    expect(redactAddresses('x a@b@c.com y')).toBe('x [address] y');
   });
 
   it('leaves text without @ unchanged', () => {

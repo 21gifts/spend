@@ -12,13 +12,13 @@ export function addressRef(address: string, key: string): string {
 }
 
 /**
- * Replace every email-shaped substring with `[address]`.
+ * Replace every whitespace-delimited token that contains `@` with `[address]`.
  *
  * @param text - Free-text that may embed a Lightning address.
- * @returns Text with those substrings replaced.
+ * @returns Text with those tokens replaced.
  */
 export function redactAddresses(text: string): string {
-  return text.replace(/[^\s"'@]+@[^\s"'@]+/g, '[address]');
+  return text.replace(/\S*@\S*/g, '[address]');
 }
 
 /**
