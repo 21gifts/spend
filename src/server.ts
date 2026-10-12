@@ -209,10 +209,13 @@ function parsePingDay(
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (
-    new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10) !==
-    value
-  ) {
+  // Date.UTC maps years 0-99 onto 1900-1999. setUTCFullYear keeps the year.
+  if (year < 1) {
+    return { status: "invalid" };
+  }
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month - 1, day);
+  if (probe.toISOString().slice(0, 10) !== value) {
     return { status: "invalid" };
   }
   if (value > clockDay) {
