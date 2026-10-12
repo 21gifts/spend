@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { isUtcMidnightWindow, main, parseArgs } from "../cli";
+import { addressRef } from "../log-redact";
 import { withRosterApi } from "./roster-api-mock";
 
 const PREIMAGE = "11".repeat(32);
@@ -323,9 +324,13 @@ describe("main live recipients", () => {
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
       ts: "2026-08-25T12:00:00.000Z",
       event: "spend.skip",
-      address: "a@b.com",
+      addressRef: addressRef("a@b.com", "tok"),
       reason: "payments_disabled",
     });
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("a@b.com");
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).not.toHaveProperty(
+      "address",
+    );
     expect(
       fetchImpl.mock.calls.some((call) => isDailyInstruction(String(call[0]))),
     ).toBe(true);

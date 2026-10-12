@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { SpendConfig } from '../config';
 import { GiftsApi } from '../gifts-api';
 import { LndhubClient, parseLndhubUri } from '../lndhub';
+import { addressRef } from '../log-redact';
 import { runDay } from '../run';
 import { DayState } from '../state';
 
@@ -261,6 +262,48 @@ describe('runDay', () => {
     });
     expect(proofBody).toEqual({ id: 'id1', preimage: PREIMAGE });
     expect(state.isFinished()).toBe(true);
+  });
+
+  it('live paid logs use addressRef and do not contain an address', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async (url) => {
+        if (url.endsWith('/proof')) {
+          return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
+    );
+    const lines = warn.mock.calls.map((args) => String(args[0] ?? ''));
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(lines.every((line) => !line.includes('@'))).toBe(true);
+    const paid = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.event === 'spend.paid');
+    expect(paid?.addressRef).toBe(addressRef('a@b.com', config.giftsApiToken));
+    expect(paid).not.toHaveProperty('address');
   });
 
   it('invoices only onlyAddresses and does not skip-log other roster members', async () => {

@@ -10,6 +10,7 @@ import {
 } from "./gifts-api";
 import { parseLightningAddress } from "./lightning-address";
 import { LndhubClient, parseLndhubUri } from "./lndhub";
+import { addressRef, redactAddresses } from "./log-redact";
 import { createPayoutGate } from "./payout-gate";
 import { fetchBtcUsdSpot } from "./price";
 import {
@@ -716,7 +717,7 @@ export function createServer(opts: {
           JSON.stringify({
             ts: new Date().toISOString(),
             event: "spend.ping",
-            address: parsed,
+            addressRef: addressRef(parsed, config.giftsApiToken),
             status,
             ...(reason !== undefined ? { reason } : {}),
             ...(kind === "daily" ? {} : { kind }),
@@ -791,9 +792,9 @@ export function createServer(opts: {
           JSON.stringify({
             ts: new Date().toISOString(),
             event: "spend.ping",
-            address: storedAddress,
+            addressRef: addressRef(storedAddress, config.giftsApiToken),
             status: "error",
-            error,
+            error: redactAddresses(error),
             ...(kind === "daily" ? {} : { kind }),
           }),
         );
@@ -1134,7 +1135,7 @@ export function createServer(opts: {
               JSON.stringify({
                 ts: new Date().toISOString(),
                 event: "spend.retry.enqueue",
-                error,
+                error: redactAddresses(error),
               }),
             );
           }
@@ -1185,7 +1186,7 @@ export function createServer(opts: {
           JSON.stringify({
             ts: new Date().toISOString(),
             event: "spend.retry",
-            error,
+            error: redactAddresses(error),
           }),
         );
       } finally {
@@ -1308,7 +1309,7 @@ export function createServer(opts: {
           JSON.stringify({
             ts: new Date().toISOString(),
             event: "spend.retry",
-            error,
+            error: redactAddresses(error),
           }),
         );
       }
@@ -1378,7 +1379,9 @@ if (meta.main === true) {
     );
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : "boot";
-    console.error(JSON.stringify({ event: "spend.config", error }));
+    console.error(
+      JSON.stringify({ event: "spend.config", error: redactAddresses(error) }),
+    );
     process.exit(2);
   }
 }
