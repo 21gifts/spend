@@ -794,7 +794,7 @@ export function createServer(opts: {
             event: "spend.ping",
             addressRef: addressRef(storedAddress, config.giftsApiToken),
             status: "error",
-            error: redactAddresses(error),
+            error: redactAddresses(error, [storedAddress]),
             ...(kind === "daily" ? {} : { kind }),
           }),
         );
@@ -1135,7 +1135,7 @@ export function createServer(opts: {
               JSON.stringify({
                 ts: new Date().toISOString(),
                 event: "spend.retry.enqueue",
-                error: redactAddresses(error),
+                error: redactAddresses(error, [address]),
               }),
             );
           }
@@ -1309,7 +1309,7 @@ export function createServer(opts: {
           JSON.stringify({
             ts: new Date().toISOString(),
             event: "spend.retry",
-            error: redactAddresses(error),
+            error: redactAddresses(error, [row.address]),
           }),
         );
       }

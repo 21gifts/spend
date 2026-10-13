@@ -12,13 +12,23 @@ export function addressRef(address: string, key: string): string {
 }
 
 /**
- * Replace every whitespace-delimited token that contains `@` with `[address]`.
+ * Remove Lightning addresses from free text.
+ * Each known address is replaced exactly (any letter case) with `[address]`.
+ * If the text still contains `@` afterwards, the whole text becomes `[address]`,
+ * because an address may contain whitespace and its extent is then unknown.
  *
  * @param text - Free-text that may embed a Lightning address.
- * @returns Text with those tokens replaced.
+ * @param known - Addresses whose exact spelling is replaced first (any letter case).
+ * @returns Text with those addresses replaced.
  */
-export function redactAddresses(text: string): string {
-  return text.replace(/\S*@\S*/g, '[address]');
+export function redactAddresses(text: string, known: readonly string[] = []): string {
+  let out = text;
+  for (const needle of [...known].sort((a, b) => b.length - a.length)) {
+    if (needle !== '') {
+      out = out.replace(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[address]');
+    }
+  }
+  return out.includes('@') ? '[address]' : out;
 }
 
 /**

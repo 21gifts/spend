@@ -1068,6 +1068,107 @@ describe("main daily instruction", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("exits 2 with spend.config and redacts an address in an import 400", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-import-400-address-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      async (url) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({ error: "Unknown address alice @ example.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+    expect(code).toBe(2);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(line).not.toContain("alice");
+    expect(line).not.toContain("example.com");
+    expect(line).not.toContain("@");
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts an address in an instruction 400", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-400-address-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      withRosterApi(async (url) => {
+        if (isDailyInstruction(String(url))) {
+          return new Response(
+            JSON.stringify({ error: "Unknown address alice @ example.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    expect(code).toBe(2);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(line).not.toContain("alice");
+    expect(line).not.toContain("example.com");
+    expect(line).not.toContain("@");
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts a duplicate recipient address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-dup-address-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [
+          { address: "alice smith@x.com", amountUsd: 1 },
+          { address: "alice smith@x.com", amountUsd: 2 },
+        ],
+      })}\n`,
+    );
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+    );
+    expect(code).toBe(2);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(line).not.toContain("alice");
+    expect(line).not.toContain("smith");
+    expect(line).not.toContain("x.com");
+    expect(line).not.toContain("@");
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("exits 3 with instruction_unreachable on a malformed import document", async () => {
     const dir = mkdtempSync(join(tmpdir(), "spend-cli-import-malformed-"));
     const seed = seedRecipients(dir);
