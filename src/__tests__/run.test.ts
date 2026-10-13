@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { SpendConfig } from '../config';
 import { GiftsApi } from '../gifts-api';
 import { LndhubClient, parseLndhubUri } from '../lndhub';
@@ -109,6 +109,10 @@ const heldLock = {
   tryAcquire: () => false,
   release: () => undefined,
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('runDay', () => {
   it('dry-run invoice errors do not persist uncertain for a later live run', async () => {
@@ -291,21 +295,59 @@ describe('runDay', () => {
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await runDay(
-      { ...config, recipients: [config.recipients[0]!] },
+      { ...config, recipients: [{ ...config.recipients[0]!, address: 'Private-User@Private-Domain.invalid' }] },
       { live: true, day: '2026-08-23' },
       { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
     );
-    const lines = warn.mock.calls.map((args) => String(args[0] ?? ''));
-    const logged = JSON.stringify(warn.mock.calls);
+    for (const args of warn.mock.calls) {
+      expect(args).toHaveLength(1);
+    }
+    const lines = warn.mock.calls.map((args) => String(args[0]));
+    const logged = JSON.stringify(warn.mock.calls).toLowerCase();
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
     expect(logged).not.toContain('@');
-    expect(logged).not.toContain('b.com');
+    expect(logged).not.toContain('private-user');
+    expect(logged).not.toContain('private-domain');
     const paid = lines
       .map((line) => JSON.parse(line) as Record<string, unknown>)
       .find((entry) => entry.event === 'spend.paid');
-    expect(paid?.addressRef).toBe(addressRef('a@b.com', config.giftsApiToken));
-    expect(paid).not.toHaveProperty('address');
+    expect(paid?.addressRef).toBe(addressRef('private-user@private-domain.invalid', config.giftsApiToken));
+    expect(Object.keys(paid ?? {}).sort()).toEqual(['addressRef', 'amountSats', 'event', 'invoiceId', 'paymentHash', 'ts']);
+  });
+
+  it('live failed logs redact an error that names only a part of the recipient address', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(
+        async () => new Response(JSON.stringify({ error: 'recipient private-user rejected' }), { status: 400 }),
+      ),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runDay(
+      { ...config, recipients: [{ ...config.recipients[0]!, address: 'Private-User@Private-Domain.invalid' }] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
+    );
+    for (const args of warn.mock.calls) {
+      expect(args).toHaveLength(1);
+    }
+    const lines = warn.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>);
+    const logged = JSON.stringify(warn.mock.calls).toLowerCase();
+    warn.mockRestore();
+    const failed = lines.find((entry) => entry.event === 'spend.failed');
+    expect(failed?.error).toBe('[address]');
+    expect(failed?.addressRef).toBe(addressRef('private-user@private-domain.invalid', config.giftsApiToken));
+    expect(logged).not.toContain('@');
+    expect(logged).not.toContain('private-user');
+    expect(logged).not.toContain('private-domain');
   });
 
   it('invoices only onlyAddresses and does not skip-log other roster members', async () => {

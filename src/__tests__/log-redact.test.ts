@@ -74,6 +74,28 @@ describe('redactAddresses', () => {
     expect(redactAddresses('alice@example.com and bob@x.com', ['alice@example.com'])).toBe('[address]');
   });
 
+  it('replaces the whole text when it names only the part before the @ of a known address', () => {
+    expect(redactAddresses('recipient alice rejected', ['alice@example.com'])).toBe('[address]');
+    expect(redactAddresses('GET /lnurlp/Alice failed', ['alice@example.com'])).toBe('[address]');
+    expect(redactAddresses('no wallet for alice', ['alice @ example.com'])).toBe('[address]');
+    expect(redactAddresses('user alice smith unknown', ['alice smith@x.com'])).toBe('[address]');
+  });
+
+  it('replaces the whole text when it names only the part after the @ of a known address', () => {
+    expect(redactAddresses('lookup at EXAMPLE.com failed', ['alice@example.com'])).toBe('[address]');
+    expect(redactAddresses('pay [address] via example.com', ['alice@example.com'])).toBe('[address]');
+  });
+
+  it('keeps text in which a part of a known address is only a piece of another word', () => {
+    expect(redactAddresses('Unauthorized', ['a@b.com'])).toBe('Unauthorized');
+    expect(redactAddresses('malice suspected', ['alice@example.com'])).toBe('malice suspected');
+    expect(redactAddresses('pay failed for a@b.com', ['a@b.com'])).toBe('pay failed for [address]');
+  });
+
+  it('replaces a known string without @ exactly', () => {
+    expect(redactAddresses('recipient alice rejected', ['alice'])).toBe('recipient [address] rejected');
+  });
+
   it('skips an empty known string', () => {
     expect(redactAddresses('failed for alice@example.com today', [''])).toBe('[address]');
     expect(redactAddresses('no email here', [''])).toBe('no email here');

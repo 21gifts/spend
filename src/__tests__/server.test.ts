@@ -90,6 +90,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("parseBindAddr", () => {
@@ -526,7 +527,10 @@ describe("createServer", () => {
       expect(await res.json()).toEqual({ status: "accepted" });
       await app.drainPayouts();
       const enqueueLogs = warn.mock.calls
-        .map((args) => String(args[0] ?? ""))
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
         .filter((line) => line.includes('"event":"spend.retry.enqueue"'));
       expect(enqueueLogs.length).toBeGreaterThan(0);
       for (const line of enqueueLogs) {
@@ -740,7 +744,10 @@ describe("createServer", () => {
         });
         await app.drainPayouts();
         const retryLogs = warn.mock.calls
-          .map((args) => String(args[0] ?? ""))
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
           .filter((line) => {
             try {
               return (
@@ -793,7 +800,10 @@ describe("createServer", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const retryLogs = (): string[] =>
       warn.mock.calls
-        .map((args) => String(args[0] ?? ""))
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
         .filter((line) => line.includes('"event":"spend.retry"'));
     try {
       const app = createServer({
@@ -2059,7 +2069,10 @@ describe("createServer", () => {
       expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
       const pingLogs = warn.mock.calls
-        .map((args) => String(args[0] ?? ""))
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
         .filter((line) => line.includes('"event":"spend.ping"'));
       expect(pingLogs.length).toBeGreaterThan(0);
       const line = pingLogs[0] ?? "";
@@ -2208,7 +2221,10 @@ describe("createServer", () => {
     );
     await app.drainPayouts();
     const pingLogs = warn.mock.calls
-      .map((args) => String(args[0] ?? ""))
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
       .filter((line) => line.includes('"event":"spend.ping"'));
     expect(pingLogs.length).toBeGreaterThan(0);
     const line = pingLogs[0] ?? "";
@@ -2259,7 +2275,10 @@ describe("createServer", () => {
     });
     await app.drainPayouts();
     const pingLogs = warn.mock.calls
-      .map((args) => String(args[0] ?? ""))
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
       .filter((line) => line.includes('"event":"spend.ping"'));
     expect(pingLogs.length).toBeGreaterThan(0);
     const line = pingLogs[0] ?? "";
@@ -2311,12 +2330,18 @@ describe("createServer", () => {
     await vi.waitFor(() => {
       expect(
         warn.mock.calls
-          .map((args) => String(args[0] ?? ""))
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
           .some((line) => line.includes('"status":"error"')),
       ).toBe(true);
     });
     const pingLogs = warn.mock.calls
-      .map((args) => String(args[0] ?? ""))
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
       .filter((line) => line.includes('"event":"spend.ping"'));
     for (const line of pingLogs) {
       const parsedLog = JSON.parse(line) as Record<string, unknown>;
@@ -2368,12 +2393,18 @@ describe("createServer", () => {
     await vi.waitFor(() => {
       expect(
         warn.mock.calls
-          .map((args) => String(args[0] ?? ""))
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
           .some((line) => line.includes('"status":"error"')),
       ).toBe(true);
     });
     const pingLogs = warn.mock.calls
-      .map((args) => String(args[0] ?? ""))
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
       .filter((line) => line.includes('"event":"spend.ping"'));
     for (const line of pingLogs) {
       const parsedLog = JSON.parse(line) as Record<string, unknown>;

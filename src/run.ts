@@ -1,7 +1,7 @@
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
-import { addressRef, redactLogFields } from './log-redact';
+import { addressRef, redactAddresses, redactLogFields } from './log-redact';
 import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
@@ -466,7 +466,7 @@ async function runDayLocked(
         log('spend.uncertain', {
           addressRef: ref(recipient.address),
           amountSats,
-          error: message,
+          error: redactAddresses(message, [recipient.address]),
         });
         uncertain.push(lineBase);
         if (!options.live) {
@@ -487,7 +487,7 @@ async function runDayLocked(
       log('spend.failed', {
         addressRef: ref(recipient.address),
         amountSats,
-        error: message,
+        error: redactAddresses(message, [recipient.address]),
       });
       failed.push(lineBase);
       if (!options.live) {
@@ -582,7 +582,7 @@ async function runDayLocked(
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
-        error: err instanceof Error ? err.message : 'pay',
+        error: redactAddresses(err instanceof Error ? err.message : 'pay', [recipient.address]),
       });
       uncertain.push(lineBase);
       continue;
@@ -638,7 +638,7 @@ async function runDayLocked(
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
-        error: err instanceof Error ? err.message : 'proof',
+        error: redactAddresses(err instanceof Error ? err.message : 'proof', [recipient.address]),
       });
       uncertain.push(lineBase);
       continue;

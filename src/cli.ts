@@ -184,7 +184,12 @@ export async function main(
         console.error(
           JSON.stringify({
             event: "spend.config",
-            error: redactAddresses(err.message),
+            error: redactAddresses(
+              err.message,
+              [...liveList.recipients, ...liveList.moderators].map(
+                (row) => row.address,
+              ),
+            ),
           }),
         );
         return 2;
@@ -225,7 +230,7 @@ export async function main(
           console.error(
             JSON.stringify({
               event: "spend.config",
-              error: redactAddresses(err.message),
+              error: redactAddresses(err.message, [address]),
             }),
           );
           return 2;
