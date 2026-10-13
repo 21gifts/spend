@@ -1090,6 +1090,9 @@ describe("main daily instruction", () => {
     );
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(logged).not.toContain("@");
+    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",
@@ -1123,6 +1126,9 @@ describe("main daily instruction", () => {
     );
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(logged).not.toContain("@");
+    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",
@@ -1157,6 +1163,9 @@ describe("main daily instruction", () => {
     );
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(logged).not.toContain("@");
+    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",

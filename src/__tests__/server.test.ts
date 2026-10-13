@@ -821,6 +821,7 @@ describe("createServer", () => {
           expect(line).not.toContain("@");
           expect(line).not.toContain("alice");
           expect(line).not.toContain("example.com");
+          expect(line).not.toContain("bob");
         }
         expect(runDay).not.toHaveBeenCalled();
       } finally {
@@ -2070,6 +2071,11 @@ describe("createServer", () => {
       expect(parsedLog).not.toHaveProperty("address");
       expect(line).not.toContain("alice@walletofsatoshi.com");
       expect(line).not.toContain("@");
+      for (const logged of pingLogs) {
+        expect(logged).not.toContain("@");
+        expect(logged.toLowerCase()).not.toContain("alice");
+        expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+      }
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -2214,6 +2220,11 @@ describe("createServer", () => {
     expect(parsedLog).not.toHaveProperty("address");
     expect(line).not.toContain("alice@walletofsatoshi.com");
     expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
     warn.mockRestore();
   });
 
@@ -2261,6 +2272,11 @@ describe("createServer", () => {
     expect(line).not.toContain(mixed);
     expect(line).not.toContain("alice@walletofsatoshi.com");
     expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
     warn.mockRestore();
   });
 
@@ -2310,6 +2326,8 @@ describe("createServer", () => {
       expect(parsedLog).not.toHaveProperty("address");
       expect(line).not.toContain("alice@walletofsatoshi.com");
       expect(line).not.toContain("@");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("walletofsatoshi");
     }
     const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
     expect(errorLine).toBeDefined();

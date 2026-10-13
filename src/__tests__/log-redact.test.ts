@@ -63,7 +63,15 @@ describe('redactAddresses', () => {
 
   it('matches a known address with regex metacharacters literally', () => {
     expect(redactAddresses('pay a.b+c@x.com now', ['a.b+c@x.com'])).toBe('pay [address] now');
-    expect(redactAddresses('pay aXb+c@x.com now', ['a.b+c@x.com'])).toBe('[address]');
+    expect(redactAddresses('pay axb@x.com now', ['a.b@x.com'])).toBe('[address]');
+  });
+
+  it('replaces the longer of two overlapping known addresses first', () => {
+    expect(redactAddresses('pay alice@x.com', ['ice@x.com', 'alice@x.com'])).toBe('pay [address]');
+  });
+
+  it('replaces the whole text when an unknown address remains next to a known one', () => {
+    expect(redactAddresses('alice@example.com and bob@x.com', ['alice@example.com'])).toBe('[address]');
   });
 
   it('skips an empty known string', () => {
