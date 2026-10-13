@@ -539,8 +539,8 @@ describe("createServer", () => {
         expect(String(parsedLog.error)).toContain("[address]");
         expect(String(parsedLog.error)).not.toContain("@");
         expect(line).not.toContain("@");
-        expect(line).not.toContain("alice");
-        expect(line).not.toContain("example.com");
+        expect(line.toLowerCase()).not.toContain("alice");
+        expect(line.toLowerCase()).not.toContain("example.com");
       }
     } finally {
       warn.mockRestore();
@@ -762,9 +762,9 @@ describe("createServer", () => {
           const parsedLog = JSON.parse(line) as Record<string, unknown>;
           expect(parsedLog.error).toBe("pay failed for [address]");
           expect(line).not.toContain("@");
-          expect(line).not.toContain("alice");
-          expect(line).not.toContain("smith");
-          expect(line).not.toContain("x.com");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("smith");
+          expect(line.toLowerCase()).not.toContain("x.com");
         }
       } finally {
         stop();
@@ -829,9 +829,9 @@ describe("createServer", () => {
           const parsedLog = JSON.parse(line) as Record<string, unknown>;
           expect(parsedLog.error).toBe("[address]");
           expect(line).not.toContain("@");
-          expect(line).not.toContain("alice");
-          expect(line).not.toContain("example.com");
-          expect(line).not.toContain("bob");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("example.com");
+          expect(line.toLowerCase()).not.toContain("bob");
         }
         expect(runDay).not.toHaveBeenCalled();
       } finally {
@@ -2414,8 +2414,8 @@ describe("createServer", () => {
       expect(parsedLog).not.toHaveProperty("address");
       expect(line).not.toContain(address);
       expect(line).not.toContain("@");
-      expect(line).not.toContain("alice");
-      expect(line).not.toContain("example.com");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("example.com");
     }
     const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
     expect(errorLine).toBeDefined();

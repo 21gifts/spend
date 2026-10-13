@@ -325,6 +325,7 @@ describe("main live recipients", () => {
     );
     expect(code).toBe(0);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]).toHaveLength(1);
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
       ts: "2026-08-25T12:00:00.000Z",
       event: "spend.skip",
@@ -1094,6 +1095,8 @@ describe("main daily instruction", () => {
       },
     );
     expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
     expect(JSON.parse(line)).toEqual({
@@ -1128,6 +1131,8 @@ describe("main daily instruction", () => {
       }),
     );
     expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
     expect(JSON.parse(line)).toEqual({
@@ -1225,6 +1230,8 @@ describe("main daily instruction", () => {
       () => new Date("2026-08-25T12:00:00.000Z"),
     );
     expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
     expect(JSON.parse(line)).toEqual({
