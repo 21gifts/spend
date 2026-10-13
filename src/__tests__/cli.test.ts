@@ -327,7 +327,8 @@ describe("main live recipients", () => {
       addressRef: addressRef("a@b.com", "tok"),
       reason: "payments_disabled",
     });
-    expect(String(warn.mock.calls[0]?.[0])).not.toContain("a@b.com");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("@");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("b.com");
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).not.toHaveProperty(
       "address",
     );
@@ -1091,15 +1092,13 @@ describe("main daily instruction", () => {
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
-    expect(logged).not.toContain("@");
-    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",
     });
-    expect(line).not.toContain("alice");
-    expect(line).not.toContain("example.com");
-    expect(line).not.toContain("@");
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("example.com");
+    expect(logged).not.toContain("@");
     error.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -1127,15 +1126,13 @@ describe("main daily instruction", () => {
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
-    expect(logged).not.toContain("@");
-    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",
     });
-    expect(line).not.toContain("alice");
-    expect(line).not.toContain("example.com");
-    expect(line).not.toContain("@");
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("example.com");
+    expect(logged).not.toContain("@");
     error.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -1164,16 +1161,14 @@ describe("main daily instruction", () => {
     expect(code).toBe(2);
     const line = String(error.mock.calls[0]?.[0] ?? "");
     const logged = JSON.stringify(error.mock.calls);
-    expect(logged).not.toContain("@");
-    expect(logged).not.toContain("alice");
     expect(JSON.parse(line)).toEqual({
       event: "spend.config",
       error: "[address]",
     });
-    expect(line).not.toContain("alice");
-    expect(line).not.toContain("smith");
-    expect(line).not.toContain("x.com");
-    expect(line).not.toContain("@");
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("smith");
+    expect(logged).not.toContain("x.com");
+    expect(logged).not.toContain("@");
     error.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });

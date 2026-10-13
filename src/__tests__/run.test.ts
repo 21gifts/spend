@@ -296,9 +296,11 @@ describe('runDay', () => {
       { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
     );
     const lines = warn.mock.calls.map((args) => String(args[0] ?? ''));
+    const logged = JSON.stringify(warn.mock.calls);
     warn.mockRestore();
     expect(result.exitCode).toBe(0);
-    expect(lines.every((line) => !line.includes('@'))).toBe(true);
+    expect(logged).not.toContain('@');
+    expect(logged).not.toContain('b.com');
     const paid = lines
       .map((line) => JSON.parse(line) as Record<string, unknown>)
       .find((entry) => entry.event === 'spend.paid');
