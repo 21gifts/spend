@@ -1,4 +1,5 @@
 import { displayLightningAddress } from './html-shell';
+import { redactLogFields } from './log-redact';
 
 /** Who triggered the payout that may notify Telegram. */
 export type TelegramSource = 'scheduler' | 'catchup' | 'cli' | 'ping';
@@ -326,7 +327,7 @@ function redactToken(text: string, token: string): string {
 }
 
 function logTelegram(fields: Record<string, string | number | boolean>): void {
-  console.warn(JSON.stringify({ ts: new Date().toISOString(), event: 'spend.telegram', ...fields }));
+  console.warn(JSON.stringify({ ts: new Date().toISOString(), event: 'spend.telegram', ...redactLogFields(fields) }));
 }
 
 /**
