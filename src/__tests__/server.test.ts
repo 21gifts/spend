@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,6 +13,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { GiftsApi } from "../gifts-api";
 import { LndhubClient, parseLndhubUri } from "../lndhub";
+import { addressRef } from "../log-redact";
 import { appendRetryOwed, loadRetryOwed, retryQueuePath } from "../retry-queue";
 import { runDay as executeRunDay } from "../run";
 import { createServer, parseBindAddr } from "../server";
@@ -87,6 +90,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("parseBindAddr", () => {
@@ -459,6 +463,92 @@ describe("createServer", () => {
     }
   });
 
+  it("POST /ping enqueue error redacts the address in the log", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "spend-retry-enqueue-log-"));
+    const address = "alice @ example.com";
+    const dir = join(parent, address);
+    mkdirSync(dir);
+    const seed = join(parent, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    chmodSync(dir, 0o555);
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: "2026-08-25",
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: "insufficient_balance",
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address,
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await app.drainPayouts();
+      const enqueueLogs = warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.retry.enqueue"'));
+      expect(enqueueLogs.length).toBeGreaterThan(0);
+      for (const line of enqueueLogs) {
+        const parsedLog = JSON.parse(line) as Record<string, unknown>;
+        expect(typeof parsedLog.error).toBe("string");
+        expect(String(parsedLog.error)).toContain("[address]");
+        expect(String(parsedLog.error)).not.toContain("@");
+        expect(line).not.toContain("@");
+        expect(line.toLowerCase()).not.toContain("alice");
+        expect(line.toLowerCase()).not.toContain("example.com");
+      }
+    } finally {
+      warn.mockRestore();
+      chmodSync(dir, 0o755);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it("POST /ping is 400 for an unlisted ping without amountUsd and comment", async () => {
     const dir = mkdtempSync(join(tmpdir(), "spend-retry-ping-unlisted-"));
     const seed = join(dir, "seed.json");
@@ -607,6 +697,150 @@ describe("createServer", () => {
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("startRetryCatchup payout error redacts the owed address in the log", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-retry-catchup-error-log-"));
+    const address = "alice smith@x.com";
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, "2026-08-25", {
+      address,
+      bucket: "daily",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: PING_COMMENT,
+    });
+    const runDay = vi.fn(async () => {
+      throw new Error(`pay failed for ${address}`);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), {
+          timeout: 2000,
+        });
+        await app.drainPayouts();
+        const retryLogs = warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .filter((line) => {
+            try {
+              return (
+                (JSON.parse(line) as { event?: string }).event === "spend.retry"
+              );
+            } catch {
+              return false;
+            }
+          });
+        expect(retryLogs.length).toBeGreaterThan(0);
+        for (const line of retryLogs) {
+          const parsedLog = JSON.parse(line) as Record<string, unknown>;
+          expect(parsedLog.error).toBe("pay failed for [address]");
+          expect(line).not.toContain("@");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("smith");
+          expect(line.toLowerCase()).not.toContain("x.com");
+        }
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("startRetryCatchup tick error redacts an address in the log", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "spend-retry-tick-error-log-"));
+    const dir = join(parent, "alice @ example.com");
+    mkdirSync(dir);
+    const seed = join(parent, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, "2026-08-25", {
+      address: "bob@example.com",
+      bucket: "daily",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: PING_COMMENT,
+    });
+    const queue = retryQueuePath(dir, "2026-08-25");
+    chmodSync(queue, 0o000);
+    const runDay = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const retryLogs = (): string[] =>
+      warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.retry"'));
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(retryLogs().length).toBeGreaterThan(0), {
+          timeout: 2000,
+        });
+        for (const line of retryLogs()) {
+          const parsedLog = JSON.parse(line) as Record<string, unknown>;
+          expect(parsedLog.error).toBe("[address]");
+          expect(line).not.toContain("@");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("example.com");
+          expect(line.toLowerCase()).not.toContain("bob");
+        }
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      chmodSync(queue, 0o644);
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 
@@ -1834,6 +2068,27 @@ describe("createServer", () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
+      const pingLogs = warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.ping"'));
+      expect(pingLogs.length).toBeGreaterThan(0);
+      const line = pingLogs[0] ?? "";
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog.status).toBe("skipped");
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain("alice@walletofsatoshi.com");
+      expect(line).not.toContain("@");
+      for (const logged of pingLogs) {
+        expect(logged).not.toContain("@");
+        expect(logged.toLowerCase()).not.toContain("alice");
+        expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+      }
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -1965,6 +2220,207 @@ describe("createServer", () => {
       }),
     );
     await app.drainPayouts();
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    expect(pingLogs.length).toBeGreaterThan(0);
+    const line = pingLogs[0] ?? "";
+    const parsedLog = JSON.parse(line) as Record<string, unknown>;
+    expect(parsedLog.addressRef).toBe(
+      addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+    );
+    expect(parsedLog.status).toBe("accepted");
+    expect(parsedLog).not.toHaveProperty("address");
+    expect(line).not.toContain("alice@walletofsatoshi.com");
+    expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    warn.mockRestore();
+  });
+
+  it("POST /ping mixed-case address logs the same addressRef as lower-case", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const mixed = "Alice@WalletOfSatoshi.COM";
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: mixed,
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    await app.drainPayouts();
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    expect(pingLogs.length).toBeGreaterThan(0);
+    const line = pingLogs[0] ?? "";
+    const parsedLog = JSON.parse(line) as Record<string, unknown>;
+    expect(parsedLog.addressRef).toBe(
+      addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+    );
+    expect(parsedLog.addressRef).toBe(addressRef(mixed, env.GIFTS_API_TOKEN));
+    expect(parsedLog).not.toHaveProperty("address");
+    expect(line).not.toContain(mixed);
+    expect(line).not.toContain("alice@walletofsatoshi.com");
+    expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    warn.mockRestore();
+  });
+
+  it("POST /ping async payout error logs addressRef and redacts an address in error", async () => {
+    const runDay = vi.fn(async () => {
+      throw new Error("pay failed for alice@walletofsatoshi.com");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await app.drainPayouts();
+    await vi.waitFor(() => {
+      expect(
+        warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .some((line) => line.includes('"status":"error"')),
+      ).toBe(true);
+    });
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    for (const line of pingLogs) {
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain("alice@walletofsatoshi.com");
+      expect(line).not.toContain("@");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
+    expect(errorLine).toBeDefined();
+    const errorLog = JSON.parse(errorLine ?? "") as Record<string, unknown>;
+    expect(errorLog.error).toBe("pay failed for [address]");
+    warn.mockRestore();
+  });
+
+  it("POST /ping async payout error redacts a stored address that contains whitespace", async () => {
+    const address = "alice @ example.com";
+    const runDay = vi.fn(async () => {
+      throw new Error(`pay failed for ${address}`);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address,
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await app.drainPayouts();
+    await vi.waitFor(() => {
+      expect(
+        warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .some((line) => line.includes('"status":"error"')),
+      ).toBe(true);
+    });
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    for (const line of pingLogs) {
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef(address, env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain(address);
+      expect(line).not.toContain("@");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("example.com");
+    }
+    const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
+    expect(errorLine).toBeDefined();
+    const errorLog = JSON.parse(errorLine ?? "") as Record<string, unknown>;
+    expect(errorLog.error).toBe("pay failed for [address]");
     warn.mockRestore();
   });
 
