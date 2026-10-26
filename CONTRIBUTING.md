@@ -5,11 +5,11 @@
 ## A38
 
 This repository requires A38 according to the canonical A38 standard in
-[DFXswiss/agent](https://github.com/DFXswiss/agent/blob/bf9763f8d59285aa542f5dc22cbdbf451618c5f5/docs/a38.md)
-at commit `bf9763f8d59285aa542f5dc22cbdbf451618c5f5`. Repo job selection:
+[DFXswiss/agent](https://github.com/DFXswiss/agent/blob/e63980625f5b778c5a93104b0bf5de7fb5e379a8/docs/a38.md)
+at commit `e63980625f5b778c5a93104b0bf5de7fb5e379a8`. Repo job selection:
 `.github/a38.json`. Target-branch applicability and fork workflow approval:
 `.github/pr-guard.json`. `dfx pr guard` is
-[wired in](https://github.com/DFXswiss/agent/blob/bf9763f8d59285aa542f5dc22cbdbf451618c5f5/docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
+[wired in](https://github.com/DFXswiss/agent/blob/e63980625f5b778c5a93104b0bf5de7fb5e379a8/docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
 
 Feature pull requests always target `develop`, not `staging` and not `main`. Developers rebase `staging` onto `develop` regularly, because those pull requests land on `develop` and do not update `staging`.
 
