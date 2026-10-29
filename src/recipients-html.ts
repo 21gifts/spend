@@ -39,6 +39,7 @@ export type SpendPanel =
       comment: string;
       paymentsEnabled: boolean;
       moderatorPaymentsEnabled: boolean;
+      moderatorsNoWallet?: number;
       error?: string;
     };
 
@@ -190,21 +191,27 @@ function renderDailyLinks(): string {
  *
  * @param moderators - Current moderator stipend list
  * @param moderatorPaymentsEnabled - Moderator-payments switch
+ * @param moderatorsNoWallet - Moderator rows left out because they have no verified wallet
  * @param error - Optional error shown above the daily-payment links
  * @returns Inner HTML fragment
  */
 function renderEditorPanel(
   moderators: Recipient[],
   moderatorPaymentsEnabled: boolean,
+  moderatorsNoWallet: number | undefined,
   error?: string,
 ): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
+  const noWalletHtml =
+    moderatorsNoWallet === undefined
+      ? ''
+      : `<p class="muted">${moderatorsNoWallet} without a verified wallet (no_wallet)</p>`;
   return `${errorHtml}
   ${renderDailyLinks()}
   <h2>Moderators</h2>
   ${renderPaymentsSwitch(moderatorPaymentsEnabled)}
-  ${renderRosterCard(moderators, 'No moderators')}
+  ${renderRosterCard(moderators, 'No moderators')}${noWalletHtml}
   <h2>Add moderator</h2>
   ${renderAddForm()}`;
 }
@@ -245,7 +252,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.moderators, panel.moderatorPaymentsEnabled, panel.error)}
+  ${renderEditorPanel(panel.moderators, panel.moderatorPaymentsEnabled, panel.moderatorsNoWallet, panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {

@@ -8629,3 +8629,106 @@ describe("drain mode", () => {
     warn.mockRestore();
   });
 });
+
+describe("roster rows without a wallet", () => {
+  const noWalletApi = async (
+    url: string | URL | Request,
+  ): Promise<Response> => {
+    if (String(url).includes("/funding/daily-roster")) {
+      return new Response(
+        JSON.stringify({
+          comment: "21gifts daily",
+          paymentsEnabled: true,
+          moderatorPaymentsEnabled: true,
+          defaultAmountUsd: 1,
+          recipients: [
+            {
+              accountId: "acc-1",
+              username: "alice",
+              address: "alice@walletofsatoshi.com",
+              amountUsd: 1,
+            },
+            {
+              accountId: "acc-2",
+              username: "carol",
+              address: null,
+              amountUsd: 2,
+            },
+          ],
+          moderators: [
+            {
+              accountId: "acc-3",
+              username: "bob",
+              address: "bob@walletofsatoshi.com",
+              amountUsd: 7.5,
+            },
+            {
+              accountId: "acc-4",
+              username: "dave",
+              address: null,
+              amountUsd: 3,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    throw new Error("no network");
+  };
+
+  it("GET /daily-roster keeps the other rows and counts the rows without a wallet", async () => {
+    const app = createServer({ env: sessionEnv(), fetchImpl: noWalletApi });
+    const res = await app.fetch(
+      dailyRosterReq("/daily-roster", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: "21gifts daily",
+      paymentsEnabled: true,
+      defaultAmountUsd: 1,
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+      moderatorPaymentsEnabled: true,
+      noWallet: { recipients: 1, moderators: 1 },
+    });
+  });
+
+  it("GET /debug/recipients reports the rows without a wallet", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
+      fetchImpl: noWalletApi,
+    });
+    const res = await app.fetch(
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer secret-debug" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: "21gifts daily",
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+      noWallet: { recipients: 1, moderators: 1 },
+    });
+    warn.mockRestore();
+  });
+
+  it("the moderator editor lists the rows with a wallet and notes the others", async () => {
+    const app = createServer({ env: sessionEnv(), fetchImpl: noWalletApi });
+    const token = await login(app);
+    const res = await app.fetch(
+      req("http://127.0.0.1/", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("bob@walletofsatoshi.com");
+    expect(html).toContain("1 without a verified wallet (no_wallet)");
+  });
+});

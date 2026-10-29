@@ -45,7 +45,8 @@ export interface RosterEntry {
 
 /**
  * Full daily-roster document from 21.gifts. `defaultAmountUsd` is the API's
- * number; Spend does not invent it.
+ * number; Spend does not invent it. Rows with `address: null` (no verified
+ * wallet) are left out of `recipients` and `moderators` and counted in `noWallet`.
  */
 export interface RosterDocument {
   comment: string;
@@ -54,6 +55,7 @@ export interface RosterDocument {
   defaultAmountUsd: number;
   recipients: RosterEntry[];
   moderators: RosterEntry[];
+  noWallet: { recipients: number; moderators: number };
 }
 
 /** POST body for `POST /funding/daily-roster/document`. No `defaultAmountUsd`. */
@@ -74,11 +76,14 @@ function isDailySkipReason(
   );
 }
 
-function parseRosterEntries(raw: unknown): RosterEntry[] | null {
+function parseRosterEntries(
+  raw: unknown,
+): { rows: RosterEntry[]; noWallet: number } | null {
   if (!Array.isArray(raw)) {
     return null;
   }
   const rows: RosterEntry[] = [];
+  let noWallet = 0;
   for (const item of raw) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) {
       return null;
@@ -87,16 +92,20 @@ function parseRosterEntries(raw: unknown): RosterEntry[] | null {
     const address = rec["address"];
     const amountUsd = rec["amountUsd"];
     if (
-      typeof address !== "string" ||
+      (typeof address !== "string" && address !== null) ||
       typeof amountUsd !== "number" ||
       !Number.isFinite(amountUsd) ||
       amountUsd <= 0
     ) {
       return null;
     }
+    if (address === null) {
+      noWallet += 1;
+      continue;
+    }
     rows.push({ address, amountUsd });
   }
-  return rows;
+  return { rows, noWallet };
 }
 
 function parseRosterDocument(json: Record<string, unknown>): RosterDocument {
@@ -132,8 +141,12 @@ function parseRosterDocument(json: Record<string, unknown>): RosterDocument {
     paymentsEnabled,
     moderatorPaymentsEnabled,
     defaultAmountUsd,
-    recipients,
-    moderators,
+    recipients: recipients.rows,
+    moderators: moderators.rows,
+    noWallet: {
+      recipients: recipients.noWallet,
+      moderators: moderators.noWallet,
+    },
   };
 }
 

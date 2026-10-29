@@ -244,7 +244,22 @@ type DailyRosterJson = {
   recipients: Array<{ address: string; amountUsd: number }>;
   moderators: Array<{ address: string; amountUsd: number }>;
   moderatorPaymentsEnabled: boolean;
+  noWallet?: { recipients: number; moderators: number };
 };
+
+/**
+ * Document rows without a verified wallet, or undefined when there are none.
+ *
+ * @param doc - Full roster document from 21.gifts.
+ * @returns `doc.noWallet` when either count is above zero.
+ */
+function noWalletCounts(
+  doc: RosterDocument,
+): RosterDocument["noWallet"] | undefined {
+  return doc.noWallet.recipients > 0 || doc.noWallet.moderators > 0
+    ? doc.noWallet
+    : undefined;
+}
 
 /**
  * GET `/daily-roster` payload from the API document. `defaultAmountUsd` is the
@@ -254,7 +269,7 @@ type DailyRosterJson = {
  * @returns JSON body for GET and successful daily-roster POSTs.
  */
 function toDailyRosterJson(doc: RosterDocument): DailyRosterJson {
-  return {
+  const json: DailyRosterJson = {
     comment: doc.comment,
     paymentsEnabled: doc.paymentsEnabled,
     defaultAmountUsd: doc.defaultAmountUsd,
@@ -268,6 +283,8 @@ function toDailyRosterJson(doc: RosterDocument): DailyRosterJson {
     })),
     moderatorPaymentsEnabled: doc.moderatorPaymentsEnabled,
   };
+  const noWallet = noWalletCounts(doc);
+  return noWallet === undefined ? json : { ...json, noWallet };
 }
 
 function importRosterBody(live: LiveRecipients): RosterImportBody {
@@ -341,7 +358,7 @@ function editorPanel(
   paymentsEnabled: boolean,
   moderatorPaymentsEnabled: boolean,
   error?: string,
-): SpendPanel {
+): Extract<SpendPanel, { kind: "editor" }> {
   return error === undefined
     ? {
         kind: "editor",
@@ -549,8 +566,8 @@ export function createServer(opts: {
     }
   };
 
-  const editorFrom = (doc: RosterDocument, error?: string): SpendPanel =>
-    editorPanel(
+  const editorFrom = (doc: RosterDocument, error?: string): SpendPanel => {
+    const panel = editorPanel(
       doc.comment,
       doc.recipients,
       doc.moderators,
@@ -558,6 +575,10 @@ export function createServer(opts: {
       doc.moderatorPaymentsEnabled,
       error,
     );
+    return doc.noWallet.moderators > 0
+      ? { ...panel, moderatorsNoWallet: doc.noWallet.moderators }
+      : panel;
+  };
 
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
@@ -612,12 +633,14 @@ export function createServer(opts: {
             count: doc.recipients.length,
           }),
         );
+        const noWallet = noWalletCounts(doc);
         return json(200, {
           comment: doc.comment,
           recipients: doc.recipients,
           moderators: doc.moderators,
           paymentsEnabled: doc.paymentsEnabled,
           moderatorPaymentsEnabled: doc.moderatorPaymentsEnabled,
+          ...(noWallet === undefined ? {} : { noWallet }),
         });
       } catch (err) {
         if (err instanceof CorruptRecipientsError) {
