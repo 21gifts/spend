@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { loadConfig, type Recipient, type SpendConfig } from "./config";
 import { loadDashboard } from "./dashboard";
 import { bearerMatchesDebugToken, bearerMatchesToken } from "./debug-token";
@@ -1417,8 +1417,8 @@ export function createServer(opts: {
    * Drain state. `drained` only while drain mode is on, no payout is queued or
    * running, neither the daily nor the moderator log of the previous or the
    * current UTC day has an `uncertain` address (or `*halt*`), and today's retry
-   * queue has no row the retry would still pay. An unreadable log keeps
-   * `draining`.
+   * queue has no row the retry would still pay. An inaccessible `STATE_DIR`
+   * or any log or retry file that cannot be read keeps `draining`.
    *
    * @returns Current drain status.
    */
@@ -1430,18 +1430,32 @@ export function createServer(opts: {
       .slice(0, 10);
     let uncertain = 0;
     let stateUnreadable = false;
+    /** Any read failure, not only a corrupt log, keeps `draining`. */
+    const read = <T>(load: () => T): T | undefined => {
+      try {
+        return load();
+      } catch {
+        stateUnreadable = true;
+        return undefined;
+      }
+    };
+    try {
+      accessSync(config.stateDir, constants.R_OK | constants.X_OK);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        stateUnreadable = true;
+      }
+    }
     const todayRows = new Map<RetryOwed["bucket"], StateRow[] | undefined>();
     for (const day of [yesterday, today]) {
       for (const bucket of ["daily", "moderator"] as const) {
-        let rows: StateRow[];
-        try {
-          rows = new DayState(config.stateDir, day, undefined, bucket).load();
-        } catch (err) {
-          if (!(err instanceof CorruptStateError)) {
-            throw err;
-          }
-          stateUnreadable = true;
-          todayRows.set(bucket, undefined);
+        const rows = read(() =>
+          new DayState(config.stateDir, day, undefined, bucket).load(),
+        );
+        if (day === today) {
+          todayRows.set(bucket, rows);
+        }
+        if (rows === undefined) {
           continue;
         }
         const addresses = new Set(rows.map((row) => row.address.toLowerCase()));
@@ -1450,29 +1464,22 @@ export function createServer(opts: {
             uncertain += 1;
           }
         }
-        if (day === today) {
-          todayRows.set(bucket, rows);
-        }
       }
     }
     const welcomeRows = (): StateRow[] | undefined => {
       if (!todayRows.has("welcome")) {
-        try {
-          todayRows.set(
-            "welcome",
+        todayRows.set(
+          "welcome",
+          read(() =>
             new DayState(config.stateDir, today, undefined, "welcome").load(),
-          );
-        } catch (err) {
-          if (!(err instanceof CorruptStateError)) {
-            throw err;
-          }
-          stateUnreadable = true;
-          todayRows.set("welcome", undefined);
-        }
+          ),
+        );
       }
       return todayRows.get("welcome");
     };
-    const openRetries = loadRetryOwed(config.stateDir, today).filter((row) =>
+    const openRetries = (
+      read(() => loadRetryOwed(config.stateDir, today)) ?? []
+    ).filter((row) =>
       retryOwed(row, () =>
         row.bucket === "welcome" ? welcomeRows() : todayRows.get(row.bucket),
       ),

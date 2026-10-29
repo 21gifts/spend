@@ -8577,6 +8577,46 @@ describe("drain mode", () => {
     warn.mockRestore();
   });
 
+  it("keeps draining when the retry file or STATE_DIR cannot be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dir = drainDir();
+    const app = drainApp(dir);
+    await app.fetch(drainReq("POST", JSON.stringify({ enabled: true })));
+    appendRetryOwed(dir, DRAIN_DAY, {
+      address: "frank@walletofsatoshi.com",
+      bucket: "daily",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: PING_COMMENT,
+    });
+    const queue = retryQueuePath(dir, DRAIN_DAY);
+    chmodSync(queue, 0o000);
+    try {
+      expect(await status(app)).toMatchObject({
+        state: "draining",
+        openRetries: 0,
+        stateUnreadable: true,
+      });
+    } finally {
+      chmodSync(queue, 0o644);
+    }
+    rmSync(queue);
+    chmodSync(dir, 0o000);
+    try {
+      expect(await status(app)).toMatchObject({
+        state: "draining",
+        stateUnreadable: true,
+      });
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    expect(await status(app)).toMatchObject({
+      state: "drained",
+      stateUnreadable: false,
+    });
+    warn.mockRestore();
+  });
+
   it("shows the drain state on the dashboard", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = drainApp(drainDir());
