@@ -8508,6 +8508,75 @@ describe("drain mode", () => {
     warn.mockRestore();
   });
 
+  it("refuses a ping whose body was still arriving when drain mode was entered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const app = drainApp(drainDir(), runDay);
+    let push: (chunk: string) => void = () => undefined;
+    let end: () => void = () => undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(new TextEncoder().encode(chunk));
+        end = () => controller.close();
+      },
+    });
+    const pending = app.fetch(
+      new Request("http://127.0.0.1/ping", {
+        method: "POST",
+        headers: {
+          host: "127.0.0.1",
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    push(JSON.stringify({ address: "alice@walletofsatoshi.com" }).slice(0, 5));
+    const entered = await app.fetch(
+      drainReq("POST", JSON.stringify({ enabled: true })),
+    );
+    expect(await entered.json()).toMatchObject({ state: "drained", inFlight: 0 });
+    push(
+      JSON.stringify({
+        address: "alice@walletofsatoshi.com",
+        messageId: PING_MESSAGE_ID,
+        amountUsd: 1,
+        comment: PING_COMMENT,
+      }).slice(5),
+    );
+    end();
+    const res = await pending;
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Payouts are draining" });
+    expect(runDay).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("counts an open welcome retry row and an unreadable welcome log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dir = drainDir();
+    const app = drainApp(dir);
+    await app.fetch(drainReq("POST", JSON.stringify({ enabled: true })));
+    appendRetryOwed(dir, DRAIN_DAY, {
+      address: "erin@walletofsatoshi.com",
+      bucket: "welcome",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: "Welcome",
+    });
+    expect(await status(app)).toMatchObject({ state: "draining", openRetries: 1 });
+    writeFileSync(join(dir, "welcome.jsonl"), row("erin@walletofsatoshi.com", "paid"));
+    expect(await status(app)).toMatchObject({ state: "drained", openRetries: 0 });
+    writeFileSync(join(dir, "welcome.jsonl"), "{");
+    expect(await status(app)).toMatchObject({
+      state: "draining",
+      openRetries: 0,
+      stateUnreadable: true,
+    });
+    warn.mockRestore();
+  });
+
   it("shows the drain state on the dashboard", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const app = drainApp(drainDir());

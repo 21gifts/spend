@@ -1,11 +1,11 @@
 import {
   closeSync,
   constants,
-  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
   rmSync,
+  statSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -22,13 +22,18 @@ function drainFlagPath(stateDir: string): string {
 }
 
 /**
- * Whether drain mode is on.
+ * Whether drain mode is on. Fails closed: only a missing flag means off.
  *
  * @param stateDir - `STATE_DIR`.
- * @returns True when the drain flag exists.
+ * @returns False only when the flag does not exist.
  */
 export function isDraining(stateDir: string): boolean {
-  return existsSync(drainFlagPath(stateDir));
+  try {
+    statSync(drainFlagPath(stateDir));
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
 }
 
 /**

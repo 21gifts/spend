@@ -458,6 +458,9 @@ export function createServer(opts: {
       btcUsd: () => fetchBtcUsdSpot(fetchImpl),
       lightningAddress: config.lightningAddress,
     });
+    if (!isDraining(config.stateDir)) {
+      return data;
+    }
     const drain = drainStatus().state;
     return drain === "running" ? data : { ...data, drain };
   };
@@ -684,6 +687,13 @@ export function createServer(opts: {
       ) {
         return json(401, { error: "Unauthorized" });
       }
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return json(400, { error: "Expected a JSON body with address" });
+      }
+      // No await follows until payout() counts the run, so POST /drain cannot miss it.
       if (isDraining(config.stateDir)) {
         console.warn(
           JSON.stringify({
@@ -694,12 +704,6 @@ export function createServer(opts: {
           }),
         );
         return json(503, { error: "Payouts are draining" });
-      }
-      let body: unknown;
-      try {
-        body = await req.json();
-      } catch {
-        return json(400, { error: "Expected a JSON body with address" });
       }
       if (
         body === null ||
@@ -1307,10 +1311,13 @@ export function createServer(opts: {
     return parsed;
   };
 
-  /** True when the retry tick would still pay this owed row against these log rows. */
+  /**
+   * True when the retry tick would still pay this owed row. `rowsFor` is read
+   * only for a complete instruction; `undefined` (unreadable log) is not owed.
+   */
   const retryOwed = (
     row: RetryOwed,
-    rows: StateRow[],
+    rowsFor: () => StateRow[] | undefined,
   ): row is RetryOwed & { amountUsd: number; comment: string } => {
     if (
       typeof row.amountUsd !== "number" ||
@@ -1318,6 +1325,10 @@ export function createServer(opts: {
       row.amountUsd <= 0 ||
       typeof row.comment !== "string"
     ) {
+      return false;
+    }
+    const rows = rowsFor();
+    if (rows === undefined) {
       return false;
     }
     const block = dayBlock(rows, row.address);
@@ -1363,8 +1374,7 @@ export function createServer(opts: {
     };
     for (const row of owed) {
       try {
-        const rows = rowsFor(row.bucket);
-        if (rows === undefined || !retryOwed(row, rows)) {
+        if (!retryOwed(row, () => rowsFor(row.bucket))) {
           continue;
         }
         const instructed: Recipient = {
@@ -1405,10 +1415,10 @@ export function createServer(opts: {
 
   /**
    * Drain state. `drained` only while drain mode is on, no payout is queued or
-   * running, and neither the daily nor the moderator log of the previous or the
+   * running, neither the daily nor the moderator log of the previous or the
    * current UTC day has an `uncertain` address (or `*halt*`), and today's retry
-   * queue has no daily or moderator row the retry would still pay. An unreadable
-   * log keeps `draining`.
+   * queue has no row the retry would still pay. An unreadable log keeps
+   * `draining`.
    *
    * @returns Current drain status.
    */
@@ -1420,7 +1430,7 @@ export function createServer(opts: {
       .slice(0, 10);
     let uncertain = 0;
     let stateUnreadable = false;
-    const todayRows = new Map<RetryOwed["bucket"], StateRow[]>();
+    const todayRows = new Map<RetryOwed["bucket"], StateRow[] | undefined>();
     for (const day of [yesterday, today]) {
       for (const bucket of ["daily", "moderator"] as const) {
         let rows: StateRow[];
@@ -1431,6 +1441,7 @@ export function createServer(opts: {
             throw err;
           }
           stateUnreadable = true;
+          todayRows.set(bucket, undefined);
           continue;
         }
         const addresses = new Set(rows.map((row) => row.address.toLowerCase()));
@@ -1444,10 +1455,28 @@ export function createServer(opts: {
         }
       }
     }
-    const openRetries = loadRetryOwed(config.stateDir, today).filter((row) => {
-      const rows = todayRows.get(row.bucket);
-      return rows !== undefined && retryOwed(row, rows);
-    }).length;
+    const welcomeRows = (): StateRow[] | undefined => {
+      if (!todayRows.has("welcome")) {
+        try {
+          todayRows.set(
+            "welcome",
+            new DayState(config.stateDir, today, undefined, "welcome").load(),
+          );
+        } catch (err) {
+          if (!(err instanceof CorruptStateError)) {
+            throw err;
+          }
+          stateUnreadable = true;
+          todayRows.set("welcome", undefined);
+        }
+      }
+      return todayRows.get("welcome");
+    };
+    const openRetries = loadRetryOwed(config.stateDir, today).filter((row) =>
+      retryOwed(row, () =>
+        row.bucket === "welcome" ? welcomeRows() : todayRows.get(row.bucket),
+      ),
+    ).length;
     const quiet =
       inFlight === 0 &&
       uncertain === 0 &&
