@@ -1,7 +1,6 @@
-import type { Recipient } from './config';
 import type { DashboardData } from './dashboard';
 import { lightningQrPayload } from './dashboard';
-import { displayLightningAddress, renderDocument, slot } from './html-shell';
+import { renderDocument, slot } from './html-shell';
 import { bitcoinQrSvg } from './qr';
 
 const TITLE = '21.gifts spend';
@@ -12,35 +11,24 @@ const DAILY_TEXT_HREF = 'https://21.gifts/grants/payments/comment';
 /** Daily payment amounts on 21.gifts. The spend page does not edit them. */
 const DAILY_AMOUNTS_HREF = 'https://21.gifts/grants/payments/amounts';
 
+/** Moderator payments on 21.gifts. The spend page does not edit them. */
+const MODERATOR_PAYMENTS_HREF = 'https://21.gifts/grants/payments/moderators';
+
 const NULL_DASHBOARD: DashboardData = {
   sats: null,
   usd: null,
   lightningAddress: null,
 };
 
-const PENCIL_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
-
-const TRASH_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
-
 /**
  * Optional panel below the Spend block on the combined page.
  *
  * - `login` — password form when the editor is configured but there is no session
- * - `editor` — moderator roster when the session is valid (daily roster is JSON API)
+ * - `editor` — links to the 21.gifts payment pages when the session is valid
  */
 export type SpendPanel =
   | { kind: 'login'; error?: string }
-  | {
-      kind: 'editor';
-      recipients: Recipient[];
-      moderators: Recipient[];
-      comment: string;
-      paymentsEnabled: boolean;
-      moderatorPaymentsEnabled: boolean;
-      error?: string;
-    };
+  | { kind: 'editor'; error?: string };
 
 function formatSats(sats: number | null): string {
   return sats === null ? 'unavailable' : `${sats} sats`;
@@ -48,107 +36,6 @@ function formatSats(sats: number | null): string {
 
 function formatUsd(usd: number | null): string {
   return usd === null ? 'unavailable' : `${usd.toFixed(2)} USD`;
-}
-
-function formatUsdTotal(sum: number): string {
-  const rounded = Math.round(sum * 100) / 100;
-  return String(rounded);
-}
-
-/**
- * One moderator roster row.
- *
- * @param row - Address and USD amount.
- * @returns List-item HTML.
- */
-function renderRow(row: Recipient): string {
-  const full = slot(row.address);
-  const display = slot(displayLightningAddress(row.address));
-  const usd = slot(String(row.amountUsd));
-  const named = `moderator ${full}`;
-  return `<li class="row">
-              <span class="addr" title="${full}">${display}</span>
-              <form class="inline" method="post" action="/moderators/update">
-                <input type="hidden" name="address" value="${full}">
-                <input name="amountUsd" type="text" inputmode="decimal" value="${usd}" aria-label="USD amount for ${named}">
-                <button class="icon" type="submit" aria-label="Update ${named}" title="Update">${PENCIL_SVG}</button>
-              </form>
-              <form class="inline" method="post" action="/moderators/delete">
-                <input type="hidden" name="address" value="${full}">
-                <button class="icon danger" type="submit" aria-label="Delete ${named}" title="Delete">${TRASH_SVG}</button>
-              </form>
-            </li>`;
-}
-
-function renderTotalRow(recipients: Recipient[]): string {
-  const sum = recipients.reduce((acc, r) => acc + r.amountUsd, 0);
-  const usd = slot(formatUsdTotal(sum));
-  return `<li class="row total">
-              <span class="addr">Total</span>
-              <span class="inline">
-                <span class="usd-total">${usd}</span>
-                <span class="icon-spacer" aria-hidden="true"></span>
-              </span>
-              <span class="inline">
-                <span class="icon-spacer" aria-hidden="true"></span>
-              </span>
-            </li>`;
-}
-
-/**
- * Moderator roster card: rows plus Total, or a muted empty message.
- *
- * @param rows - List to render.
- * @param emptyMessage - Shown when `rows` is empty.
- * @returns Card HTML.
- */
-function renderRosterCard(rows: Recipient[], emptyMessage: string): string {
-  if (rows.length === 0) {
-    return `<div class="card"><p class="muted">${emptyMessage}</p></div>`;
-  }
-  return `<div class="card">
-          <ul class="roster">
-            ${rows.map((row) => renderRow(row)).join('\n            ')}
-            ${renderTotalRow(rows)}
-          </ul>
-        </div>`;
-}
-
-/**
- * Add-row form posting to `/moderators/add`.
- *
- * @returns Form HTML.
- */
-function renderAddForm(): string {
-  return `<form class="card add-grid" method="post" action="/moderators/add">
-    <label class="field grow">
-      <span>Address</span>
-      <input name="address" type="text" autocomplete="off">
-    </label>
-    <label class="field usd">
-      <span>USD</span>
-      <input name="amountUsd" type="text" inputmode="decimal">
-    </label>
-    <button class="primary" type="submit">Add</button>
-  </form>`;
-}
-
-/**
- * On/Off switch posting `enabled=on` or `enabled=off` to `/moderators/payments`.
- *
- * @param enabled - Persisted flag; the matching button is primary and pressed.
- * @returns Form HTML.
- */
-function renderPaymentsSwitch(enabled: boolean): string {
-  const onClass = enabled ? 'primary' : 'ghost';
-  const offClass = enabled ? 'ghost' : 'primary';
-  const onPressed = enabled ? 'true' : 'false';
-  const offPressed = enabled ? 'false' : 'true';
-  return `<form class="card payments-switch" method="post" action="/moderators/payments" aria-label="Moderator payments">
-  <span class="switch-label">Payments</span>
-  <button type="submit" name="enabled" value="on" class="${onClass}" aria-pressed="${onPressed}">On</button>
-  <button type="submit" name="enabled" value="off" class="${offClass}" aria-pressed="${offPressed}">Off</button>
-</form>`;
 }
 
 /**
@@ -172,41 +59,30 @@ function renderLoginPanel(error?: string): string {
 }
 
 /**
- * Links to the two 21.gifts pages that edit daily payments.
+ * Links to the three 21.gifts pages that edit daily and moderator payments.
  *
- * @returns Heading and two buttons. No roster and no comment field.
+ * @returns Heading and three buttons. No roster and no comment field.
  */
 function renderDailyLinks(): string {
   return `<h2>Daily payments</h2>
   <div class="card daily-links">
     <a class="primary" href="${DAILY_TEXT_HREF}">Daily payment text</a>
     <a class="primary" href="${DAILY_AMOUNTS_HREF}">Daily payment amounts</a>
+    <a class="primary" href="${MODERATOR_PAYMENTS_HREF}">Moderator payments</a>
   </div>`;
 }
 
 /**
- * Moderator roster + add form (below Spend). Daily comment and roster are not
- * edited here; {@link renderDailyLinks} points at those pages on 21.gifts.
+ * Optional error plus links to the 21.gifts payment pages (below Spend).
  *
- * @param moderators - Current moderator stipend list
- * @param moderatorPaymentsEnabled - Moderator-payments switch
- * @param error - Optional error shown above the daily-payment links
+ * @param error - Optional error shown above the payment links
  * @returns Inner HTML fragment
  */
-function renderEditorPanel(
-  moderators: Recipient[],
-  moderatorPaymentsEnabled: boolean,
-  error?: string,
-): string {
+function renderEditorPanel(error?: string): string {
   const errorHtml =
     error === undefined ? '' : `<p class="error">${slot(error)}</p>`;
   return `${errorHtml}
-  ${renderDailyLinks()}
-  <h2>Moderators</h2>
-  ${renderPaymentsSwitch(moderatorPaymentsEnabled)}
-  ${renderRosterCard(moderators, 'No moderators')}
-  <h2>Add moderator</h2>
-  ${renderAddForm()}`;
+  ${renderDailyLinks()}`;
 }
 
 function renderSpendFields(data: DashboardData): string {
@@ -236,7 +112,7 @@ function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: bool
     <form method="post" action="/logout"><button class="ghost" type="submit">Log out</button></form>
   </div>
   ${spendFields}
-  ${renderEditorPanel(panel.moderators, panel.moderatorPaymentsEnabled, panel.error)}
+  ${renderEditorPanel(panel.error)}
 </div>`;
   }
   if (panel?.kind === 'login') {
@@ -303,45 +179,15 @@ export function renderLoginHtml(opts: { error?: string; disabled?: boolean } = {
 }
 
 /**
- * Moderator-editor HTML. Daily recipients, the file comment, and the daily
- * switch are accepted and not rendered. Two buttons link to the 21.gifts
- * pages that edit them. Those fields are the Bearer JSON API.
+ * Logged-in dashboard. Daily and moderator fields are not rendered.
+ * Three buttons link to the 21.gifts pages that edit them.
  *
- * @param opts.recipients - Daily recipient list. Not rendered.
- * @param opts.moderators - Current moderator stipend list
- * @param opts.comment - File-level LUD-12 payment comment. Not rendered.
- * @param opts.paymentsEnabled - Daily-payments switch. Not rendered.
- * @param opts.moderatorPaymentsEnabled - Moderator-payments switch
- * @param opts.error - Optional error message shown above the Moderators heading
+ * @param opts.error - Optional error message shown above the payment links
  * @returns Complete HTML document.
  */
-export function renderRecipientsHtml(opts: {
-  recipients: Recipient[];
-  moderators: Recipient[];
-  comment: string;
-  paymentsEnabled: boolean;
-  moderatorPaymentsEnabled: boolean;
-  error?: string;
-}): string {
+export function renderRecipientsHtml(opts: { error?: string } = {}): string {
   return renderDashboardHtml(
     NULL_DASHBOARD,
-    opts.error === undefined
-      ? {
-          kind: 'editor',
-          recipients: opts.recipients,
-          moderators: opts.moderators,
-          comment: opts.comment,
-          paymentsEnabled: opts.paymentsEnabled,
-          moderatorPaymentsEnabled: opts.moderatorPaymentsEnabled,
-        }
-      : {
-          kind: 'editor',
-          recipients: opts.recipients,
-          moderators: opts.moderators,
-          comment: opts.comment,
-          paymentsEnabled: opts.paymentsEnabled,
-          moderatorPaymentsEnabled: opts.moderatorPaymentsEnabled,
-          error: opts.error,
-        },
+    opts.error === undefined ? { kind: 'editor' } : { kind: 'editor', error: opts.error },
   );
 }
