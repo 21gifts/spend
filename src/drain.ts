@@ -17,7 +17,7 @@ import { join } from 'node:path';
  * @param stateDir - `STATE_DIR`.
  * @returns `${stateDir}/draining`.
  */
-export function drainFlagPath(stateDir: string): string {
+function drainFlagPath(stateDir: string): string {
   return join(stateDir, 'draining');
 }
 
