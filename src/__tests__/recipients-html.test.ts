@@ -369,19 +369,6 @@ describe('renderUnconfiguredHtml', () => {
   });
 });
 
-describe('drain state', () => {
-  it('shows Draining or Drained under the Spend block only while drain mode is on', () => {
-    const base = { sats: 10, usd: 1, lightningAddress: 'x@y.com' };
-    expect(renderUnconfiguredHtml(base)).not.toContain('Payouts');
-    const draining = renderUnconfiguredHtml({ ...base, drain: 'draining' });
-    expect(draining).toContain('<p class="kicker">Payouts</p>');
-    expect(draining).toContain('<p class="muted">Draining</p>');
-    const drained = renderUnconfiguredHtml({ ...base, drain: 'drained' });
-    expect(drained).toContain('<p class="muted">Drained</p>');
-    expect(drained).not.toContain('Draining');
-  });
-});
-
 describe('moderators without a wallet', () => {
   it('notes the moderator rows left out for no_wallet only when there are any', () => {
     const data = { sats: 10, usd: 1, lightningAddress: 'x@y.com' };

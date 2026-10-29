@@ -216,15 +216,6 @@ function renderEditorPanel(
   ${renderAddForm()}`;
 }
 
-function renderDrain(drain: DashboardData['drain']): string {
-  if (drain === undefined) {
-    return '';
-  }
-  return `
-  <p class="kicker">Payouts</p>
-  <p class="muted">${drain === 'drained' ? 'Drained' : 'Draining'}</p>`;
-}
-
 function renderSpendFields(data: DashboardData): string {
   const addressHtml =
     data.lightningAddress === null ? 'unavailable' : slot(data.lightningAddress);
@@ -237,7 +228,7 @@ function renderSpendFields(data: DashboardData): string {
   <p class="balance-usd">${slot(formatUsd(data.usd))}</p>
   <p class="kicker">Lightning address</p>
   <p class="addr">${addressHtml}</p>
-  ${qr}${renderDrain(data.drain)}`;
+  ${qr}`;
 }
 
 function renderBody(data: DashboardData, panel?: SpendPanel, unconfigured?: boolean): string {

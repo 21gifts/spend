@@ -1,8 +1,7 @@
-import { accessSync, constants, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { loadConfig, type Recipient, type SpendConfig } from "./config";
 import { loadDashboard } from "./dashboard";
 import { bearerMatchesDebugToken, bearerMatchesToken } from "./debug-token";
-import { isDraining, setDraining } from "./drain";
 import {
   GiftsApi,
   GiftsApiError,
@@ -55,15 +54,6 @@ const SERVICE_NAME = "spend";
 const MESSAGE_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROSTER_UNAVAILABLE = "Daily roster is unavailable";
-
-/** `GET /drain` and `POST /drain` body. */
-interface DrainStatus {
-  state: "running" | "draining" | "drained";
-  inFlight: number;
-  uncertain: number;
-  openRetries: number;
-  stateUnreadable: boolean;
-}
 
 /**
  * Parse `BIND_ADDR` (`host:port`).
@@ -469,18 +459,12 @@ export function createServer(opts: {
     return host !== "" && originHost === host;
   };
 
-  const loadDashboardData = async () => {
-    const data = await loadDashboard({
+  const loadDashboardData = () =>
+    loadDashboard({
       lndhub,
       btcUsd: () => fetchBtcUsdSpot(fetchImpl),
       lightningAddress: config.lightningAddress,
     });
-    if (!isDraining(config.stateDir)) {
-      return data;
-    }
-    const drain = drainStatus().state;
-    return drain === "running" ? data : { ...data, drain };
-  };
 
   /** Load dashboard then render the combined page (optional panel). */
   const combinedPage = async (panel?: SpendPanel): Promise<Response> => {
@@ -649,53 +633,6 @@ export function createServer(opts: {
         throw err;
       }
     }
-    if (
-      (req.method === "GET" || req.method === "POST") &&
-      url.pathname === "/drain"
-    ) {
-      if (debugToken === undefined || debugToken.trim() === "") {
-        return jsonResponse(503, { error: "Debug is not configured" });
-      }
-      if (
-        !bearerMatchesDebugToken(
-          debugToken,
-          req.headers.get("authorization") ?? undefined,
-        )
-      ) {
-        return jsonResponse(401, { error: "Unauthorized" });
-      }
-      if (req.method === "POST") {
-        let body: unknown;
-        try {
-          body = await req.json();
-        } catch {
-          body = null;
-        }
-        if (body === null || typeof body !== "object" || Array.isArray(body)) {
-          return jsonResponse(400, { error: "Expected a JSON body" });
-        }
-        const enabled = (body as { enabled?: unknown }).enabled;
-        if (typeof enabled !== "boolean") {
-          return jsonResponse(400, { error: "Invalid drain switch" });
-        }
-        setDraining(
-          config.stateDir,
-          enabled,
-          (opts.now ?? (() => new Date()))(),
-        );
-        console.warn(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            event: "spend.drain",
-            enabled,
-          }),
-        );
-        if (enabled) {
-          await drainPayouts();
-        }
-      }
-      return jsonResponse(200, drainStatus());
-    }
     if (req.method === "POST" && url.pathname === "/ping") {
       const json = (status: number, payload: unknown): Response =>
         new Response(JSON.stringify(payload), {
@@ -715,18 +652,6 @@ export function createServer(opts: {
         body = await req.json();
       } catch {
         return json(400, { error: "Expected a JSON body with address" });
-      }
-      // No await follows until payout() counts the run, so POST /drain cannot miss it.
-      if (isDraining(config.stateDir)) {
-        console.warn(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            event: "spend.ping",
-            status: "refused",
-            reason: "draining",
-          }),
-        );
-        return json(503, { error: "Payouts are draining" });
       }
       if (
         body === null ||
@@ -1105,8 +1030,7 @@ export function createServer(opts: {
   };
 
   const gate = createPayoutGate();
-  let inFlight = 0;
-  const payoutRun = (
+  const payout = (
     day: string,
     source: TelegramSource,
     onlyAddresses?: string[],
@@ -1252,15 +1176,6 @@ export function createServer(opts: {
       return { exitCode: result.exitCode };
     });
 
-  const payout = (
-    ...args: Parameters<typeof payoutRun>
-  ): Promise<{ exitCode: number }> => {
-    inFlight += 1;
-    return payoutRun(...args).finally(() => {
-      inFlight -= 1;
-    });
-  };
-
   /**
    * No-op. Payouts are ping-triggered; boot must not pay the roster.
    *
@@ -1334,39 +1249,6 @@ export function createServer(opts: {
     return parsed;
   };
 
-  /**
-   * True when the retry tick would still pay this owed row. `rowsFor` is read
-   * only for a complete instruction; `undefined` (unreadable log) is not owed.
-   */
-  const retryOwed = (
-    row: RetryOwed,
-    rowsFor: () => StateRow[] | undefined,
-  ): row is RetryOwed & { amountUsd: number; comment: string } => {
-    if (
-      typeof row.amountUsd !== "number" ||
-      !Number.isFinite(row.amountUsd) ||
-      row.amountUsd <= 0 ||
-      typeof row.comment !== "string"
-    ) {
-      return false;
-    }
-    const rows = rowsFor();
-    if (rows === undefined) {
-      return false;
-    }
-    const block = dayBlock(rows, row.address);
-    if (
-      block === "paid" ||
-      block === "uncertain" ||
-      latestStatus(rows, row.address) === "failed"
-    ) {
-      return false;
-    }
-    return !(
-      row.bucket === "daily" && dayBlock(rows, "*halt*") === "uncertain"
-    );
-  };
-
   const runRetryTick = async (): Promise<void> => {
     const clock = opts.now ?? (() => new Date());
     const day = clock().toISOString().slice(0, 10);
@@ -1397,7 +1279,30 @@ export function createServer(opts: {
     };
     for (const row of owed) {
       try {
-        if (!retryOwed(row, () => rowsFor(row.bucket))) {
+        if (
+          typeof row.amountUsd !== "number" ||
+          !Number.isFinite(row.amountUsd) ||
+          row.amountUsd <= 0 ||
+          typeof row.comment !== "string"
+        ) {
+          continue;
+        }
+        const rows = rowsFor(row.bucket);
+        if (rows === undefined) {
+          continue;
+        }
+        const block = dayBlock(rows, row.address);
+        if (
+          block === "paid" ||
+          block === "uncertain" ||
+          latestStatus(rows, row.address) === "failed"
+        ) {
+          continue;
+        }
+        if (
+          row.bucket === "daily" &&
+          dayBlock(rows, "*halt*") === "uncertain"
+        ) {
           continue;
         }
         const instructed: Recipient = {
@@ -1434,104 +1339,13 @@ export function createServer(opts: {
     }
   };
 
-  const drainPayouts = (): Promise<void> => gate.run(async () => undefined);
-
-  /**
-   * Drain state. `drained` only while drain mode is on, no payout is queued or
-   * running, neither the daily nor the moderator log of the previous or the
-   * current UTC day has an `uncertain` address (or `*halt*`), and today's retry
-   * queue has no row the retry would still pay. An inaccessible `STATE_DIR`
-   * or any log or retry file that cannot be read keeps `draining`.
-   *
-   * @returns Current drain status.
-   */
-  const drainStatus = (): DrainStatus => {
-    const clock = (opts.now ?? (() => new Date()))();
-    const today = clock.toISOString().slice(0, 10);
-    const yesterday = new Date(clock.getTime() - 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    let uncertain = 0;
-    let stateUnreadable = false;
-    /** Any read failure, not only a corrupt log, keeps `draining`. */
-    const read = <T>(load: () => T): T | undefined => {
-      try {
-        return load();
-      } catch {
-        stateUnreadable = true;
-        return undefined;
-      }
-    };
-    try {
-      accessSync(config.stateDir, constants.R_OK | constants.X_OK);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        stateUnreadable = true;
-      }
-    }
-    const todayRows = new Map<RetryOwed["bucket"], StateRow[] | undefined>();
-    for (const day of [yesterday, today]) {
-      for (const bucket of ["daily", "moderator"] as const) {
-        const rows = read(() =>
-          new DayState(config.stateDir, day, undefined, bucket).load(),
-        );
-        if (day === today) {
-          todayRows.set(bucket, rows);
-        }
-        if (rows === undefined) {
-          continue;
-        }
-        const addresses = new Set(rows.map((row) => row.address.toLowerCase()));
-        for (const address of addresses) {
-          if (dayBlock(rows, address) === "uncertain") {
-            uncertain += 1;
-          }
-        }
-      }
-    }
-    const welcomeRows = (): StateRow[] | undefined => {
-      if (!todayRows.has("welcome")) {
-        todayRows.set(
-          "welcome",
-          read(() =>
-            new DayState(config.stateDir, today, undefined, "welcome").load(),
-          ),
-        );
-      }
-      return todayRows.get("welcome");
-    };
-    const openRetries = (
-      read(() => loadRetryOwed(config.stateDir, today)) ?? []
-    ).filter((row) =>
-      retryOwed(row, () =>
-        row.bucket === "welcome" ? welcomeRows() : todayRows.get(row.bucket),
-      ),
-    ).length;
-    const quiet =
-      inFlight === 0 &&
-      uncertain === 0 &&
-      openRetries === 0 &&
-      !stateUnreadable;
-    return {
-      state: !isDraining(config.stateDir)
-        ? "running"
-        : quiet
-          ? "drained"
-          : "draining",
-      inFlight,
-      uncertain,
-      openRetries,
-      stateUnreadable,
-    };
-  };
-
   return {
     fetch: fetchHandler,
     startScheduler: () => ({ stop: () => undefined }),
     startCatchup,
     startRetryCatchup,
     runPayout: (day: string) => payout(day, "scheduler"),
-    drainPayouts,
+    drainPayouts: () => gate.run(async () => undefined),
   };
 }
 
