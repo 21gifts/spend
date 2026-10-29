@@ -54,7 +54,7 @@ Status body: `{ "state", "inFlight", "uncertain", "openRetries", "stateUnreadabl
 
 ## POST /ping
 
-Auth: `Authorization: Bearer` matching `GIFTS_API_TOKEN`. Missing or mismatch → `401` `{ "error": "Unauthorized" }`. No Origin / same-origin check. While [drain mode](#drain-mode) is on, an authorized ping is `503` `{ "error": "Payouts are draining" }`. Log lines never contain a Lightning address; they carry `addressRef`, the first 12 hex characters of HMAC-SHA256 of the lower-cased address keyed with `GIFTS_API_TOKEN`.
+Auth: `Authorization: Bearer` matching `GIFTS_API_TOKEN`. Missing or mismatch → `401` `{ "error": "Unauthorized" }`. No Origin / same-origin check. While [drain mode](#drain-mode) is on, an authorized ping whose body is JSON is `503` `{ "error": "Payouts are draining" }`. Log lines never contain a Lightning address; they carry `addressRef`, the first 12 hex characters of HMAC-SHA256 of the lower-cased address keyed with `GIFTS_API_TOKEN`.
 
 Spend executes only a payment the caller already decided. After a structurally valid ping (kind, `messageId`, `groupMessageId`, and address checks), a missing or unusable `amountUsd`/`comment` pair → `400` `{ "error": "Expected a JSON body with address, amountUsd, and comment" }`. That 400 does not load the roster, does not call the gifts API, and does not call payout.
 
