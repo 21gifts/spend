@@ -2,6 +2,7 @@ import { loadConfig } from "./config";
 import { GiftsApi, GiftsApiError, type RosterDocument } from "./gifts-api";
 import { parseLightningAddress } from "./lightning-address";
 import { LndhubClient, parseLndhubUri } from "./lndhub";
+import { addressRef, redactAddresses } from "./log-redact";
 import { fetchBtcUsdSpot } from "./price";
 import {
   CorruptRecipientsError,
@@ -114,7 +115,10 @@ export async function main(
   const flags = parseArgs(argv, instant);
   if (!flags.ok) {
     console.error(
-      JSON.stringify({ event: "spend.config", error: flags.error }),
+      JSON.stringify({
+        event: "spend.config",
+        error: redactAddresses(flags.error),
+      }),
     );
     return 2;
   }
@@ -132,14 +136,20 @@ export async function main(
   const loaded = loadConfig(env);
   if (!loaded.ok) {
     console.error(
-      JSON.stringify({ event: "spend.config", error: loaded.error }),
+      JSON.stringify({
+        event: "spend.config",
+        error: redactAddresses(loaded.error),
+      }),
     );
     return 2;
   }
   const telegram = loadTelegram(env);
   if (!telegram.ok) {
     console.error(
-      JSON.stringify({ event: "spend.config", error: telegram.error }),
+      JSON.stringify({
+        event: "spend.config",
+        error: redactAddresses(telegram.error),
+      }),
     );
     return 2;
   }
@@ -172,7 +182,15 @@ export async function main(
         (err.status === 401 || err.status === 400)
       ) {
         console.error(
-          JSON.stringify({ event: "spend.config", error: err.message }),
+          JSON.stringify({
+            event: "spend.config",
+            error: redactAddresses(
+              err.message,
+              [...liveList.recipients, ...liveList.moderators].map(
+                (row) => row.address,
+              ),
+            ),
+          }),
         );
         return 2;
       }
@@ -210,7 +228,10 @@ export async function main(
           (err.status === 401 || err.status === 400)
         ) {
           console.error(
-            JSON.stringify({ event: "spend.config", error: err.message }),
+            JSON.stringify({
+              event: "spend.config",
+              error: redactAddresses(err.message, [address]),
+            }),
           );
           return 2;
         }
@@ -243,7 +264,7 @@ export async function main(
           JSON.stringify({
             ts: instant.toISOString(),
             event: "spend.skip",
-            address: row.address,
+            addressRef: addressRef(row.address, loaded.config.giftsApiToken),
             reason: row.reason,
           }),
         );
