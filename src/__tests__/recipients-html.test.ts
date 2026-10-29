@@ -363,3 +363,16 @@ describe('renderUnconfiguredHtml', () => {
     expect(html).not.toContain('action="/moderators/payments"');
   });
 });
+
+describe('drain state', () => {
+  it('shows Draining or Drained under the Spend block only while drain mode is on', () => {
+    const base = { sats: 10, usd: 1, lightningAddress: 'x@y.com' };
+    expect(renderUnconfiguredHtml(base)).not.toContain('Payouts');
+    const draining = renderUnconfiguredHtml({ ...base, drain: 'draining' });
+    expect(draining).toContain('<p class="kicker">Payouts</p>');
+    expect(draining).toContain('<p class="muted">Draining</p>');
+    const drained = renderUnconfiguredHtml({ ...base, drain: 'drained' });
+    expect(drained).toContain('<p class="muted">Drained</p>');
+    expect(drained).not.toContain('Draining');
+  });
+});

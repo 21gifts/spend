@@ -3,6 +3,8 @@ export interface DashboardData {
   sats: number | null;
   usd: number | null;
   lightningAddress: string | null;
+  /** Set only while drain mode is on. */
+  drain?: 'draining' | 'drained';
 }
 
 /**
