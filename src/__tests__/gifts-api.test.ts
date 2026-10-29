@@ -197,6 +197,7 @@ describe("GiftsApi", () => {
   it("dailyInstruction accepts every skip reason", async () => {
     const reasons = [
       "no_passkey",
+      "no_wallet",
       "no_post",
       "no_media",
       "not_eligible",
@@ -423,6 +424,8 @@ const IMPORT_BODY = {
   moderators: [] as Array<{ address: string; amountUsd: number }>,
 };
 
+const NO_WALLET_NONE = { recipients: 0, moderators: 0 };
+
 function fullDocument(
   overrides?: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -450,9 +453,10 @@ describe("GiftsApi roster", () => {
         return new Response(JSON.stringify(fullDocument()), { status: 200 });
       },
     );
-    await expect(api.importRosterDocument(IMPORT_BODY)).resolves.toEqual(
-      fullDocument(),
-    );
+    await expect(api.importRosterDocument(IMPORT_BODY)).resolves.toEqual({
+      ...fullDocument(),
+      noWallet: NO_WALLET_NONE,
+    });
     expect(seenUrl).toBe("https://api.21.gifts/funding/daily-roster/document");
     expect(sent).toEqual(IMPORT_BODY);
     expect(sent).not.toHaveProperty("defaultAmountUsd");
@@ -522,7 +526,10 @@ describe("GiftsApi roster", () => {
           return new Response(JSON.stringify(fullDocument()), { status: 200 });
         },
       );
-      await expect(row.run(api)).resolves.toEqual(fullDocument());
+      await expect(row.run(api)).resolves.toEqual({
+        ...fullDocument(),
+        noWallet: NO_WALLET_NONE,
+      });
       expect(seenUrl).toBe(`https://api.21.gifts${row.path}`);
       expect(sent).toEqual(row.body);
     }
@@ -543,6 +550,58 @@ describe("GiftsApi roster", () => {
       recipients: [{ address: "other@b.com", amountUsd: 9 }],
     });
     expect(second.recipients).toEqual(added.recipients);
+  });
+
+  it("leaves rows with a null address out and counts them as no_wallet", async () => {
+    const api = new GiftsApi(
+      "https://api.21.gifts",
+      "tok",
+      async () =>
+        new Response(
+          JSON.stringify(
+            fullDocument({
+              recipients: [
+                {
+                  accountId: "acc-1",
+                  username: "a",
+                  address: "a@b.com",
+                  amountUsd: 1,
+                },
+                {
+                  accountId: "acc-2",
+                  username: "c",
+                  address: null,
+                  amountUsd: 2,
+                },
+                {
+                  accountId: "acc-3",
+                  username: "d",
+                  address: "d@b.com",
+                  amountUsd: 3,
+                },
+              ],
+              moderators: [
+                {
+                  accountId: "acc-4",
+                  username: "e",
+                  address: null,
+                  amountUsd: 4,
+                },
+              ],
+            }),
+          ),
+          { status: 200 },
+        ),
+    );
+    await expect(api.importRosterDocument(IMPORT_BODY)).resolves.toEqual({
+      ...fullDocument(),
+      recipients: [
+        { address: "a@b.com", amountUsd: 1 },
+        { address: "d@b.com", amountUsd: 3 },
+      ],
+      moderators: [],
+      noWallet: { recipients: 1, moderators: 1 },
+    });
   });
 
   it("rejects a malformed roster document as status 0", async () => {
@@ -658,6 +717,30 @@ describe("GiftsApi roster", () => {
         defaultAmountUsd: 1,
         recipients: [],
         moderators: [{ address: "a@b.com" }],
+      },
+      {
+        comment: "x",
+        paymentsEnabled: true,
+        moderatorPaymentsEnabled: true,
+        defaultAmountUsd: 1,
+        recipients: [{ amountUsd: 1 }],
+        moderators: [],
+      },
+      {
+        comment: "x",
+        paymentsEnabled: true,
+        moderatorPaymentsEnabled: true,
+        defaultAmountUsd: 1,
+        recipients: [{ address: "a@b.com", amountUsd: 1 }],
+        moderators: [{ address: null, amountUsd: 0 }],
+      },
+      {
+        comment: "x",
+        paymentsEnabled: true,
+        moderatorPaymentsEnabled: true,
+        defaultAmountUsd: 1,
+        recipients: [{ address: null, amountUsd: 1 }],
+        moderators: null,
       },
     ];
     for (const payload of payloads) {

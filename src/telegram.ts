@@ -177,6 +177,7 @@ function formatSwissNumber(n: number): string {
 /** German why-text for recipient skip/fail codes; other reasons stay the raw code. */
 const SKIP_REASON_DISPLAY: Readonly<Record<string, string>> = {
   no_passkey: 'kein Passwort',
+  no_wallet: 'keine Wallet',
   no_post: 'hat sich nicht vorgestellt',
   no_media: 'kein Foto oder Video',
   not_eligible: 'nicht berechtigt',

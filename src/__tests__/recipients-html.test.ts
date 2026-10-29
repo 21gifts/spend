@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { renderLoginHtml, renderRecipientsHtml, renderUnconfiguredHtml } from '../recipients-html';
+import {
+  renderDashboardHtml,
+  renderLoginHtml,
+  renderRecipientsHtml,
+  renderUnconfiguredHtml,
+} from '../recipients-html';
 
 describe('renderLoginHtml', () => {
   it('renders the form, an error, and the disabled state', () => {
@@ -361,5 +366,23 @@ describe('renderUnconfiguredHtml', () => {
     expect(html).not.toContain('Payment comment');
     expect(html).not.toContain('action="/recipients/payments"');
     expect(html).not.toContain('action="/moderators/payments"');
+  });
+});
+
+describe('moderators without a wallet', () => {
+  it('notes the moderator rows left out for no_wallet only when there are any', () => {
+    const data = { sats: 10, usd: 1, lightningAddress: 'x@y.com' };
+    const panel = {
+      kind: 'editor' as const,
+      recipients: [],
+      moderators: [{ address: 'bob@example.com', amountUsd: 7.5 }],
+      comment: '21gifts daily',
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+    };
+    expect(renderDashboardHtml(data, panel)).not.toContain('verified wallet');
+    const noted = renderDashboardHtml(data, { ...panel, moderatorsNoWallet: 2 });
+    expect(noted).toContain('<p class="muted">2 without a verified wallet (no_wallet)</p>');
+    expect(noted).toContain('bob@example.com');
   });
 });

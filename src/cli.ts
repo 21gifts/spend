@@ -204,6 +204,16 @@ export async function main(
       );
       return 3;
     }
+    if (flags.onlyAddresses === undefined && imported.noWallet.recipients > 0) {
+      console.warn(
+        JSON.stringify({
+          ts: instant.toISOString(),
+          event: "spend.skip",
+          reason: "no_wallet",
+          count: imported.noWallet.recipients,
+        }),
+      );
+    }
     const addresses =
       flags.onlyAddresses !== undefined
         ? flags.onlyAddresses
