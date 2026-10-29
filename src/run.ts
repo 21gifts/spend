@@ -99,7 +99,8 @@ function selectTargets(
  * preflight. Spend does not read `welcome.jsonl` to decide a daily skip. HTTP 403 with
  * error exactly `Welcome gift already paid` is recorded as skip reason `welcome_paid`
  * (any bucket) and writes no JSONL row; that skip does not set `summary.reason`.
- * HTTP 403 `Passkey required` is `no_passkey`. HTTP 403 `Forum post required` is
+ * HTTP 403 `Passkey required` is `no_passkey`. HTTP 403 `Wallet required` is
+ * `no_wallet` (any bucket, no JSONL row). HTTP 403 `Forum post required` is
  * `no_media` for welcome and `no_post` otherwise. HTTP 403 `Funding grant required`
  * is `not_eligible` (any bucket). When {@link RunOptions.bucket} is `'moderator'`, uses
  * the moderator JSONL and never sends `messageId` on `createInvoice`. When
@@ -414,6 +415,15 @@ async function runDayLocked(
       ) {
         log('spend.skip', { addressRef: ref(recipient.address), reason: 'no_passkey' });
         skipped.push({ ...lineBase, reason: 'no_passkey' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Wallet required'
+      ) {
+        log('spend.skip', { addressRef: ref(recipient.address), reason: 'no_wallet' });
+        skipped.push({ ...lineBase, reason: 'no_wallet' });
         continue;
       }
       if (

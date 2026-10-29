@@ -197,6 +197,7 @@ describe("GiftsApi", () => {
   it("dailyInstruction accepts every skip reason", async () => {
     const reasons = [
       "no_passkey",
+      "no_wallet",
       "no_post",
       "no_media",
       "not_eligible",

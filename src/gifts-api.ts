@@ -19,6 +19,7 @@ export class GiftsApiError extends Error {
 
 const DAILY_SKIP_REASONS = [
   "no_passkey",
+  "no_wallet",
   "no_post",
   "no_media",
   "not_eligible",
