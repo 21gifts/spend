@@ -4840,6 +4840,116 @@ describe("createServer", () => {
     warn.mockRestore();
   });
 
+  it("POST /ping daily records no_wallet without a failed row and pays a later ping the same day", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-no-wallet-ping-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    const preimage = "11".repeat(32);
+    const paymentHash = createHash("sha256")
+      .update(Buffer.from(preimage, "hex"))
+      .digest("hex");
+    const hub = parseLndhubUri(
+      "lndhub://admin:secret@https://lightning.space/lndhub",
+    );
+    if (hub === null) {
+      throw new Error("fixture");
+    }
+    const clock = (): Date => new Date("2026-08-25T12:00:00.000Z");
+    let walletReady = false;
+    let payinvoiceCalls = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const href = String(url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (href.includes("/invoices/proof")) {
+        return new Response(JSON.stringify({ status: "paid" }), { status: 200 });
+      }
+      if (method === "POST" && href.endsWith("/invoices")) {
+        if (!walletReady) {
+          return new Response(JSON.stringify({ error: "Wallet required" }), {
+            status: 403,
+          });
+        }
+        return new Response(
+          JSON.stringify({ id: "inv1", pr: "lnbc1", paymentHash, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith("/auth")) {
+        return new Response(JSON.stringify({ access_token: "t" }), { status: 200 });
+      }
+      if (href.endsWith("/balance")) {
+        return new Response(
+          JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith("/payinvoice")) {
+        payinvoiceCalls += 1;
+        return new Response(JSON.stringify({ payment_preimage: preimage }), {
+          status: 200,
+        });
+      }
+      throw new Error(`unexpected ${method} ${href}`);
+    };
+    const logs: string[] = [];
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((line?: unknown) => {
+        logs.push(String(line));
+      });
+    const ping = () =>
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      });
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: "true" },
+        now: clock,
+        fetchImpl,
+        runDay: (config, options) =>
+          executeRunDay(config, options, {
+            gifts: new GiftsApi(config.giftsApiUrl, config.giftsApiToken, fetchImpl),
+            lndhub: new LndhubClient(hub, fetchImpl),
+            now: clock,
+            btcUsd: async () => 100_000,
+          }),
+      });
+      expect((await app.fetch(ping())).status).toBe(202);
+      await app.drainPayouts();
+      expect(logs.some((line) => line.includes('"reason":"no_wallet"'))).toBe(true);
+      expect(existsSync(join(dir, "2026-08-25.jsonl"))).toBe(false);
+      expect(payinvoiceCalls).toBe(0);
+
+      walletReady = true;
+      const again = await app.fetch(ping());
+      expect(again.status).toBe(202);
+      expect(await again.json()).toEqual({ status: "accepted" });
+      await app.drainPayouts();
+      expect(payinvoiceCalls).toBe(1);
+      const daily = readFileSync(join(dir, "2026-08-25.jsonl"), "utf8");
+      expect(daily).toContain('"status":"paid"');
+      expect(daily).not.toContain('"status":"failed"');
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("POST /ping daily records welcome_paid when the API refuses the invoice after a welcome pay", async () => {
     const dir = mkdtempSync(join(tmpdir(), "spend-welcome-day-ping-"));
     const seed = join(dir, "seed.json");
