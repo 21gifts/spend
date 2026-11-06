@@ -336,6 +336,24 @@ describe('formatPayoutMessage', () => {
     expect(text).not.toContain('(no_passkey)');
   });
 
+  it('renders no_wallet skip as (keine Wallet)', () => {
+    const text = formatPayoutMessage(
+      baseSummary({
+        skipped: [
+          {
+            address: 'alice@walletofsatoshi.com',
+            amountSats: 1000,
+            amountUsd: 1,
+            reason: 'no_wallet',
+          },
+        ],
+      }),
+      'cli',
+    );
+    expect(text).toContain('(keine Wallet)');
+    expect(text).not.toContain('(no_wallet)');
+  });
+
   it('renders no_post skip as (hat sich nicht vorgestellt)', () => {
     const text = formatPayoutMessage(
       baseSummary({

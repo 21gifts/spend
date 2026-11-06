@@ -843,6 +843,127 @@ describe('runDay', () => {
     expect(state.isFinished()).toBe(false);
   });
 
+  it('treats POST 403 Wallet required as no_wallet and pays the same address on a later run that day', async () => {
+    let walletReady = false;
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async (url) => {
+        if (url.endsWith('/proof')) {
+          return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+        }
+        invoices += 1;
+        if (!walletReady) {
+          return new Response(JSON.stringify({ error: 'Wallet required' }), { status: 403 });
+        }
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const first = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    expect(first.exitCode).toBe(0);
+    expect(first.summary.reason).toBeUndefined();
+    expect(first.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_wallet' }),
+    ]);
+    expect(first.summary.failed).toEqual([]);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+
+    walletReady = true;
+    const second = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(second.exitCode).toBe(0);
+    expect(invoices).toBe(2);
+    expect(second.summary.paid).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    expect(state.load().at(-1)).toMatchObject({ address: 'a@b.com', status: 'paid' });
+  });
+
+  it('treats POST 403 Wallet required as no_wallet for moderator', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Wallet required' }), { status: 403 });
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
+    });
+    const state = memoryState('', 'moderator');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23', bucket: 'moderator' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_wallet' }),
+    ]);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('still persists failed for a 403 with any other error text', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Wallet missing' }), { status: 403 });
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(4);
+    expect(result.summary.skipped).toEqual([]);
+    expect(state.load()).toEqual([expect.objectContaining({ address: 'a@b.com', status: 'failed' })]);
+  });
+
   it('treats POST 403 Forum post required as no_post without persisting failed', async () => {
     let invoices = 0;
     const gifts = new GiftsApi(
