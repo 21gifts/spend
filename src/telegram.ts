@@ -1,4 +1,5 @@
 import { displayLightningAddress } from './html-shell';
+import { redactLogFields } from './log-redact';
 
 /** Who triggered the payout that may notify Telegram. */
 export type TelegramSource = 'scheduler' | 'catchup' | 'cli' | 'ping';
@@ -176,6 +177,7 @@ function formatSwissNumber(n: number): string {
 /** German why-text for recipient skip/fail codes; other reasons stay the raw code. */
 const SKIP_REASON_DISPLAY: Readonly<Record<string, string>> = {
   no_passkey: 'kein Passwort',
+  no_wallet: 'keine Wallet',
   no_post: 'hat sich nicht vorgestellt',
   no_media: 'kein Foto oder Video',
   not_eligible: 'nicht berechtigt',
@@ -326,7 +328,7 @@ function redactToken(text: string, token: string): string {
 }
 
 function logTelegram(fields: Record<string, string | number | boolean>): void {
-  console.warn(JSON.stringify({ ts: new Date().toISOString(), event: 'spend.telegram', ...fields }));
+  console.warn(JSON.stringify({ ts: new Date().toISOString(), event: 'spend.telegram', ...redactLogFields(fields) }));
 }
 
 /**

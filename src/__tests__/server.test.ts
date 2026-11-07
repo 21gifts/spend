@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,6 +13,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { GiftsApi } from "../gifts-api";
 import { LndhubClient, parseLndhubUri } from "../lndhub";
+import { addressRef } from "../log-redact";
 import { appendRetryOwed, loadRetryOwed, retryQueuePath } from "../retry-queue";
 import { runDay as executeRunDay } from "../run";
 import { createServer, parseBindAddr } from "../server";
@@ -87,6 +90,7 @@ afterAll(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("parseBindAddr", () => {
@@ -459,6 +463,92 @@ describe("createServer", () => {
     }
   });
 
+  it("POST /ping enqueue error redacts the address in the log", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "spend-retry-enqueue-log-"));
+    const address = "alice @ example.com";
+    const dir = join(parent, address);
+    mkdirSync(dir);
+    const seed = join(parent, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    chmodSync(dir, 0o555);
+    const runDay = vi.fn(async () => ({
+      exitCode: 3,
+      summary: {
+        day: "2026-08-25",
+        live: true,
+        ok: false,
+        exitCode: 3,
+        reason: "insufficient_balance",
+        needed: 1500,
+        available: 10,
+        paid: [],
+        skipped: [],
+        failed: [],
+        uncertain: [],
+        dryRun: [],
+      },
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const res = await app.fetch(
+        pingReq({
+          headers: {
+            authorization: "Bearer tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            address,
+            messageId: PING_MESSAGE_ID,
+            amountUsd: 3,
+            comment: PING_COMMENT,
+          }),
+        }),
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      await app.drainPayouts();
+      const enqueueLogs = warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.retry.enqueue"'));
+      expect(enqueueLogs.length).toBeGreaterThan(0);
+      for (const line of enqueueLogs) {
+        const parsedLog = JSON.parse(line) as Record<string, unknown>;
+        expect(typeof parsedLog.error).toBe("string");
+        expect(String(parsedLog.error)).toContain("[address]");
+        expect(String(parsedLog.error)).not.toContain("@");
+        expect(line).not.toContain("@");
+        expect(line.toLowerCase()).not.toContain("alice");
+        expect(line.toLowerCase()).not.toContain("example.com");
+      }
+    } finally {
+      warn.mockRestore();
+      chmodSync(dir, 0o755);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it("POST /ping is 400 for an unlisted ping without amountUsd and comment", async () => {
     const dir = mkdtempSync(join(tmpdir(), "spend-retry-ping-unlisted-"));
     const seed = join(dir, "seed.json");
@@ -607,6 +697,150 @@ describe("createServer", () => {
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("startRetryCatchup payout error redacts the owed address in the log", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-retry-catchup-error-log-"));
+    const address = "alice smith@x.com";
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, "2026-08-25", {
+      address,
+      bucket: "daily",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: PING_COMMENT,
+    });
+    const runDay = vi.fn(async () => {
+      throw new Error(`pay failed for ${address}`);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(runDay).toHaveBeenCalled(), {
+          timeout: 2000,
+        });
+        await app.drainPayouts();
+        const retryLogs = warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .filter((line) => {
+            try {
+              return (
+                (JSON.parse(line) as { event?: string }).event === "spend.retry"
+              );
+            } catch {
+              return false;
+            }
+          });
+        expect(retryLogs.length).toBeGreaterThan(0);
+        for (const line of retryLogs) {
+          const parsedLog = JSON.parse(line) as Record<string, unknown>;
+          expect(parsedLog.error).toBe("pay failed for [address]");
+          expect(line).not.toContain("@");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("smith");
+          expect(line.toLowerCase()).not.toContain("x.com");
+        }
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("startRetryCatchup tick error redacts an address in the log", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "spend-retry-tick-error-log-"));
+    const dir = join(parent, "alice @ example.com");
+    mkdirSync(dir);
+    const seed = join(parent, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "bob@example.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    appendRetryOwed(dir, "2026-08-25", {
+      address: "bob@example.com",
+      bucket: "daily",
+      messageId: PING_MESSAGE_ID,
+      amountUsd: 1,
+      comment: PING_COMMENT,
+    });
+    const queue = retryQueuePath(dir, "2026-08-25");
+    chmodSync(queue, 0o000);
+    const runDay = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const retryLogs = (): string[] =>
+      warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.retry"'));
+    try {
+      const app = createServer({
+        env: {
+          ...env,
+          STATE_DIR: dir,
+          RECIPIENTS_FILE: seed,
+          SPEND_LIVE: "true",
+        },
+        now: () => new Date("2026-08-25T12:00:00.000Z"),
+        retryCatchupMs: 60_000,
+        runDay,
+        fetchImpl: withRosterApi(async () => {
+          throw new Error("no network");
+        }),
+      });
+      const { stop } = app.startRetryCatchup();
+      try {
+        await vi.waitFor(() => expect(retryLogs().length).toBeGreaterThan(0), {
+          timeout: 2000,
+        });
+        for (const line of retryLogs()) {
+          const parsedLog = JSON.parse(line) as Record<string, unknown>;
+          expect(parsedLog.error).toBe("[address]");
+          expect(line).not.toContain("@");
+          expect(line.toLowerCase()).not.toContain("alice");
+          expect(line.toLowerCase()).not.toContain("example.com");
+          expect(line.toLowerCase()).not.toContain("bob");
+        }
+        expect(runDay).not.toHaveBeenCalled();
+      } finally {
+        stop();
+      }
+    } finally {
+      warn.mockRestore();
+      chmodSync(queue, 0o644);
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 
@@ -1834,6 +2068,27 @@ describe("createServer", () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ status: "skipped", reason: "paid" });
       expect(runDay).not.toHaveBeenCalled();
+      const pingLogs = warn.mock.calls
+        .map((args) => {
+          expect(args).toHaveLength(1);
+          return String(args[0]);
+        })
+        .filter((line) => line.includes('"event":"spend.ping"'));
+      expect(pingLogs.length).toBeGreaterThan(0);
+      const line = pingLogs[0] ?? "";
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog.status).toBe("skipped");
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain("alice@walletofsatoshi.com");
+      expect(line).not.toContain("@");
+      for (const logged of pingLogs) {
+        expect(logged).not.toContain("@");
+        expect(logged.toLowerCase()).not.toContain("alice");
+        expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+      }
     } finally {
       warn.mockRestore();
       rmSync(dir, { recursive: true, force: true });
@@ -1965,6 +2220,207 @@ describe("createServer", () => {
       }),
     );
     await app.drainPayouts();
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    expect(pingLogs.length).toBeGreaterThan(0);
+    const line = pingLogs[0] ?? "";
+    const parsedLog = JSON.parse(line) as Record<string, unknown>;
+    expect(parsedLog.addressRef).toBe(
+      addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+    );
+    expect(parsedLog.status).toBe("accepted");
+    expect(parsedLog).not.toHaveProperty("address");
+    expect(line).not.toContain("alice@walletofsatoshi.com");
+    expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    warn.mockRestore();
+  });
+
+  it("POST /ping mixed-case address logs the same addressRef as lower-case", async () => {
+    const runDay = vi.fn(async () => ({ exitCode: 0 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const mixed = "Alice@WalletOfSatoshi.COM";
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: mixed,
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await vi.waitFor(() => {
+      expect(runDay).toHaveBeenCalled();
+    });
+    await app.drainPayouts();
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    expect(pingLogs.length).toBeGreaterThan(0);
+    const line = pingLogs[0] ?? "";
+    const parsedLog = JSON.parse(line) as Record<string, unknown>;
+    expect(parsedLog.addressRef).toBe(
+      addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+    );
+    expect(parsedLog.addressRef).toBe(addressRef(mixed, env.GIFTS_API_TOKEN));
+    expect(parsedLog).not.toHaveProperty("address");
+    expect(line).not.toContain(mixed);
+    expect(line).not.toContain("alice@walletofsatoshi.com");
+    expect(line).not.toContain("@");
+    for (const logged of pingLogs) {
+      expect(logged).not.toContain("@");
+      expect(logged.toLowerCase()).not.toContain("alice");
+      expect(logged.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    warn.mockRestore();
+  });
+
+  it("POST /ping async payout error logs addressRef and redacts an address in error", async () => {
+    const runDay = vi.fn(async () => {
+      throw new Error("pay failed for alice@walletofsatoshi.com");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await app.drainPayouts();
+    await vi.waitFor(() => {
+      expect(
+        warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .some((line) => line.includes('"status":"error"')),
+      ).toBe(true);
+    });
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    for (const line of pingLogs) {
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef("alice@walletofsatoshi.com", env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain("alice@walletofsatoshi.com");
+      expect(line).not.toContain("@");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("walletofsatoshi");
+    }
+    const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
+    expect(errorLine).toBeDefined();
+    const errorLog = JSON.parse(errorLine ?? "") as Record<string, unknown>;
+    expect(errorLog.error).toBe("pay failed for [address]");
+    warn.mockRestore();
+  });
+
+  it("POST /ping async payout error redacts a stored address that contains whitespace", async () => {
+    const address = "alice @ example.com";
+    const runDay = vi.fn(async () => {
+      throw new Error(`pay failed for ${address}`);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...env, SPEND_LIVE: "true" },
+      now: () => new Date("2026-08-25T12:00:00.000Z"),
+      runDay,
+      fetchImpl: withRosterApi(),
+    });
+    const res = await app.fetch(
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address,
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    await app.drainPayouts();
+    await vi.waitFor(() => {
+      expect(
+        warn.mock.calls
+          .map((args) => {
+            expect(args).toHaveLength(1);
+            return String(args[0]);
+          })
+          .some((line) => line.includes('"status":"error"')),
+      ).toBe(true);
+    });
+    const pingLogs = warn.mock.calls
+      .map((args) => {
+        expect(args).toHaveLength(1);
+        return String(args[0]);
+      })
+      .filter((line) => line.includes('"event":"spend.ping"'));
+    for (const line of pingLogs) {
+      const parsedLog = JSON.parse(line) as Record<string, unknown>;
+      expect(parsedLog.addressRef).toBe(
+        addressRef(address, env.GIFTS_API_TOKEN),
+      );
+      expect(parsedLog).not.toHaveProperty("address");
+      expect(line).not.toContain(address);
+      expect(line).not.toContain("@");
+      expect(line.toLowerCase()).not.toContain("alice");
+      expect(line.toLowerCase()).not.toContain("example.com");
+    }
+    const errorLine = pingLogs.find((line) => line.includes('"status":"error"'));
+    expect(errorLine).toBeDefined();
+    const errorLog = JSON.parse(errorLine ?? "") as Record<string, unknown>;
+    expect(errorLog.error).toBe("pay failed for [address]");
     warn.mockRestore();
   });
 
@@ -4384,6 +4840,116 @@ describe("createServer", () => {
     warn.mockRestore();
   });
 
+  it("POST /ping daily records no_wallet without a failed row and pays a later ping the same day", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-no-wallet-ping-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      })}\n`,
+    );
+    const preimage = "11".repeat(32);
+    const paymentHash = createHash("sha256")
+      .update(Buffer.from(preimage, "hex"))
+      .digest("hex");
+    const hub = parseLndhubUri(
+      "lndhub://admin:secret@https://lightning.space/lndhub",
+    );
+    if (hub === null) {
+      throw new Error("fixture");
+    }
+    const clock = (): Date => new Date("2026-08-25T12:00:00.000Z");
+    let walletReady = false;
+    let payinvoiceCalls = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const href = String(url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (href.includes("/invoices/proof")) {
+        return new Response(JSON.stringify({ status: "paid" }), { status: 200 });
+      }
+      if (method === "POST" && href.endsWith("/invoices")) {
+        if (!walletReady) {
+          return new Response(JSON.stringify({ error: "Wallet required" }), {
+            status: 403,
+          });
+        }
+        return new Response(
+          JSON.stringify({ id: "inv1", pr: "lnbc1", paymentHash, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith("/auth")) {
+        return new Response(JSON.stringify({ access_token: "t" }), { status: 200 });
+      }
+      if (href.endsWith("/balance")) {
+        return new Response(
+          JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }),
+          { status: 200 },
+        );
+      }
+      if (href.endsWith("/payinvoice")) {
+        payinvoiceCalls += 1;
+        return new Response(JSON.stringify({ payment_preimage: preimage }), {
+          status: 200,
+        });
+      }
+      throw new Error(`unexpected ${method} ${href}`);
+    };
+    const logs: string[] = [];
+    const warn = vi
+      .spyOn(console, "warn")
+      .mockImplementation((line?: unknown) => {
+        logs.push(String(line));
+      });
+    const ping = () =>
+      pingReq({
+        headers: {
+          authorization: "Bearer tok",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "alice@walletofsatoshi.com",
+          messageId: PING_MESSAGE_ID,
+          amountUsd: 1,
+          comment: PING_COMMENT,
+        }),
+      });
+    try {
+      const app = createServer({
+        env: { ...env, STATE_DIR: dir, RECIPIENTS_FILE: seed, SPEND_LIVE: "true" },
+        now: clock,
+        fetchImpl,
+        runDay: (config, options) =>
+          executeRunDay(config, options, {
+            gifts: new GiftsApi(config.giftsApiUrl, config.giftsApiToken, fetchImpl),
+            lndhub: new LndhubClient(hub, fetchImpl),
+            now: clock,
+            btcUsd: async () => 100_000,
+          }),
+      });
+      expect((await app.fetch(ping())).status).toBe(202);
+      await app.drainPayouts();
+      expect(logs.some((line) => line.includes('"reason":"no_wallet"'))).toBe(true);
+      expect(existsSync(join(dir, "2026-08-25.jsonl"))).toBe(false);
+      expect(payinvoiceCalls).toBe(0);
+
+      walletReady = true;
+      const again = await app.fetch(ping());
+      expect(again.status).toBe(202);
+      expect(await again.json()).toEqual({ status: "accepted" });
+      await app.drainPayouts();
+      expect(payinvoiceCalls).toBe(1);
+      const daily = readFileSync(join(dir, "2026-08-25.jsonl"), "utf8");
+      expect(daily).toContain('"status":"paid"');
+      expect(daily).not.toContain('"status":"failed"');
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("POST /ping daily records welcome_paid when the API refuses the invoice after a welcome pay", async () => {
     const dir = mkdtempSync(join(tmpdir(), "spend-welcome-day-ping-"));
     const seed = join(dir, "seed.json");
@@ -5247,7 +5813,7 @@ describe("recipient editor", () => {
     expect(cookieFrom(res)).toContain("spend_session=v1.");
   });
 
-  it("logs in and lists the moderator editor on GET /", async () => {
+  it("logs in and links to the payment pages on GET /", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: withRosterApi(async () => {
@@ -5266,9 +5832,11 @@ describe("recipient editor", () => {
     expect(html).toContain("Log out");
     expect(html).toContain('href="https://21.gifts/grants/payments/comment"');
     expect(html).toContain('href="https://21.gifts/grants/payments/amounts"');
-    expect(html).toContain("<h2>Moderators</h2>");
-    expect(html).toContain("No moderators");
-    expect(html).toContain('aria-label="Moderator payments"');
+    expect(html).toContain('href="https://21.gifts/grants/payments/moderators"');
+    expect(html).toContain(">Moderator payments</a>");
+    expect(html).not.toContain("<h2>Moderators</h2>");
+    expect(html).not.toContain("No moderators");
+    expect(html).not.toContain('aria-label="Moderator payments"');
     expect(html).not.toContain("alice@walletofsatoshi.com");
     expect(html).not.toContain(">21gifts daily</textarea>");
     expect(html).not.toContain("Payment comment");
@@ -5278,6 +5846,10 @@ describe("recipient editor", () => {
     expect(html).not.toContain('action="/recipients/add"');
     expect(html).not.toContain('action="/recipients/update"');
     expect(html).not.toContain('action="/recipients/delete"');
+    expect(html).not.toContain('action="/moderators/add"');
+    expect(html).not.toContain('action="/moderators/update"');
+    expect(html).not.toContain('action="/moderators/delete"');
+    expect(html).not.toContain('action="/moderators/payments"');
   });
 
   it("GET /recipients without a cookie redirects to /", async () => {
@@ -5939,8 +6511,8 @@ describe("recipient editor", () => {
   });
 });
 
-describe("moderator editor", () => {
-  it("adds, updates, and deletes moderators", async () => {
+describe("moderator dashboard routes", () => {
+  it("POST /moderators add, update, delete, and payments are 404 with no session check", async () => {
     const sess = sessionEnv();
     const app = createServer({
       env: sess,
@@ -5950,235 +6522,53 @@ describe("moderator editor", () => {
     });
     const token = await login(app);
     const cookie = `spend_session=${token}`;
-    const add = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
     const seedRaw = liveFileRaw(sess.STATE_DIR);
-    expect(add.status).toBe(303);
-    expect(add.headers.get("location")).toBe("/");
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect((await fetchDailyRoster(app)).moderators).toEqual([
-      { address: "bob@walletofsatoshi.com", amountUsd: 2 },
-    ]);
-    const dup = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=9",
-      }),
-    );
-    expect(dup.status).toBe(200);
-    expect(await dup.text()).toContain("Address already listed");
-    const dupCase = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=Bob@WalletOfSatoshi.com&amountUsd=9",
-      }),
-    );
-    expect(dupCase.status).toBe(200);
-    expect(await dupCase.text()).toContain("Address already listed");
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect((await fetchDailyRoster(app)).moderators).toEqual([
-      { address: "bob@walletofsatoshi.com", amountUsd: 2 },
-    ]);
-    const badAdd = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=not-an-address&amountUsd=2",
-      }),
-    );
-    expect(await badAdd.text()).toContain("Invalid address or amount");
-    const update = await app.fetch(
-      req("http://127.0.0.1/moderators/update", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=3",
-      }),
-    );
-    expect(update.status).toBe(303);
-    expect(update.headers.get("location")).toBe("/");
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect((await fetchDailyRoster(app)).moderators).toEqual([
-      { address: "bob@walletofsatoshi.com", amountUsd: 3 },
-    ]);
-    const unknown = await app.fetch(
-      req("http://127.0.0.1/moderators/update", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=nobody@walletofsatoshi.com&amountUsd=3",
-      }),
-    );
-    expect(await unknown.text()).toContain("Unknown address");
-    const badUsd = await app.fetch(
-      req("http://127.0.0.1/moderators/update", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=0",
-      }),
-    );
-    expect(await badUsd.text()).toContain("Invalid address or amount");
-    const listed = await app.fetch(
-      req("http://127.0.0.1/", { headers: { cookie } }),
-    );
-    expect(await listed.text()).toContain('value="3"');
-    const del = await app.fetch(
-      req("http://127.0.0.1/moderators/delete", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com",
-      }),
-    );
-    expect(del.status).toBe(303);
-    expect(del.headers.get("location")).toBe("/");
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect((await fetchDailyRoster(app)).moderators).toEqual([]);
-    const delUnknown = await app.fetch(
-      req("http://127.0.0.1/moderators/delete", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=bob@walletofsatoshi.com",
-      }),
-    );
-    expect(await delUnknown.text()).toContain("Unknown address");
-    const empty = await app.fetch(
-      req("http://127.0.0.1/", { headers: { cookie } }),
-    );
-    expect(await empty.text()).toContain("No moderators");
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect((await fetchDailyRoster(app)).recipients).toEqual([
-      { address: "alice@walletofsatoshi.com", amountUsd: 1 },
-    ]);
-  });
-
-  it("unauthenticated POST /moderators/add redirects to /", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: withRosterApi(async () => {
-        throw new Error("no network");
-      }),
-    });
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: "address=bob@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/");
-  });
-
-  it("rejects a cross-origin moderator mutation", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: withRosterApi(async () => {
-        throw new Error("no network");
-      }),
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-          origin: "https://evil.example",
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it("POST /moderators/add is 503 when the password is unset", async () => {
-    const app = createServer({
+    const before = await fetchDailyRoster(app);
+    const paths = [
+      ["/moderators/add", "address=bob@walletofsatoshi.com&amountUsd=2"],
+      ["/moderators/update", "address=alice@walletofsatoshi.com&amountUsd=3"],
+      ["/moderators/delete", "address=alice@walletofsatoshi.com"],
+      ["/moderators/payments", "enabled=off"],
+    ] as const;
+    for (const [path, body] of paths) {
+      const authed = await app.fetch(
+        req(`http://127.0.0.1${path}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            cookie,
+            origin: "https://evil.example",
+          },
+          body,
+        }),
+      );
+      expect(authed.status).toBe(404);
+      expect(await authed.text()).toBe("Not found");
+      const open = await app.fetch(
+        req(`http://127.0.0.1${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body,
+        }),
+      );
+      expect(open.status).toBe(404);
+      expect(await open.text()).toBe("Not found");
+    }
+    const unset = createServer({
       env,
       fetchImpl: withRosterApi(async () => {
         throw new Error("no network");
       }),
     });
-    const res = await app.fetch(
+    const unsetRes = await unset.fetch(
       req("http://127.0.0.1/moderators/add", { method: "POST" }),
     );
-    expect(res.status).toBe(503);
+    expect(unsetRes.status).toBe(404);
+    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
+    expect(await fetchDailyRoster(app)).toEqual(before);
   });
 
-  it("POST /moderators/update with a blank address is unknown", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: withRosterApi(async () => {
-        throw new Error("no network");
-      }),
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/update", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "address=&amountUsd=3",
-      }),
-    );
-    expect(await res.text()).toContain("Unknown address");
-  });
-
-  it("POST /moderators/delete with a blank address is unknown", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: withRosterApi(async () => {
-        throw new Error("no network");
-      }),
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/delete", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "address=",
-      }),
-    );
-    expect(await res.text()).toContain("Unknown address");
-  });
-
-  it("editing one roster leaves the other list byte-for-byte unchanged", async () => {
+  it("a daily recipient edit leaves the imported moderator list unchanged", async () => {
     const sess = sessionEnv();
     const recipients = [
       { address: "alice@walletofsatoshi.com", amountUsd: 1 },
@@ -6201,58 +6591,7 @@ describe("moderator editor", () => {
         throw new Error("no network");
       }),
     });
-    const token = await login(app);
-    const cookie = `spend_session=${token}`;
     const seedRaw = liveFileRaw(sess.STATE_DIR);
-    const recipientsBytes = JSON.stringify(recipients);
-    const addMod = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=erin@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
-    expect(addMod.status).toBe(303);
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    const afterModAdd = await fetchDailyRoster(app);
-    expect(JSON.stringify(afterModAdd.recipients)).toBe(recipientsBytes);
-    expect(afterModAdd.moderators).toEqual([
-      { address: "dana@walletofsatoshi.com", amountUsd: 7.5 },
-      { address: "erin@walletofsatoshi.com", amountUsd: 2 },
-    ]);
-    const updateMod = await app.fetch(
-      req("http://127.0.0.1/moderators/update", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=dana@walletofsatoshi.com&amountUsd=8",
-      }),
-    );
-    expect(updateMod.status).toBe(303);
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect(JSON.stringify((await fetchDailyRoster(app)).recipients)).toBe(
-      recipientsBytes,
-    );
-    const delMod = await app.fetch(
-      req("http://127.0.0.1/moderators/delete", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie,
-        },
-        body: "address=erin@walletofsatoshi.com",
-      }),
-    );
-    expect(delMod.status).toBe(303);
-    expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
-    expect(JSON.stringify((await fetchDailyRoster(app)).recipients)).toBe(
-      recipientsBytes,
-    );
     const bearer = {
       authorization: "Bearer tok",
       "content-type": "application/json",
@@ -6270,7 +6609,7 @@ describe("moderator editor", () => {
     expect(addRec.status).toBe(200);
     expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
     const afterRecAdd = (await addRec.json()) as LiveRosterFile;
-    const moderatorsBytes = JSON.stringify(afterRecAdd.moderators);
+    expect(afterRecAdd.moderators).toEqual(moderators);
     expect(afterRecAdd.recipients).toEqual([
       { address: "alice@walletofsatoshi.com", amountUsd: 1 },
       { address: "carol@walletofsatoshi.com", amountUsd: 4 },
@@ -6290,7 +6629,7 @@ describe("moderator editor", () => {
     expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
     expect(
       JSON.stringify(((await updateRec.json()) as LiveRosterFile).moderators),
-    ).toBe(moderatorsBytes);
+    ).toBe(JSON.stringify(moderators));
     const delRec = await app.fetch(
       dailyRosterReq("/daily-roster/recipients/delete", {
         method: "POST",
@@ -6302,7 +6641,7 @@ describe("moderator editor", () => {
     expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
     expect(
       JSON.stringify(((await delRec.json()) as LiveRosterFile).moderators),
-    ).toBe(moderatorsBytes);
+    ).toBe(JSON.stringify(moderators));
   });
 });
 
@@ -6352,10 +6691,11 @@ describe("payment switches", () => {
     const html = await listed.text();
     expect(html).not.toContain('action="/recipients/payments"');
     expect(html).not.toContain("Payment comment");
-    expect(html).toContain('action="/moderators/payments"');
+    expect(html).not.toContain('action="/moderators/payments"');
+    expect(html).toContain('href="https://21.gifts/grants/payments/moderators"');
   });
 
-  it("POST /moderators/payments persists Off and leaves daily payments unchanged", async () => {
+  it("POST /moderators/payments is 404 and leaves both payment flags unchanged", async () => {
     const sess = sessionEnv();
     writeFileSync(
       sess.RECIPIENTS_FILE,
@@ -6386,11 +6726,12 @@ describe("payment switches", () => {
       }),
     );
     const seedRaw = liveFileRaw(sess.STATE_DIR);
-    expect(res.status).toBe(303);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not found");
     expect(liveFileRaw(sess.STATE_DIR)).toBe(seedRaw);
     const live = await fetchDailyRoster(app);
     expect(live.paymentsEnabled).toBe(false);
-    expect(live.moderatorPaymentsEnabled).toBe(false);
+    expect(live.moderatorPaymentsEnabled).toBe(true);
     expect(live.recipients).toEqual([
       { address: "alice@walletofsatoshi.com", amountUsd: 1 },
     ]);
@@ -6410,7 +6751,7 @@ describe("payment switches", () => {
     expect(on.status).toBe(200);
     const afterOn = (await on.json()) as LiveRosterFile;
     expect(afterOn.paymentsEnabled).toBe(true);
-    expect(afterOn.moderatorPaymentsEnabled).toBe(false);
+    expect(afterOn.moderatorPaymentsEnabled).toBe(true);
   });
 
   it("rejects an invalid enabled value without writing", async () => {
@@ -6456,8 +6797,8 @@ describe("payment switches", () => {
         body: "enabled=true",
       }),
     );
-    expect(modInvalid.status).toBe(200);
-    expect(await modInvalid.text()).toContain("Invalid payments switch");
+    expect(modInvalid.status).toBe(404);
+    expect(await modInvalid.text()).toBe("Not found");
     expect(readFileSync(join(sess.STATE_DIR, "recipients.json"), "utf8")).toBe(
       before,
     );
@@ -7030,7 +7371,7 @@ describe("payment switches", () => {
     });
   });
 
-  it("unauthenticated POST /moderators/payments redirects to /", async () => {
+  it("unauthenticated POST /moderators/payments is 404", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: withRosterApi(async () => {
@@ -7044,11 +7385,11 @@ describe("payment switches", () => {
         body: "enabled=off",
       }),
     );
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not found");
   });
 
-  it("daily-roster JSON payments POST ignores Origin, and the moderator cookie switch still rejects it", async () => {
+  it("daily-roster JSON payments POST ignores Origin, and the moderator form is 404", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: withRosterApi(async () => {
@@ -7079,7 +7420,8 @@ describe("payment switches", () => {
         body: "enabled=off",
       }),
     );
-    expect(moderator.status).toBe(403);
+    expect(moderator.status).toBe(404);
+    expect(await moderator.text()).toBe("Not found");
   });
 
   it("daily roster JSON works when the dashboard password is unset", async () => {
@@ -7109,7 +7451,8 @@ describe("payment switches", () => {
         body: "enabled=off",
       }),
     );
-    expect(moderator.status).toBe(503);
+    expect(moderator.status).toBe(404);
+    expect(await moderator.text()).toBe("Not found");
   });
 
   it("GET /recipients/payments and GET /moderators/payments are 404", async () => {
@@ -7370,140 +7713,29 @@ describe("daily roster API failures", () => {
     expect(await res.text()).toBe("Daily roster is unavailable");
   });
 
-  it("POST /moderators/add is 502 when the roster API is down", async () => {
+  it("POST /moderators routes are 404 even when the roster API is down", async () => {
     const app = createServer({
       env: sessionEnv(),
       fetchImpl: async () => {
         throw new Error("offline");
       },
     });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
-    expect(res.status).toBe(502);
-    expect(await res.text()).toBe("Daily roster is unavailable");
-  });
-
-  it("POST /moderators/payments re-renders a worker 400", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: async (url) => {
-        if (String(url).includes("/funding/daily-roster/document")) {
-          return new Response(
-            JSON.stringify({
-              comment: "21gifts daily",
-              paymentsEnabled: true,
-              moderatorPaymentsEnabled: true,
-              defaultAmountUsd: 1,
-              recipients: [
-                { address: "alice@walletofsatoshi.com", amountUsd: 1 },
-              ],
-              moderators: [],
-            }),
-            { status: 200 },
-          );
-        }
-        return new Response(
-          JSON.stringify({ error: "Invalid payments switch" }),
-          { status: 400 },
-        );
-      },
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/payments", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "enabled=off",
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Invalid payments switch");
-  });
-
-  it("POST /moderators/payments is 502 when a worker call is not 400", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: async (url) => {
-        if (String(url).includes("/funding/daily-roster/document")) {
-          return new Response(
-            JSON.stringify({
-              comment: "21gifts daily",
-              paymentsEnabled: true,
-              moderatorPaymentsEnabled: true,
-              defaultAmountUsd: 1,
-              recipients: [
-                { address: "alice@walletofsatoshi.com", amountUsd: 1 },
-              ],
-              moderators: [],
-            }),
-            { status: 200 },
-          );
-        }
-        return new Response(JSON.stringify({ error: "nope" }), { status: 500 });
-      },
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/payments", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "enabled=off",
-      }),
-    );
-    expect(res.status).toBe(502);
-    expect(await res.text()).toBe("Daily roster is unavailable");
-  });
-
-  it("POST /moderators/add is 502 when a worker call is not 400", async () => {
-    const app = createServer({
-      env: sessionEnv(),
-      fetchImpl: async (url) => {
-        if (String(url).includes("/funding/daily-roster/document")) {
-          return new Response(
-            JSON.stringify({
-              comment: "21gifts daily",
-              paymentsEnabled: true,
-              moderatorPaymentsEnabled: true,
-              defaultAmountUsd: 1,
-              recipients: [
-                { address: "alice@walletofsatoshi.com", amountUsd: 1 },
-              ],
-              moderators: [],
-            }),
-            { status: 200 },
-          );
-        }
-        return new Response(JSON.stringify({ error: "nope" }), { status: 500 });
-      },
-    });
-    const token = await login(app);
-    const res = await app.fetch(
-      req("http://127.0.0.1/moderators/add", {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          cookie: `spend_session=${token}`,
-        },
-        body: "address=bob@walletofsatoshi.com&amountUsd=2",
-      }),
-    );
-    expect(res.status).toBe(502);
-    expect(await res.text()).toBe("Daily roster is unavailable");
+    for (const path of [
+      "/moderators/add",
+      "/moderators/update",
+      "/moderators/delete",
+      "/moderators/payments",
+    ]) {
+      const res = await app.fetch(
+        req(`http://127.0.0.1${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: "address=bob@walletofsatoshi.com&amountUsd=2&enabled=off",
+        }),
+      );
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("Not found");
+    }
   });
 });
 
@@ -7695,5 +7927,107 @@ describe("GET /debug/recipients", () => {
     );
     expect(res.status).toBe(503);
     expect(await res.text()).toBe("");
+  });
+});
+
+describe("roster rows without a wallet", () => {
+  const noWalletApi = async (
+    url: string | URL | Request,
+  ): Promise<Response> => {
+    if (String(url).includes("/funding/daily-roster")) {
+      return new Response(
+        JSON.stringify({
+          comment: "21gifts daily",
+          paymentsEnabled: true,
+          moderatorPaymentsEnabled: true,
+          defaultAmountUsd: 1,
+          recipients: [
+            {
+              accountId: "acc-1",
+              username: "alice",
+              address: "alice@walletofsatoshi.com",
+              amountUsd: 1,
+            },
+            {
+              accountId: "acc-2",
+              username: "carol",
+              address: null,
+              amountUsd: 2,
+            },
+          ],
+          moderators: [
+            {
+              accountId: "acc-3",
+              username: "bob",
+              address: "bob@walletofsatoshi.com",
+              amountUsd: 7.5,
+            },
+            {
+              accountId: "acc-4",
+              username: "dave",
+              address: null,
+              amountUsd: 3,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }
+    throw new Error("no network");
+  };
+
+  it("GET /daily-roster keeps the other rows and counts the rows without a wallet", async () => {
+    const app = createServer({ env: sessionEnv(), fetchImpl: noWalletApi });
+    const res = await app.fetch(
+      dailyRosterReq("/daily-roster", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: "21gifts daily",
+      paymentsEnabled: true,
+      defaultAmountUsd: 1,
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+      moderatorPaymentsEnabled: true,
+      noWallet: { recipients: 1, moderators: 1 },
+    });
+  });
+
+  it("GET /debug/recipients reports the rows without a wallet", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = createServer({
+      env: { ...sessionEnv(), DEBUG_TOKEN: "secret-debug" },
+      fetchImpl: noWalletApi,
+    });
+    const res = await app.fetch(
+      req("http://127.0.0.1/debug/recipients", {
+        headers: { authorization: "Bearer secret-debug" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      comment: "21gifts daily",
+      recipients: [{ address: "alice@walletofsatoshi.com", amountUsd: 1 }],
+      moderators: [{ address: "bob@walletofsatoshi.com", amountUsd: 7.5 }],
+      paymentsEnabled: true,
+      moderatorPaymentsEnabled: true,
+      noWallet: { recipients: 1, moderators: 1 },
+    });
+    warn.mockRestore();
+  });
+
+  it("the logged-in dashboard notes the moderators without a wallet", async () => {
+    const app = createServer({ env: sessionEnv(), fetchImpl: noWalletApi });
+    const token = await login(app);
+    const res = await app.fetch(
+      req("http://127.0.0.1/", {
+        headers: { cookie: `spend_session=${token}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Moderators without a verified wallet (no_wallet): 1");
   });
 });

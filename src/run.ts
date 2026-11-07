@@ -1,6 +1,7 @@
 import type { SpendConfig } from './config';
 import { GiftsApi, GiftsApiError } from './gifts-api';
 import { LndhubClient, parseLndhubUri } from './lndhub';
+import { addressRef, redactAddresses, redactLogFields } from './log-redact';
 import { fetchBtcUsdSpot, formatAmountUsd, usdToSats } from './price';
 import { hashPreimage } from './proof';
 import { fileDayLock, type DayLock } from './lock';
@@ -45,7 +46,7 @@ export interface RunResult {
 }
 
 function log(event: string, fields: Record<string, string | number | boolean>): void {
-  console.warn(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
+  console.warn(JSON.stringify({ ts: new Date().toISOString(), event, ...redactLogFields(fields) }));
 }
 
 function prPreview(pr: string): string {
@@ -98,7 +99,8 @@ function selectTargets(
  * preflight. Spend does not read `welcome.jsonl` to decide a daily skip. HTTP 403 with
  * error exactly `Welcome gift already paid` is recorded as skip reason `welcome_paid`
  * (any bucket) and writes no JSONL row; that skip does not set `summary.reason`.
- * HTTP 403 `Passkey required` is `no_passkey`. HTTP 403 `Forum post required` is
+ * HTTP 403 `Passkey required` is `no_passkey`. HTTP 403 `Wallet required` is
+ * `no_wallet` (any bucket, no JSONL row). HTTP 403 `Forum post required` is
  * `no_media` for welcome and `no_post` otherwise. HTTP 403 `Funding grant required`
  * is `not_eligible` (any bucket). When {@link RunOptions.bucket} is `'moderator'`, uses
  * the moderator JSONL and never sends `messageId` on `createInvoice`. When
@@ -169,6 +171,7 @@ async function runDayLocked(
   const dryRun: PayoutLine[] = [];
   let btcUsd: number | undefined;
   const isolatedBucket = options.bucket === 'moderator' || options.bucket === 'welcome';
+  const ref = (address: string): string => addressRef(address, config.giftsApiToken);
 
   const finish = (
     exitCode: number,
@@ -229,7 +232,7 @@ async function runDayLocked(
       log('spend.done', {
         ok: false,
         reason: 'usd_to_sats',
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         amountUsd: recipient.amountUsd,
         btcUsd: rate,
       });
@@ -245,7 +248,7 @@ async function runDayLocked(
       log('spend.done', {
         ok: false,
         reason: 'usd_to_sats',
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         amountUsd: recipient.amountUsd,
         btcUsd: rate,
       });
@@ -339,17 +342,17 @@ async function runDayLocked(
 
     const prior = dayBlock(rows, recipient.address);
     if (prior !== undefined) {
-      log('spend.skip', { address: recipient.address, reason: prior });
+      log('spend.skip', { addressRef: ref(recipient.address), reason: prior });
       skipped.push({ ...lineBase, reason: prior });
       continue;
     }
     if (latestStatus(rows, recipient.address) === 'failed') {
-      log('spend.skip', { address: recipient.address, reason: 'failed' });
+      log('spend.skip', { addressRef: ref(recipient.address), reason: 'failed' });
       skipped.push({ ...lineBase, reason: 'failed' });
       continue;
     }
     if (stopLive && options.live) {
-      log('spend.skip', { address: recipient.address, reason: 'halted' });
+      log('spend.skip', { addressRef: ref(recipient.address), reason: 'halted' });
       skipped.push({ ...lineBase, reason: 'halted' });
       continue;
     }
@@ -390,7 +393,7 @@ async function runDayLocked(
     } catch (err) {
       if (err instanceof GiftsApiError && err.status === 409) {
         log('spend.skip', {
-          address: recipient.address,
+          addressRef: ref(recipient.address),
           reason: 'already_paid',
         });
         skipped.push({ ...lineBase, reason: 'already_paid' });
@@ -410,8 +413,17 @@ async function runDayLocked(
         err.status === 403 &&
         err.message === 'Passkey required'
       ) {
-        log('spend.skip', { address: recipient.address, reason: 'no_passkey' });
+        log('spend.skip', { addressRef: ref(recipient.address), reason: 'no_passkey' });
         skipped.push({ ...lineBase, reason: 'no_passkey' });
+        continue;
+      }
+      if (
+        err instanceof GiftsApiError &&
+        err.status === 403 &&
+        err.message === 'Wallet required'
+      ) {
+        log('spend.skip', { addressRef: ref(recipient.address), reason: 'no_wallet' });
+        skipped.push({ ...lineBase, reason: 'no_wallet' });
         continue;
       }
       if (
@@ -419,7 +431,7 @@ async function runDayLocked(
         err.status === 403 &&
         err.message === 'Welcome gift already paid'
       ) {
-        log('spend.skip', { address: recipient.address, reason: 'welcome_paid' });
+        log('spend.skip', { addressRef: ref(recipient.address), reason: 'welcome_paid' });
         skipped.push({ ...lineBase, reason: 'welcome_paid' });
         continue;
       }
@@ -429,7 +441,7 @@ async function runDayLocked(
         err.message === 'Forum post required'
       ) {
         const reason = options.bucket === 'welcome' ? 'no_media' : 'no_post';
-        log('spend.skip', { address: recipient.address, reason });
+        log('spend.skip', { addressRef: ref(recipient.address), reason });
         skipped.push({ ...lineBase, reason });
         continue;
       }
@@ -438,7 +450,7 @@ async function runDayLocked(
         err.status === 403 &&
         err.message === 'Funding grant required'
       ) {
-        log('spend.skip', { address: recipient.address, reason: 'not_eligible' });
+        log('spend.skip', { addressRef: ref(recipient.address), reason: 'not_eligible' });
         skipped.push({ ...lineBase, reason: 'not_eligible' });
         continue;
       }
@@ -449,7 +461,7 @@ async function runDayLocked(
       const unreachable = !parseFail && (status === 0 || status >= 500);
       if (unreachable) {
         log('spend.skip', {
-          address: recipient.address,
+          addressRef: ref(recipient.address),
           reason: 'invoice_unreachable',
         });
         skipped.push({ ...lineBase, reason: 'invoice_unreachable' });
@@ -462,9 +474,9 @@ async function runDayLocked(
         }
         haltDay();
         log('spend.uncertain', {
-          address: recipient.address,
+          addressRef: ref(recipient.address),
           amountSats,
-          error: message,
+          error: redactAddresses(message, [recipient.address]),
         });
         uncertain.push(lineBase);
         if (!options.live) {
@@ -483,9 +495,9 @@ async function runDayLocked(
       }
       sawProblem = true;
       log('spend.failed', {
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         amountSats,
-        error: message,
+        error: redactAddresses(message, [recipient.address]),
       });
       failed.push(lineBase);
       if (!options.live) {
@@ -511,7 +523,7 @@ async function runDayLocked(
       }
       haltDay();
       log('spend.uncertain', {
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
@@ -534,7 +546,7 @@ async function runDayLocked(
     }
 
     log('spend.invoice', {
-      address: recipient.address,
+      addressRef: ref(recipient.address),
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
       amountSats,
@@ -576,11 +588,11 @@ async function runDayLocked(
       }
       haltDay();
       log('spend.uncertain', {
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
-        error: err instanceof Error ? err.message : 'pay',
+        error: redactAddresses(err instanceof Error ? err.message : 'pay', [recipient.address]),
       });
       uncertain.push(lineBase);
       continue;
@@ -594,7 +606,7 @@ async function runDayLocked(
       }
       haltDay();
       log('spend.uncertain', {
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
@@ -632,18 +644,18 @@ async function runDayLocked(
       }
       haltDay();
       log('spend.uncertain', {
-        address: recipient.address,
+        addressRef: ref(recipient.address),
         invoiceId: invoice.id,
         paymentHash: invoice.paymentHash,
         amountSats,
-        error: err instanceof Error ? err.message : 'proof',
+        error: redactAddresses(err instanceof Error ? err.message : 'proof', [recipient.address]),
       });
       uncertain.push(lineBase);
       continue;
     }
 
     log('spend.paid', {
-      address: recipient.address,
+      addressRef: ref(recipient.address),
       invoiceId: invoice.id,
       paymentHash: invoice.paymentHash,
       amountSats,

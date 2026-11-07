@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { SpendConfig } from '../config';
 import { GiftsApi } from '../gifts-api';
 import { LndhubClient, parseLndhubUri } from '../lndhub';
+import { addressRef } from '../log-redact';
 import { runDay } from '../run';
 import { DayState } from '../state';
 
@@ -108,6 +109,10 @@ const heldLock = {
   tryAcquire: () => false,
   release: () => undefined,
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('runDay', () => {
   it('dry-run invoice errors do not persist uncertain for a later live run', async () => {
@@ -261,6 +266,88 @@ describe('runDay', () => {
     });
     expect(proofBody).toEqual({ id: 'id1', preimage: PREIMAGE });
     expect(state.isFinished()).toBe(true);
+  });
+
+  it('live paid logs use addressRef and do not contain an address', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async (url) => {
+        if (url.endsWith('/proof')) {
+          return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [{ ...config.recipients[0]!, address: 'Private-User@Private-Domain.invalid' }] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
+    );
+    for (const args of warn.mock.calls) {
+      expect(args).toHaveLength(1);
+    }
+    const lines = warn.mock.calls.map((args) => String(args[0]));
+    const logged = JSON.stringify(warn.mock.calls).toLowerCase();
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(logged).not.toContain('@');
+    expect(logged).not.toContain('private-user');
+    expect(logged).not.toContain('private-domain');
+    const paid = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.event === 'spend.paid');
+    expect(paid?.addressRef).toBe(addressRef('private-user@private-domain.invalid', config.giftsApiToken));
+    expect(Object.keys(paid ?? {}).sort()).toEqual(['addressRef', 'amountSats', 'event', 'invoiceId', 'paymentHash', 'ts']);
+  });
+
+  it('live failed logs redact an error that names only a part of the recipient address', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(
+        async () => new Response(JSON.stringify({ error: 'recipient private-user rejected' }), { status: 400 }),
+      ),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), { status: 200 });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await runDay(
+      { ...config, recipients: [{ ...config.recipients[0]!, address: 'Private-User@Private-Domain.invalid' }] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state: memoryState(), lock: openLock, btcUsd: async () => 100_000 },
+    );
+    for (const args of warn.mock.calls) {
+      expect(args).toHaveLength(1);
+    }
+    const lines = warn.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>);
+    const logged = JSON.stringify(warn.mock.calls).toLowerCase();
+    warn.mockRestore();
+    const failed = lines.find((entry) => entry.event === 'spend.failed');
+    expect(failed?.error).toBe('[address]');
+    expect(failed?.addressRef).toBe(addressRef('private-user@private-domain.invalid', config.giftsApiToken));
+    expect(logged).not.toContain('@');
+    expect(logged).not.toContain('private-user');
+    expect(logged).not.toContain('private-domain');
   });
 
   it('invoices only onlyAddresses and does not skip-log other roster members', async () => {
@@ -754,6 +841,127 @@ describe('runDay', () => {
     expect(result.summary.failed).toEqual([]);
     expect(state.load().some((row) => row.status === 'failed')).toBe(false);
     expect(state.isFinished()).toBe(false);
+  });
+
+  it('treats POST 403 Wallet required as no_wallet and pays the same address on a later run that day', async () => {
+    let walletReady = false;
+    let invoices = 0;
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async (url) => {
+        if (url.endsWith('/proof')) {
+          return new Response(JSON.stringify({ status: 'paid' }), { status: 200 });
+        }
+        invoices += 1;
+        if (!walletReady) {
+          return new Response(JSON.stringify({ error: 'Wallet required' }), { status: 403 });
+        }
+        return new Response(
+          JSON.stringify({ id: 'id1', pr: 'lnbc1', paymentHash: HASH, amountMsat: 1_000_000 }),
+          { status: 200 },
+        );
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      if (String(url).endsWith('/balance')) {
+        return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ payment_preimage: PREIMAGE }), { status: 200 });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const first = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    expect(first.exitCode).toBe(0);
+    expect(first.summary.reason).toBeUndefined();
+    expect(first.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_wallet' }),
+    ]);
+    expect(first.summary.failed).toEqual([]);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+
+    walletReady = true;
+    const second = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(second.exitCode).toBe(0);
+    expect(invoices).toBe(2);
+    expect(second.summary.paid).toEqual([expect.objectContaining({ address: 'a@b.com' })]);
+    expect(state.load().at(-1)).toMatchObject({ address: 'a@b.com', status: 'paid' });
+  });
+
+  it('treats POST 403 Wallet required as no_wallet for moderator', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Wallet required' }), { status: 403 });
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
+    });
+    const state = memoryState('', 'moderator');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23', bucket: 'moderator' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(0);
+    expect(result.summary.skipped).toEqual([
+      expect.objectContaining({ address: 'a@b.com', reason: 'no_wallet' }),
+    ]);
+    expect(state.load()).toEqual([]);
+    expect(state.isFinished()).toBe(false);
+  });
+
+  it('still persists failed for a 403 with any other error text', async () => {
+    const gifts = new GiftsApi(
+      'https://api.21.gifts',
+      'tok',
+      giftsFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Wallet missing' }), { status: 403 });
+      }),
+    );
+    const lndhub = new LndhubClient(target, async (url) => {
+      if (String(url).endsWith('/auth')) {
+        return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ BTC: { AvailableBalance: 1_000_000 } }), {
+        status: 200,
+      });
+    });
+    const state = memoryState();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await runDay(
+      { ...config, recipients: [config.recipients[0]!] },
+      { live: true, day: '2026-08-23' },
+      { gifts, lndhub, state, lock: openLock, btcUsd: async () => 100_000 },
+    );
+    warn.mockRestore();
+    expect(result.exitCode).toBe(4);
+    expect(result.summary.skipped).toEqual([]);
+    expect(state.load()).toEqual([expect.objectContaining({ address: 'a@b.com', status: 'failed' })]);
   });
 
   it('treats POST 403 Forum post required as no_post without persisting failed', async () => {

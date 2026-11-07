@@ -5,11 +5,11 @@
 ## A38
 
 This repository requires A38 according to the canonical A38 standard in
-[DFXswiss/agent](https://github.com/DFXswiss/agent/blob/59e31ebd11ab587897dc8e5b2a6f21e489f35f3d/docs/a38.md)
-at commit `59e31ebd11ab587897dc8e5b2a6f21e489f35f3d`. Repo job selection:
+[DFXswiss/agent](https://github.com/DFXswiss/agent/blob/e63980625f5b778c5a93104b0bf5de7fb5e379a8/docs/a38.md)
+at commit `e63980625f5b778c5a93104b0bf5de7fb5e379a8`. Repo job selection:
 `.github/a38.json`. Target-branch applicability and fork workflow approval:
 `.github/pr-guard.json`. `dfx pr guard` is
-[wired in](https://github.com/DFXswiss/agent/blob/59e31ebd11ab587897dc8e5b2a6f21e489f35f3d/docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
+[wired in](https://github.com/DFXswiss/agent/blob/e63980625f5b778c5a93104b0bf5de7fb5e379a8/docs/a38-guard.md#how-fork-github-actions-are-meant-to-work).
 
 Feature pull requests always target `develop`, not `staging` and not `main`. Developers rebase `staging` onto `develop` regularly, because those pull requests land on `develop` and do not update `staging`.
 
@@ -20,12 +20,23 @@ checks. The author report only covers the light local job in
 `.github/a38.json` (`bun install --frozen-lockfile`, then `bun run typecheck`,
 with `CI=true`). Do not run Vitest or Playwright locally for A38.
 
-Draft pull requests run the GitHub CI jobs. GitHub holds fork runs from
-external contributors as `action_required`. Ready does not start CI. After a
-fresh A38 enforce pass on the current head, `dfx pr guard` approves those
-waiting initial runs, then sets Ready when the required GitHub jobs are green
-and the PR is mergeable. The merger does not click Approve and run workflows.
-Do not ask a maintainer to approve workflow runs. Post the light A38 report
-on the current head only when the pinned standard requires one. A head that
-still requires a report needs a new report. That standard defines the waivers,
-including write access and a markdown-only or guard-docs change set.
+Draft pull requests run the GitHub CI jobs. GitHub holds fork runs from external
+contributors as `action_required`. Ready does not start CI. After a fresh A38
+enforce pass on the current head, `dfx pr guard` approves those waiting initial
+runs, then sets Ready when the review rule below is met, the required GitHub
+jobs are green, and the PR is mergeable.
+
+Two reviews are required before Ready. One review is enough only when the
+pull request opener is listed in one_review_authors in the trusted
+.github/pr-guard.json on the default branch. A missing file, a missing key,
+or an empty list keeps two reviews required. An entry that exists only on
+the pull request head does not count.
+
+The newest well-formed second review comment that covers the current
+head returns a Ready pull request to draft when its `blocks_merge` is true and
+it counts at least one defect; a newer well-formed second review with
+`blocks_merge` false clears that. The merger does not click Approve and run
+workflows. Do not ask a maintainer to approve workflow runs. Post the light A38
+report on the current head only when the pinned standard requires one. A head
+that still requires a report needs a new report. That standard defines the
+waivers, including write access and a markdown-only or guard-docs change set.

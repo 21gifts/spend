@@ -63,7 +63,7 @@ test('bearer token adds, updates, and deletes daily recipients', async ({ reques
   expect(afterDelete.recipients.map((row) => row.address)).not.toContain('bob@walletofsatoshi.com');
 });
 
-test('login, add, update, and delete moderators', async ({ page }) => {
+test('login shows payment-page links and no moderator editor', async ({ page, request }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
@@ -76,40 +76,18 @@ test('login, add, update, and delete moderators', async ({ page }) => {
     'href',
     'https://21.gifts/grants/payments/amounts',
   );
-  await expect(page.locator('h2', { hasText: 'Moderators' })).toBeVisible();
-  await expect(page.locator('body')).toContainText('No moderators');
-
-  await page.locator('form[action="/moderators/add"] input[name=address]').fill('mod@example.com');
-  await page.locator('form[action="/moderators/add"] input[name=amountUsd]').fill('2');
-  await page.locator('form[action="/moderators/add"] button').click();
-  const moderatorRow = page.locator(
-    'li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])',
+  await expect(page.getByRole('link', { name: 'Moderator payments', exact: true })).toHaveAttribute(
+    'href',
+    'https://21.gifts/grants/payments/moderators',
   );
-  await expect(moderatorRow.locator('.addr')).toHaveText('mod@example.com');
-  await expect(moderatorRow.locator('input[name=amountUsd]')).toHaveValue('2');
-  await expect(
-    page.locator('.card:has(form[action="/moderators/update"]) li.row.total .usd-total'),
-  ).toHaveText('2');
-
-  await moderatorRow.locator('input[name=amountUsd]').fill('3');
-  await moderatorRow.locator('form[action="/moderators/update"] button').click();
-  await expect(
-    page
-      .locator('li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])')
-      .locator('input[name=amountUsd]'),
-  ).toHaveValue('3');
-  await expect(
-    page.locator('.card:has(form[action="/moderators/update"]) li.row.total .usd-total'),
-  ).toHaveText('3');
-
-  await page
-    .locator('li.row:has(form[action="/moderators/delete"]):has(input[name="address"][value="mod@example.com"])')
-    .locator('form[action="/moderators/delete"] button')
-    .click();
-  await expect(
-    page.locator('li.row:has(form[action="/moderators/update"]):has(input[name="address"][value="mod@example.com"])'),
-  ).toHaveCount(0);
-  await expect(page.locator('body')).toContainText('No moderators');
+  await expect(page.locator('h2', { hasText: 'Moderators' })).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('No moderators');
+  await expect(page.locator('form[action="/moderators/add"]')).toHaveCount(0);
+  const add = await request.post('/moderators/add', {
+    form: { address: 'mod@example.com', amountUsd: '2' },
+    maxRedirects: 0,
+  });
+  expect(add.status()).toBe(404);
 });
 
 test('public / contains Log in and not the roster until logged in', async ({ request }) => {
@@ -150,21 +128,12 @@ test('bearer token edits the payment comment and the daily payments switch', asy
   expect(await on.json()).toMatchObject({ paymentsEnabled: true });
 });
 
-test('login and toggle moderator payments', async ({ page }) => {
+test('logged-in page has no payment switches', async ({ page }) => {
   await page.goto('/');
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
   await expect(page).toHaveURL('/');
   await expect(page.locator('form[aria-label="Daily payments"]')).toHaveCount(0);
-  const moderator = page.locator('form[aria-label="Moderator payments"]');
-  await moderator.locator('button[name="enabled"][value="off"]').click();
-  await expect(moderator.locator('button[name="enabled"][value="off"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await moderator.locator('button[name="enabled"][value="on"]').click();
-  await expect(moderator.locator('button[name="enabled"][value="on"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.locator('form[aria-label="Moderator payments"]')).toHaveCount(0);
+  await expect(page.locator('form[action="/moderators/payments"]')).toHaveCount(0);
 });

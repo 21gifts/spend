@@ -8,8 +8,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isUtcMidnightWindow, main, parseArgs } from "../cli";
+import { addressRef } from "../log-redact";
 import { withRosterApi } from "./roster-api-mock";
 
 const PREIMAGE = "11".repeat(32);
@@ -28,6 +29,10 @@ function cliEnv(dir: string, seed: string): Record<string, string> {
     STATE_DIR: dir,
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function seedRecipients(dir: string): string {
   const seed = join(dir, "seed.json");
@@ -320,12 +325,18 @@ describe("main live recipients", () => {
     );
     expect(code).toBe(0);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]).toHaveLength(1);
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
       ts: "2026-08-25T12:00:00.000Z",
       event: "spend.skip",
-      address: "a@b.com",
+      addressRef: addressRef("a@b.com", "tok"),
       reason: "payments_disabled",
     });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("@");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("b.com");
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).not.toHaveProperty(
+      "address",
+    );
     expect(
       fetchImpl.mock.calls.some((call) => isDailyInstruction(String(call[0]))),
     ).toBe(true);
@@ -609,6 +620,138 @@ describe("main daily instruction", () => {
         }
       }),
     ).toBe(true);
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("skips a document row with a null address as no_wallet and still pays the other rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-no-wallet-"));
+    const seed = seedRecipients(dir);
+    const asked: string[] = [];
+    const invoiced: unknown[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      async (url, init) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({
+              comment: "21gifts daily",
+              paymentsEnabled: true,
+              moderatorPaymentsEnabled: true,
+              defaultAmountUsd: 1,
+              recipients: [
+                {
+                  accountId: "acc-1",
+                  username: "pay",
+                  address: "pay@b.com",
+                  amountUsd: 2,
+                },
+                {
+                  accountId: "acc-2",
+                  username: "nowallet",
+                  address: null,
+                  amountUsd: 2,
+                },
+              ],
+              moderators: [],
+            }),
+            { status: 200 },
+          );
+        }
+        if (isDailyInstruction(String(url))) {
+          asked.push(
+            (JSON.parse(String(init?.body ?? "{}")) as { address: string })
+              .address,
+          );
+          return payInstruction(2, "instruction memo");
+        }
+        if (String(url).includes("coinbase.com")) {
+          return new Response(JSON.stringify({ data: { amount: "100000" } }), {
+            status: 200,
+          });
+        }
+        if (
+          String(url).includes("/invoices") &&
+          !String(url).endsWith("/proof")
+        ) {
+          invoiced.push(JSON.parse(String(init?.body ?? "{}")));
+          return new Response(
+            JSON.stringify({
+              id: "id1",
+              pr: "lnbc1",
+              paymentHash: HASH,
+              amountMsat: 2_000_000,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+    expect(code).toBe(0);
+    expect(asked).toEqual(["pay@b.com"]);
+    expect(invoiced).toEqual([
+      {
+        address: "pay@b.com",
+        amountMsat: 2_000_000,
+        amountUsd: "2.00",
+        comment: "instruction memo",
+      },
+    ]);
+    const skips = warn.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .filter((line) => line.event === "spend.skip");
+    expect(skips).toEqual([
+      {
+        ts: "2026-08-25T12:00:00.000Z",
+        event: "spend.skip",
+        reason: "no_wallet",
+        count: 1,
+      },
+    ]);
+    const stateFile = join(dir, "2026-08-25.jsonl");
+    if (existsSync(stateFile)) {
+      expect(readFileSync(stateFile, "utf8")).not.toContain('"failed"');
+    }
+    warn.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does not log no_wallet when --address names the recipients", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-no-wallet-address-"));
+    const seed = seedRecipients(dir);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--address", "a@b.com", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      async (url) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({
+              comment: "21gifts daily",
+              paymentsEnabled: true,
+              moderatorPaymentsEnabled: true,
+              defaultAmountUsd: 1,
+              recipients: [{ address: null, amountUsd: 2 }],
+              moderators: [],
+            }),
+            { status: 200 },
+          );
+        }
+        if (isDailyInstruction(String(url))) {
+          return skipInstruction("no_post");
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+    expect(code).toBe(0);
+    expect(
+      warn.mock.calls.map((call) => JSON.parse(String(call[0])).reason),
+    ).toEqual(["no_post"]);
     warn.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -1059,6 +1202,178 @@ describe("main daily instruction", () => {
       event: "spend.config",
       error: "Invalid document",
     });
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts an address in an import 400", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-import-400-address-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      async (url) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({ error: "Unknown address alice @ example.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+    expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("example.com");
+    expect(logged).not.toContain("@");
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts an address in an instruction 400", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-400-address-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      withRosterApi(async (url) => {
+        if (isDailyInstruction(String(url))) {
+          return new Response(
+            JSON.stringify({ error: "Unknown address alice @ example.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("example.com");
+    expect(logged).not.toContain("@");
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts an import 400 that names only a part of the address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-import-400-part-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      async (url) => {
+        if (String(url).includes("/funding/daily-roster/document")) {
+          return new Response(
+            JSON.stringify({ error: "Invalid row for B.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+    expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts an instruction 400 that names only a part of the address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-400-part-"));
+    const seed = seedRecipients(dir);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli", "--date", "2026-08-25"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+      withRosterApi(async (url) => {
+        if (isDailyInstruction(String(url))) {
+          return new Response(
+            JSON.stringify({ error: "No grant for recipient at B.com" }),
+            { status: 400 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
+    expect(JSON.parse(String(error.mock.calls[0]?.[0]))).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    error.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("exits 2 with spend.config and redacts a duplicate recipient address", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spend-cli-dup-address-"));
+    const seed = join(dir, "seed.json");
+    writeFileSync(
+      seed,
+      `${JSON.stringify({
+        comment: "21gifts daily",
+        recipients: [
+          { address: "alice smith@x.com", amountUsd: 1 },
+          { address: "alice smith@x.com", amountUsd: 2 },
+        ],
+      })}\n`,
+    );
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const code = await main(
+      cliEnv(dir, seed),
+      ["bun", "cli"],
+      () => new Date("2026-08-25T12:00:00.000Z"),
+    );
+    expect(code).toBe(2);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toHaveLength(1);
+    const line = String(error.mock.calls[0]?.[0] ?? "");
+    const logged = JSON.stringify(error.mock.calls);
+    expect(JSON.parse(line)).toEqual({
+      event: "spend.config",
+      error: "[address]",
+    });
+    expect(logged).not.toContain("alice");
+    expect(logged).not.toContain("smith");
+    expect(logged).not.toContain("x.com");
+    expect(logged).not.toContain("@");
     error.mockRestore();
     rmSync(dir, { recursive: true, force: true });
   });
