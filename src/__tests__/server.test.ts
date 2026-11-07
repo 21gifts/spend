@@ -8028,6 +8028,6 @@ describe("roster rows without a wallet", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("1 moderators without a verified wallet (no_wallet)");
+    expect(html).toContain("Moderators without a verified wallet (no_wallet): 1");
   });
 });

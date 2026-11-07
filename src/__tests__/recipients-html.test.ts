@@ -114,6 +114,6 @@ describe('moderators without a wallet', () => {
     const panel = { kind: 'editor' as const };
     expect(renderDashboardHtml(data, panel)).not.toContain('verified wallet');
     const noted = renderDashboardHtml(data, { ...panel, moderatorsNoWallet: 2 });
-    expect(noted).toContain('<p class="muted">2 moderators without a verified wallet (no_wallet)</p>');
+    expect(noted).toContain('<p class="muted">Moderators without a verified wallet (no_wallet): 2</p>');
   });
 });

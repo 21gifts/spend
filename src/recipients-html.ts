@@ -88,7 +88,7 @@ function renderEditorPanel(
   const noWalletHtml =
     moderatorsNoWallet === undefined
       ? ''
-      : `<p class="muted">${moderatorsNoWallet} moderators without a verified wallet (no_wallet)</p>`;
+      : `<p class="muted">Moderators without a verified wallet (no_wallet): ${moderatorsNoWallet}</p>`;
   return `${errorHtml}
   ${renderDailyLinks()}${noWalletHtml}`;
 }
